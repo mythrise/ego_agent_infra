@@ -91,7 +91,8 @@ semantic digest. Running the release gate with no live evidence returns non-zero
 - The RXP Cockpit was checked at 1600×1000 and 390×844. The semifinal acceptance path
   exposes AgentTeams+GPU and PostgreSQL+PolarDB tabs, matrix-cell interaction works, the
   mobile document has no horizontal overflow, and the static build console is clean.
-  It visibly says `STATIC FIXTURE`, `NO LIVE GPU`, and `NO PRODUCTION SIGNATURE TRUST`.
+  It visibly says `STATIC FIXTURE`, `GPU RUN · NONE` (with `NO LIVE SERVICES` in the mobile
+  header), and `PRODUCTION SIGNATURE TRUST · NONE`.
 - The semifinal proposal inherits and edits all 16 initial-round slides in place. The
   template-fidelity checker passes with zero issues, and all 16 speaker-note blocks carry
   sources plus talk tracks.
