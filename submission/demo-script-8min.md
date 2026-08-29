@@ -12,8 +12,9 @@ configured, leave the target row on screen as `SKIP`; do not substitute a local 
 
 ## 0:00–1:00 — Why RXP exists
 
-Open the RXP Cockpit. Read the visible truth labels first: `STATIC FIXTURE`, `NO LIVE GPU`,
-`NO PRODUCTION SIGNATURE TRUST`. Explain the failure mode: one Agent can propose, run,
+Open the RXP Cockpit. Read the visible truth labels first: `STATIC FIXTURE`, `GPU RUN · NONE`
+(mobile header: `NO LIVE SERVICES`), and `PRODUCTION SIGNATURE TRUST · NONE`. Explain the
+failure mode: one Agent can propose, run,
 measure, and write a favorable conclusion while silently omitting failed matrix cells.
 These labels describe the hosted browser fixture. The repository separately contains a
 real, bounded Fashion-MNIST GPU adapter, but no authenticated live output from it.
