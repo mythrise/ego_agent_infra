@@ -9,7 +9,9 @@ description = "Evidence-gated multi-agent ResearchOps control plane"
 requires-python = ">=3.9"
 dependencies = [
   "fastapi>=0.111,<0.116",
+  "psycopg[binary]>=3.2,<3.4",
   "pydantic>=2.7,<3",
+  "pyyaml>=6.0,<7",
   "uvicorn[standard]>=0.30,<0.35",
 ]
 
@@ -21,18 +23,44 @@ dev = [
   "ruff>=0.11,<0.15",
 ]
 
+[project.scripts]
+ego-polardb-preflight = "apps.api.polardb_preflight:main"
+rxp-bench = "benchmarks.runner:main"
+rxp = "protocols.rxp.cli:main"
+ego-real-gpu-verify = "experiments.fashion_mnist_amp.verify:main"
+ego-semifinal-bundle = "semifinal_acceptance.cli:main"
+
 [tool.setuptools.packages.find]
-include = ["apps.api*"]
+include = [
+  "apps.api*",
+  "apps.agentteams_bridge*",
+  "benchmarks*",
+  "experiments*",
+  "integrations*",
+  "protocols*",
+  "semifinal_acceptance*",
+  "skill_runtime*",
+  "skills*",
+]
 namespaces = true
 
 [tool.setuptools.package-data]
-"apps.api" = ["fixtures/*.yaml"]
+"apps.api" = ["fixtures/*.yaml", "migrations/postgres/*.sql"]
+"apps.agentteams_bridge" = ["migrations/postgres/*.sql"]
+"benchmarks" = ["corpus/v1/*.json", "schemas/*.json"]
+"integrations.agentteams" = ["*.json", "*.yaml", "*.tmpl", "scripts/*.py"]
+"protocols.rxp" = ["schemas/*.json"]
+"semifinal_acceptance" = ["schemas/*.json", "README.md"]
+"skills" = ["*/SKILL.md", "*/egoagentos.skill.yaml", "*/scripts/*.py"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
-testpaths = ["tests/api"]
+testpaths = ["tests/api", "tests/agentteams", "tests/acceptance", "tests/benchmarks", "tests/experiments", "tests/protocols", "tests/skills"]
 pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py39"
 line-length = 100
+
+[tool.mypy]
+explicit_package_bases = true

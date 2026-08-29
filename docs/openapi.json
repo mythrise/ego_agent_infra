@@ -1,6 +1,44 @@
 {
   "components": {
     "schemas": {
+      "AcceptanceMetric": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "enum": [
+              "higher_better",
+              "lower_better"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "direction",
+          "threshold",
+          "unit",
+          "rule"
+        ],
+        "title": "AcceptanceMetric",
+        "type": "object"
+      },
       "AdvanceRequest": {
         "additionalProperties": false,
         "properties": {
@@ -54,10 +92,19 @@
         "additionalProperties": false,
         "properties": {
           "approver": {
-            "maxLength": 120,
-            "minLength": 2,
-            "title": "Approver",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Compatibility assertion only; the server derives the effective approver from the authenticated operator identity",
+            "title": "Approver"
           },
           "decision": {
             "$ref": "#/components/schemas/ApprovalDecision"
@@ -69,10 +116,59 @@
         },
         "required": [
           "decision",
-          "approver",
           "expected_digest"
         ],
         "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "ArtifactEvidencePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ExternalArtifactRef"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/OfficialReceipt"
+            },
+            "minItems": 1,
+            "title": "Receipts",
+            "type": "array"
+          },
+          "schema": {
+            "const": "egoagentos.external-artifact-evidence/v1",
+            "default": "egoagentos.external-artifact-evidence/v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "CONTEXT",
+              "PLAN",
+              "EXECUTE",
+              "OBSERVE"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": false,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stage",
+          "artifact",
+          "receipts",
+          "synthetic"
+        ],
+        "title": "ArtifactEvidencePayload",
         "type": "object"
       },
       "AutorunRequest": {
@@ -106,6 +202,103 @@
         "title": "AutorunRequest",
         "type": "object"
       },
+      "CandidateArm": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description"
+        ],
+        "title": "CandidateArm",
+        "type": "object"
+      },
+      "CreateTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_contract": {
+            "$ref": "#/components/schemas/LiveExecutionContract"
+          },
+          "goal": {
+            "$ref": "#/components/schemas/ResearchGoal"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "live_source": {
+            "$ref": "#/components/schemas/LiveSourceBinding"
+          },
+          "objective": {
+            "maxLength": 4000,
+            "minLength": 8,
+            "title": "Objective",
+            "type": "string"
+          },
+          "owner_agent": {
+            "default": "research-pi",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Owner Agent",
+            "type": "string"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel"
+          },
+          "synthetic": {
+            "const": false,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "task_id": {
+            "maxLength": 160,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 3,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "objective",
+          "synthetic",
+          "risk_level",
+          "goal",
+          "live_source",
+          "execution_contract"
+        ],
+        "title": "CreateTaskRequest",
+        "type": "object"
+      },
       "DemoResetRequest": {
         "additionalProperties": false,
         "properties": {
@@ -135,6 +328,280 @@
         "title": "DemoResetRequest",
         "type": "object"
       },
+      "EvaluationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_mean": {
+            "title": "Baseline Mean",
+            "type": "number"
+          },
+          "bootstrap_samples": {
+            "minimum": 100.0,
+            "title": "Bootstrap Samples",
+            "type": "integer"
+          },
+          "bootstrap_seed": {
+            "title": "Bootstrap Seed",
+            "type": "integer"
+          },
+          "candidate_mean": {
+            "title": "Candidate Mean",
+            "type": "number"
+          },
+          "ci95": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Ci95",
+            "type": "array"
+          },
+          "data_classification": {
+            "title": "Data Classification",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "higher_better",
+              "lower_better"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "mean_delta": {
+            "title": "Mean Delta",
+            "type": "number"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "relative_delta": {
+            "title": "Relative Delta",
+            "type": "number"
+          },
+          "sample_count": {
+            "minimum": 1.0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "INCONCLUSIVE"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "direction",
+          "baseline_mean",
+          "candidate_mean",
+          "mean_delta",
+          "relative_delta",
+          "ci95",
+          "threshold",
+          "verdict",
+          "bootstrap_seed",
+          "bootstrap_samples",
+          "sample_count",
+          "data_classification"
+        ],
+        "title": "EvaluationResult",
+        "type": "object"
+      },
+      "EvidenceIngestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "generation": {
+            "maxLength": 200,
+            "minLength": 4,
+            "title": "Generation",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvidenceKind"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactEvidencePayload"
+              },
+              {
+                "$ref": "#/components/schemas/MetricEvidencePayload"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewEvidencePayload"
+              }
+            ],
+            "title": "Payload"
+          },
+          "producer_id": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": false,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "generation",
+          "kind",
+          "producer_id",
+          "artifact_digest",
+          "payload",
+          "synthetic"
+        ],
+        "title": "EvidenceIngestItem",
+        "type": "object"
+      },
+      "EvidenceIngestRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceIngestItem"
+          },
+          "expected_task_version": {
+            "minimum": 1.0,
+            "title": "Expected Task Version",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          }
+        },
+        "required": [
+          "expected_task_version",
+          "evidence"
+        ],
+        "title": "EvidenceIngestRequest",
+        "type": "object"
+      },
+      "EvidenceKind": {
+        "enum": [
+          "code",
+          "config",
+          "dataset_manifest",
+          "log",
+          "metric",
+          "trace",
+          "review"
+        ],
+        "title": "EvidenceKind",
+        "type": "string"
+      },
+      "ExternalArtifactRef": {
+        "additionalProperties": false,
+        "properties": {
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "media_type": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "uri": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "media_type",
+          "content_sha256",
+          "size_bytes"
+        ],
+        "title": "ExternalArtifactRef",
+        "type": "object"
+      },
+      "FinalizeTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceIngestItem"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "expected_task_version": {
+            "minimum": 1.0,
+            "title": "Expected Task Version",
+            "type": "integer"
+          },
+          "generation": {
+            "maxLength": 200,
+            "minLength": 4,
+            "title": "Generation",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "terminal_actor": {
+            "default": "research-pi",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Terminal Actor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "expected_task_version",
+          "evidence"
+        ],
+        "title": "FinalizeTaskRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -146,6 +613,506 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LiveExecutionContract": {
+        "additionalProperties": false,
+        "description": "Exact action contract shown to a human before a live side effect.",
+        "properties": {
+          "action": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Action",
+            "type": "string"
+          },
+          "action_payload": {
+            "additionalProperties": true,
+            "title": "Action Payload",
+            "type": "object"
+          },
+          "approval_ttl_seconds": {
+            "default": 900,
+            "maximum": 900.0,
+            "minimum": 1.0,
+            "title": "Approval Ttl Seconds",
+            "type": "integer"
+          },
+          "config_sha256": {
+            "title": "Config Sha256",
+            "type": "string"
+          },
+          "rollback_point": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollback Point"
+          }
+        },
+        "required": [
+          "action",
+          "config_sha256",
+          "action_payload"
+        ],
+        "title": "LiveExecutionContract",
+        "type": "object"
+      },
+      "LiveSourceBinding": {
+        "additionalProperties": false,
+        "description": "Identity that a live collaboration bridge must match exactly.",
+        "properties": {
+          "context_version": {
+            "minimum": 1.0,
+            "title": "Context Version",
+            "type": "integer"
+          },
+          "correlation_id": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "origin_authentication": {
+            "const": "UNVERIFIED_OPERATOR_ASSERTION",
+            "default": "UNVERIFIED_OPERATOR_ASSERTION",
+            "title": "Origin Authentication",
+            "type": "string"
+          },
+          "source": {
+            "const": "agentteams",
+            "title": "Source",
+            "type": "string"
+          },
+          "team": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Team",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "team",
+          "trace_id",
+          "correlation_id",
+          "context_version"
+        ],
+        "title": "LiveSourceBinding",
+        "type": "object"
+      },
+      "MetricEvidencePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ExternalArtifactRef"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "deterministic": {
+            "const": true,
+            "title": "Deterministic",
+            "type": "boolean"
+          },
+          "evaluator": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Evaluator",
+            "type": "string"
+          },
+          "evaluator_sha256": {
+            "title": "Evaluator Sha256",
+            "type": "string"
+          },
+          "raw_metric_digest": {
+            "title": "Raw Metric Digest",
+            "type": "string"
+          },
+          "raw_samples": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RawMetricSeries"
+            },
+            "minProperties": 1,
+            "title": "Raw Samples",
+            "type": "object"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/OfficialReceipt"
+            },
+            "minItems": 1,
+            "title": "Receipts",
+            "type": "array"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationResult"
+            },
+            "minItems": 1,
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "const": "egoagentos.external-metric-evidence/v1",
+            "default": "egoagentos.external-metric-evidence/v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "stage": {
+            "const": "EVALUATE",
+            "title": "Stage",
+            "type": "string"
+          },
+          "summary_only": {
+            "const": false,
+            "title": "Summary Only",
+            "type": "boolean"
+          },
+          "synthetic": {
+            "const": false,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stage",
+          "artifact",
+          "receipts",
+          "evaluator",
+          "evaluator_sha256",
+          "deterministic",
+          "summary_only",
+          "raw_samples",
+          "raw_metric_digest",
+          "results",
+          "synthetic"
+        ],
+        "title": "MetricEvidencePayload",
+        "type": "object"
+      },
+      "OfficialReceipt": {
+        "additionalProperties": false,
+        "description": "Digest-bound receipt derived from one real upstream HTTP response.",
+        "properties": {
+          "endpoint": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "http_status": {
+            "maximum": 599.0,
+            "minimum": 100.0,
+            "title": "Http Status",
+            "type": "integer"
+          },
+          "method": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Operation",
+            "type": "string"
+          },
+          "request_sha256": {
+            "title": "Request Sha256",
+            "type": "string"
+          },
+          "response_identifier": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Identifier"
+          },
+          "response_sha256": {
+            "title": "Response Sha256",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "agentteams",
+              "matrix",
+              "gpu",
+              "egoagentos"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "operation",
+          "method",
+          "endpoint",
+          "http_status",
+          "request_sha256",
+          "response_sha256"
+        ],
+        "title": "OfficialReceipt",
+        "type": "object"
+      },
+      "RXPVerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "ledger": {
+            "additionalProperties": true,
+            "title": "Ledger",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ledger"
+        ],
+        "title": "RXPVerifyRequest",
+        "type": "object"
+      },
+      "RawMetricSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "items": {
+              "type": "number"
+            },
+            "minItems": 1,
+            "title": "Baseline",
+            "type": "array"
+          },
+          "candidate": {
+            "items": {
+              "type": "number"
+            },
+            "minItems": 1,
+            "title": "Candidate",
+            "type": "array"
+          }
+        },
+        "required": [
+          "baseline",
+          "candidate"
+        ],
+        "title": "RawMetricSeries",
+        "type": "object"
+      },
+      "ResearchGoal": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance_metrics": {
+            "items": {
+              "$ref": "#/components/schemas/AcceptanceMetric"
+            },
+            "title": "Acceptance Metrics",
+            "type": "array"
+          },
+          "candidate_arms": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateArm"
+            },
+            "title": "Candidate Arms",
+            "type": "array"
+          },
+          "constraints": {
+            "additionalProperties": true,
+            "title": "Constraints",
+            "type": "object"
+          },
+          "frozen": {
+            "default": true,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "hardware": {
+            "title": "Hardware",
+            "type": "string"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objective",
+          "hardware",
+          "constraints",
+          "acceptance_metrics",
+          "candidate_arms"
+        ],
+        "title": "ResearchGoal",
+        "type": "object"
+      },
+      "ReviewEvidencePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ExternalArtifactRef"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "findings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "independent": {
+            "const": true,
+            "title": "Independent",
+            "type": "boolean"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/OfficialReceipt"
+            },
+            "minItems": 1,
+            "title": "Receipts",
+            "type": "array"
+          },
+          "reviewed_evidence_digests": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reviewed Evidence Digests",
+            "type": "array"
+          },
+          "reviewed_producers": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reviewed Producers",
+            "type": "array"
+          },
+          "reviewer_id": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Reviewer Id",
+            "type": "string"
+          },
+          "schema": {
+            "const": "egoagentos.external-review-evidence/v1",
+            "default": "egoagentos.external-review-evidence/v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "stage": {
+            "const": "VERIFY",
+            "title": "Stage",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": false,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "verdict": {
+            "enum": [
+              "PASS",
+              "FAIL"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "artifact",
+          "receipts",
+          "reviewer_id",
+          "reviewed_producers",
+          "independent",
+          "verdict",
+          "reviewed_evidence_digests",
+          "synthetic"
+        ],
+        "title": "ReviewEvidencePayload",
+        "type": "object"
+      },
+      "RiskLevel": {
+        "enum": [
+          "R0",
+          "R1",
+          "R2",
+          "R3"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
+      "SkillInvokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "expected_package_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Package Digest"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "payload"
+        ],
+        "title": "SkillInvokeRequest",
         "type": "object"
       },
       "Stage": {
@@ -205,7 +1172,7 @@
   "info": {
     "description": "Evidence-gated, deterministic control plane for multi-agent embodied-AI research. The bundled EgoLite run is explicitly synthetic.",
     "title": "EgoAgentOS ResearchOps API",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -236,6 +1203,22 @@
                 }
               ],
               "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -320,6 +1303,22 @@
                 }
               ],
               "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -416,6 +1415,233 @@
         ]
       }
     },
+    "/api/v1/rxp/demo": {
+      "get": {
+        "operationId": "rxp_demo_api_v1_rxp_demo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rxp Demo Api V1 Rxp Demo Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rxp Demo",
+        "tags": [
+          "rxp",
+          "demo"
+        ]
+      }
+    },
+    "/api/v1/rxp/schemas": {
+      "get": {
+        "operationId": "rxp_schemas_api_v1_rxp_schemas_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rxp Schemas Api V1 Rxp Schemas Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rxp Schemas",
+        "tags": [
+          "rxp"
+        ]
+      }
+    },
+    "/api/v1/rxp/verify": {
+      "post": {
+        "operationId": "rxp_verify_api_v1_rxp_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RXPVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rxp Verify Api V1 Rxp Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rxp Verify",
+        "tags": [
+          "rxp"
+        ]
+      }
+    },
+    "/api/v1/skill-invocations/{invocation_id}": {
+      "get": {
+        "operationId": "skill_trace_api_v1_skill_invocations__invocation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Skill Trace Api V1 Skill Invocations  Invocation Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skill Trace",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "operationId": "skills_api_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Skills Api V1 Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Skills",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/{name}/invoke": {
+      "post": {
+        "operationId": "skill_invoke_api_v1_skills__name__invoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillInvokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Skill Invoke Api V1 Skills  Name  Invoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skill Invoke",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
     "/api/v1/tasks": {
       "get": {
         "operationId": "tasks_api_v1_tasks_get",
@@ -434,6 +1660,81 @@
           }
         },
         "summary": "Tasks",
+        "tags": [
+          "research"
+        ]
+      },
+      "post": {
+        "operationId": "create_task_api_v1_tasks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Task Api V1 Tasks Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Task",
         "tags": [
           "research"
         ]
@@ -510,6 +1811,22 @@
                 }
               ],
               "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -588,6 +1905,22 @@
               ],
               "title": "Idempotency-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "requestBody": {
@@ -634,6 +1967,95 @@
         "summary": "Autorun Task",
         "tags": [
           "research"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/event-stream": {
+      "get": {
+        "operationId": "task_event_stream_api_v1_tasks__task_id__event_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "follow",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Follow",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "heartbeat_seconds",
+            "required": false,
+            "schema": {
+              "default": 15.0,
+              "maximum": 60.0,
+              "minimum": 0.05,
+              "title": "Heartbeat Seconds",
+              "type": "number"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Event Stream",
+        "tags": [
+          "audit"
         ]
       }
     },
@@ -701,6 +2123,180 @@
         "summary": "Task Events",
         "tags": [
           "audit"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/evidence": {
+      "post": {
+        "operationId": "ingest_evidence_api_v1_tasks__task_id__evidence_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ingest Evidence Api V1 Tasks  Task Id  Evidence Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Evidence",
+        "tags": [
+          "research",
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/finalize": {
+      "post": {
+        "operationId": "finalize_task_api_v1_tasks__task_id__finalize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalizeTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Finalize Task Api V1 Tasks  Task Id  Finalize Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finalize Task",
+        "tags": [
+          "research",
+          "evidence"
         ]
       }
     }

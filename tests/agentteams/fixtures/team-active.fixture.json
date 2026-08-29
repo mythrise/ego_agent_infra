@@ -1,0 +1,21 @@
+{
+  "_fixture_notice": "CONTRACT FIXTURE ONLY — not a live AgentTeams response",
+  "name": "ego-researchops",
+  "teamName": "ego-researchops",
+  "phase": "Active",
+  "workerMembers": [
+    {"name": "ego-research-lead", "role": "team_leader"},
+    {"name": "ego-scout", "role": "worker"},
+    {"name": "ego-architect", "role": "worker"},
+    {"name": "ego-runtime", "role": "worker"},
+    {"name": "ego-evaluator", "role": "worker"},
+    {"name": "ego-reviewer", "role": "worker"},
+    {"name": "ego-memory-curator", "role": "worker"}
+  ],
+  "leaderName": "ego-research-lead",
+  "teamRoomID": "!ego-team:matrix.fixture.invalid",
+  "leaderDMRoomID": "!ego-leader-dm:matrix.fixture.invalid",
+  "leaderReady": true,
+  "readyWorkers": 7,
+  "totalWorkers": 7
+}

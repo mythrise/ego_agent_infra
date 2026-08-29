@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "MatrixAxis": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ],
+      "title": "MatrixAxis",
+      "type": "object"
+    },
+    "MatrixCellDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "coordinates": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "Coordinates",
+          "type": "object"
+        }
+      },
+      "required": [
+        "cell_id",
+        "coordinates"
+      ],
+      "title": "MatrixCellDefinition",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-matrix-plan-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "axes": {
+      "items": {
+        "$ref": "#/$defs/MatrixAxis"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Axes",
+      "type": "array"
+    },
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/MatrixCellDefinition"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Cells",
+      "type": "array"
+    },
+    "frozen_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "title": "Frozen At",
+      "type": "string"
+    },
+    "frozen_by": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Frozen By",
+      "type": "string"
+    },
+    "kind": {
+      "const": "MatrixPlan",
+      "default": "MatrixPlan",
+      "title": "Kind",
+      "type": "string"
+    },
+    "matrix_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Matrix Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    },
+    "selection_rule": {
+      "const": "CARTESIAN_COMPLETE",
+      "default": "CARTESIAN_COMPLETE",
+      "title": "Selection Rule",
+      "type": "string"
+    }
+  },
+  "required": [
+    "matrix_id",
+    "name",
+    "frozen_by",
+    "frozen_at",
+    "axes",
+    "cells"
+  ],
+  "title": "MatrixPlan",
+  "type": "object"
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://egoagentos.dev/schemas/agentteams-result.v1.json",
+  "title": "AgentTeams Worker result envelope",
+  "type": "object",
+  "required": [
+    "schema",
+    "task_id",
+    "project_id",
+    "trace_id",
+    "context_version",
+    "status",
+    "artifact_refs",
+    "conflicts",
+    "review_verdict",
+    "independent_review",
+    "output_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "egoagentos.agentteams-result.v1"},
+    "task_id": {"type": "string", "minLength": 3},
+    "project_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "trace_id": {"type": "string", "minLength": 8},
+    "context_version": {"type": "integer", "minimum": 1},
+    "status": {
+      "enum": ["SUCCESS", "SUCCESS_WITH_NOTES", "REVISION_NEEDED", "BLOCKED"]
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^shared/tasks/"}
+    },
+    "conflicts": {"type": "array", "items": {"type": "string"}},
+    "suggested_worker": {"type": ["string", "null"]},
+    "review_verdict": {
+      "type": ["string", "null"],
+      "enum": ["PASS", "WARN", "FAIL", null]
+    },
+    "independent_review": {"type": "boolean"},
+    "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

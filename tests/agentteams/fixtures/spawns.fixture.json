@@ -1,0 +1,20 @@
+{
+  "_fixture_notice": "CONTRACT FIXTURE ONLY — not a live AgentTeams response",
+  "project_id": "ego-task-live-v1-00000000",
+  "workers": [
+    {
+      "worker": "ego-runtime",
+      "spawns": [
+        {
+          "session_id": "sub-fixture-001",
+          "name": "fixture execution",
+          "status": "completed",
+          "root_session_id": "matrix:!task:matrix.fixture.invalid",
+          "spawn": true,
+          "subagent_allowed_tools": ["ego-gpu.launch_experiment"],
+          "subagent_skills": ["safe-experiment-runner"]
+        }
+      ]
+    }
+  ]
+}

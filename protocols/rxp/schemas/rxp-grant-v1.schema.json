@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "DeterminismLevel": {
+      "description": "Ordered evidence strength; names are stable protocol values.",
+      "enum": [
+        "D0_UNVERIFIED",
+        "D1_INPUTS_BOUND",
+        "D2_SEEDED_ENV_BOUND",
+        "D3_BYTE_REPLAY_VERIFIED"
+      ],
+      "title": "DeterminismLevel",
+      "type": "string"
+    },
+    "GrantClaims": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "action_payload_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Action Payload Digest",
+          "type": "string"
+        },
+        "bounds": {
+          "$ref": "#/$defs/ResourceBounds"
+        },
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "expires_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "grant_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Grant Id",
+          "type": "string"
+        },
+        "intent_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Intent Digest",
+          "type": "string"
+        },
+        "intent_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "issued_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "title": "Issued At",
+          "type": "string"
+        },
+        "issuer_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Issuer Id",
+          "type": "string"
+        },
+        "legacy_approval_v1": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegacyApprovalV1Binding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "matrix_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Matrix Id",
+          "type": "string"
+        },
+        "minimum_determinism": {
+          "$ref": "#/$defs/DeterminismLevel"
+        },
+        "nonce": {
+          "pattern": "^[A-Za-z0-9_-]{16,128}$",
+          "title": "Nonce",
+          "type": "string"
+        },
+        "scope": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "grant_id",
+        "issuer_id",
+        "intent_id",
+        "intent_digest",
+        "matrix_id",
+        "cell_id",
+        "action",
+        "scope",
+        "action_payload_digest",
+        "bounds",
+        "minimum_determinism",
+        "issued_at",
+        "expires_at",
+        "nonce"
+      ],
+      "title": "GrantClaims",
+      "type": "object"
+    },
+    "LegacyApprovalV1Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "action_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Action Digest",
+          "type": "string"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "jti": {
+          "pattern": "^[A-Za-z0-9_-]{16,128}$",
+          "title": "Jti",
+          "type": "string"
+        },
+        "token_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Token Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jti",
+        "action_digest",
+        "config_sha256",
+        "token_sha256"
+      ],
+      "title": "LegacyApprovalV1Binding",
+      "type": "object"
+    },
+    "ResourceBounds": {
+      "additionalProperties": false,
+      "properties": {
+        "max_artifact_bytes": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Max Artifact Bytes",
+          "type": "integer"
+        },
+        "max_gpu_count": {
+          "maximum": 1024,
+          "minimum": 0,
+          "title": "Max Gpu Count",
+          "type": "integer"
+        },
+        "max_gpu_time_seconds": {
+          "maximum": 32292864000,
+          "minimum": 0,
+          "title": "Max Gpu Time Seconds",
+          "type": "integer"
+        },
+        "max_wall_time_seconds": {
+          "maximum": 31536000,
+          "minimum": 1,
+          "title": "Max Wall Time Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_gpu_count",
+        "max_wall_time_seconds",
+        "max_gpu_time_seconds",
+        "max_artifact_bytes"
+      ],
+      "title": "ResourceBounds",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-grant-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "algorithm": {
+      "const": "HMAC-SHA256",
+      "default": "HMAC-SHA256",
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "claims": {
+      "$ref": "#/$defs/GrantClaims"
+    },
+    "key_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Key Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Grant",
+      "default": "Grant",
+      "title": "Kind",
+      "type": "string"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    },
+    "signature": {
+      "pattern": "^hmac-sha256:[0-9a-f]{64}$",
+      "title": "Signature",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key_id",
+    "claims",
+    "signature"
+  ],
+  "title": "Grant",
+  "type": "object"
+}

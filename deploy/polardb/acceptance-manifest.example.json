@@ -1,0 +1,59 @@
+{
+  "$schema": "./acceptance-manifest.schema.json",
+  "schema_version": "egoagentos.polardb-live-acceptance/v1",
+  "target": {
+    "environment": "nonproduction",
+    "expected_database": "egoagentos_acceptance_CHANGE_ME",
+    "writer_url_env": "EGO_POLARDB_WRITER_URL",
+    "reader_url_env": "EGO_POLARDB_READER_URL",
+    "runtime_url_env": "EGO_POLARDB_RUNTIME_URL",
+    "auditor_url_env": "EGO_POLARDB_AUDITOR_URL",
+    "evidence_writer_url_env": "EGO_POLARDB_EVIDENCE_WRITER_URL",
+    "memory_curator_url_env": "EGO_POLARDB_MEMORY_CURATOR_URL",
+    "minimum_server_version_num": 120000,
+    "require_tls": true,
+    "require_polardb_marker": true,
+    "require_read_endpoint": true,
+    "require_rls": true,
+    "require_force_rls": false,
+    "require_role_logins": true,
+    "disposable_database_prefix": "egoagentos_acceptance_",
+    "disposable_database_marker": "EGOAGENTOS_DISPOSABLE_DATABASE_V1",
+    "roles": {
+      "runtime": "egoagentos_runtime",
+      "auditor": "egoagentos_auditor",
+      "evidence_writer": "egoagentos_evidence_writer",
+      "memory_curator": "egoagentos_memory_curator"
+    },
+    "pgvector": "optional"
+  },
+  "operations": {
+    "active_notify": false,
+    "active_topology": false,
+    "fresh_schema_replay": {
+      "authorized": false,
+      "status": "NOT_RUN"
+    },
+    "pitr_restore": {
+      "authorized": false,
+      "status": "NOT_RUN",
+      "restore_job_id": null,
+      "restore_target": null,
+      "requested_restore_time": null,
+      "observed_rpo_seconds": null,
+      "observed_rto_seconds": null,
+      "event_chain_verified": false,
+      "teardown_record": null
+    },
+    "multi_az_failover": {
+      "authorized": false,
+      "status": "NOT_RUN"
+    }
+  },
+  "truth_boundary": {
+    "role_model": "roles.* are expected NOLOGIN capability groups; each *_url_env authenticates a distinct LOGIN member",
+    "local_postgresql_proof": "docs/evidence/postgres-local-proof-2026-08-29.md",
+    "polardb_proof": "NOT_RUN until a redacted live report is committed",
+    "pitr_proof": "NOT_RUN until a restore job and restored-chain report exist"
+  }
+}

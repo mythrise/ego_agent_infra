@@ -39,11 +39,93 @@ jobs:
       - name: Test API
         run: uv run --python 3.9 --extra dev --locked pytest tests/api
 
-      - name: Lint API
-        run: uv run --python 3.9 --extra dev --locked ruff check apps/api tests/api
+      - name: Test RXP protocol
+        run: uv run --python 3.9 --extra dev --locked pytest tests/protocols
 
-      - name: Type-check API
-        run: uv run --python 3.9 --extra dev --locked mypy apps/api
+      - name: Check RXP schemas
+        run: uv run --python 3.9 --extra dev --locked python -m protocols.rxp schema --check
+
+      - name: Test AgentTeams bridge contracts
+        run: uv run --python 3.9 --extra dev --locked pytest tests/agentteams
+
+      - name: Test Skill runtime
+        run: uv run --python 3.9 --extra dev --locked pytest tests/skills
+
+      - name: Test semifinal proof builders
+        run: uv run --python 3.9 --extra dev --locked pytest tests/proofs
+
+      - name: Test acceptance bundle and replay
+        run: uv run --python 3.9 --extra dev --locked pytest tests/acceptance
+
+      - name: Test bounded GPU experiment contracts
+        run: uv run --python 3.9 --extra dev --locked pytest tests/experiments
+
+      - name: Lint API, RXP, AgentTeams, and Skills
+        run: >-
+          uv run --python 3.9 --extra dev --locked
+          ruff check apps/api protocols/rxp apps/agentteams_bridge
+          integrations/agentteams/benchmark_adapter.py skill_runtime
+          semifinal_acceptance experiments
+          scripts/build_semifinal_proof.py scripts/verify_submission.py
+          tests/api tests/protocols tests/agentteams tests/skills
+          tests/proofs tests/acceptance tests/experiments
+
+      - name: Type-check API, RXP, AgentTeams, and Skills
+        run: >-
+          uv run --python 3.9 --extra dev --locked mypy
+          apps/api protocols/rxp apps/agentteams_bridge
+          integrations/agentteams/benchmark_adapter.py skill_runtime
+          semifinal_acceptance experiments/fashion_mnist_amp/contract.py
+          experiments/fashion_mnist_amp/verify.py
+
+      - name: Validate pinned AgentTeams contract lock
+        run: python integrations/agentteams/scripts/verify_official_contract.py --offline
+
+  postgres:
+    name: PostgreSQL contract (Python 3.9 / PG 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: egoagentos_test
+          POSTGRES_USER: egoagentos_test
+          POSTGRES_PASSWORD: local-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U egoagentos_test -d egoagentos_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --python 3.9 --extra dev --locked
+
+      - name: Run PostgreSQL contract and recovery tests
+        run: uv run --python 3.9 --extra dev --locked pytest tests/postgres
+        env:
+          EGO_TEST_POSTGRES_URL: postgresql://egoagentos_test:local-ci-only@127.0.0.1:5432/egoagentos_test
+
+      - name: Lint PostgreSQL tests
+        run: uv run --python 3.9 --extra dev --locked ruff check tests/postgres
 
   mcp:
     name: MCP (Python 3.12)
@@ -89,6 +171,46 @@ jobs:
           uv run --python 3.12 --project mcp_servers --extra dev --locked
           ruff check tests/integration
 
+  benchmark:
+    name: RXP benchmark (Python 3.9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install benchmark dependencies
+        run: uv sync --python 3.9 --extra dev --locked
+
+      - name: Run golden benchmark tests
+        run: uv run --python 3.9 --extra dev --locked pytest tests/benchmarks
+
+      - name: Lint benchmark
+        run: uv run --python 3.9 --extra dev --locked ruff check benchmarks tests/benchmarks
+
+      - name: Type-check benchmark
+        run: uv run --python 3.9 --extra dev --locked mypy benchmarks
+
+      - name: Run strict benchmark smoke suite
+        run: >-
+          uv run --python 3.9 --extra dev --locked python -m benchmarks.runner
+          --repetitions 2 --strict
+          --output-json /tmp/rxp-bench-ci.json
+          --output-md /tmp/rxp-bench-ci.md
+
   web:
     name: Web (Node 24.15+)
     runs-on: ubuntu-latest
@@ -119,12 +241,20 @@ jobs:
       - name: Build web
         run: npm run build
 
+      - name: Build GitHub Pages static demo
+        run: npm run build
+        env:
+          VITE_BASE_PATH: /ego_agent_infra/
+          VITE_STATIC_DEMO: "true"
+
   submission:
     name: Verify submission deliverables
     needs:
       - api
+      - postgres
       - mcp
       - web
+      - benchmark
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

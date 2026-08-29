@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://egoagentos.dev/schemas/semifinal-acceptance-v1.schema.json",
+  "title": "EgoAgentOS semifinal acceptance bundle manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "acceptance_id",
+    "created_at",
+    "truth_boundary",
+    "gate",
+    "roots",
+    "scenarios",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {"const": "egoagentos.semifinal-acceptance/v1"},
+    "acceptance_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "truth_boundary": {
+      "type": "object",
+      "required": [
+        "execution_mode",
+        "synthetic",
+        "gpu_execution",
+        "external_origin_authentication",
+        "source_authenticity_status",
+        "live_claim_allowed",
+        "content_hash_limit"
+      ],
+      "properties": {
+        "execution_mode": {"const": "real-agentteams"},
+        "synthetic": {"const": false},
+        "gpu_execution": {"const": "real"},
+        "external_origin_authentication": {"const": "UNVERIFIED_OPERATOR_ASSERTION"},
+        "source_authenticity_status": {"const": "UNVERIFIED"},
+        "live_claim_allowed": {"const": false},
+        "content_hash_limit": {"type": "string", "minLength": 1}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "mvp_contract_status",
+        "source_authenticity_status",
+        "live_claim_status",
+        "passed_scenarios",
+        "passed_count",
+        "corpus_count",
+        "coverage_fraction",
+        "full_release_status",
+        "full_release_reason"
+      ],
+      "properties": {
+        "profile": {"const": "mvp-8-contract"},
+        "mvp_contract_status": {"const": "PASS"},
+        "source_authenticity_status": {"const": "UNVERIFIED"},
+        "live_claim_status": {"const": "NOT_VERIFIED"},
+        "passed_count": {"const": 8},
+        "corpus_count": {"const": 14},
+        "coverage_fraction": {"const": "8/14"},
+        "full_release_status": {"const": "NOT_EVALUATED"},
+        "passed_scenarios": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "full_release_reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "roots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_root",
+        "matrix_events_root",
+        "evidence_root",
+        "benchmark_evidence_root",
+        "rxp_ledger_root",
+        "bundle_root"
+      ],
+      "properties": {
+        "trace_root": {"$ref": "#/$defs/digest"},
+        "matrix_events_root": {"$ref": "#/$defs/digest"},
+        "evidence_root": {"$ref": "#/$defs/digest"},
+        "benchmark_evidence_root": {"$ref": "#/$defs/digest"},
+        "rxp_ledger_root": {"$ref": "#/$defs/digest"},
+        "bundle_root": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "scenario_id",
+          "repetition",
+          "seed",
+          "trace_file",
+          "trace_root",
+          "benchmark_evidence_root"
+        ]
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "bytes"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^artifacts/"},
+          "sha256": {"$ref": "#/$defs/digest"},
+          "bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

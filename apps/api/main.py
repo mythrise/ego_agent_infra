@@ -4,23 +4,36 @@ import os
 import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .errors import ControlPlaneError
+from .event_stream import iter_task_events
 from .models import (
     AdvanceRequest,
     ApprovalDecisionRequest,
     AutorunRequest,
+    CreateTaskRequest,
     DemoResetRequest,
+    EvidenceIngestRequest,
+    FinalizeTaskRequest,
+    RXPVerifyRequest,
 )
+from .operator_auth import OperatorAuthenticator, OperatorIdentity
 from .provenance import canonical_sha256
+from .rxp_runtime import demo_ledger, schema_catalog, verify_uploaded_ledger
 from .service import ResearchOpsService
-from .store import SQLiteStore
+from .skill_runtime_api import SkillInvokeRequest, create_skill_registry, invoke_skill
+from .store_factory import create_store
+from protocols.rxp import RXPError
+
+
+APPROVAL_TOKEN_HEADER = "X-Ego-Approval-Token"
 
 
 def _request_id(request: Request) -> str:
@@ -103,15 +116,23 @@ def _redact_approval_replay(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def create_app(
-    db_path: Optional[str] = None, approval_hmac_secret: Optional[str] = None
+    db_path: Optional[str] = None,
+    approval_hmac_secret: Optional[str] = None,
+    *,
+    database_url: Optional[str] = None,
+    skills_path: Optional[str] = None,
+    operator_key: Optional[str] = None,
+    operator_id: Optional[str] = None,
+    allow_unauthenticated_demo: Optional[bool] = None,
 ) -> FastAPI:
-    resolved_db_path: str = (
-        db_path
-        if db_path is not None
-        else os.getenv("EGO_DB_PATH", "/tmp/egoagentos-researchops.sqlite3")
-    )
-    store = SQLiteStore(resolved_db_path)
+    store = create_store(database_url=database_url, sqlite_path=db_path)
     service = ResearchOpsService(store, approval_hmac_secret=approval_hmac_secret)
+    skill_registry = create_skill_registry(skills_path)
+    operator_auth = OperatorAuthenticator(
+        key=operator_key,
+        operator_id=operator_id,
+        allow_unauthenticated_demo=allow_unauthenticated_demo,
+    )
 
     application = FastAPI(
         title="EgoAgentOS ResearchOps API",
@@ -119,11 +140,13 @@ def create_app(
             "Evidence-gated, deterministic control plane for multi-agent embodied-AI research. "
             "The bundled EgoLite run is explicitly synthetic."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url="/docs",
         redoc_url="/redoc",
     )
     application.state.service = service
+    application.state.skill_registry = skill_registry
+    application.state.operator_auth = operator_auth
 
     default_origins = ",".join(
         [
@@ -145,8 +168,13 @@ def create_app(
         allow_origins=origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Idempotency-Key", "X-Request-ID"],
-        expose_headers=["X-Request-ID"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Idempotency-Key",
+            "X-Request-ID",
+        ],
+        expose_headers=["X-Request-ID", APPROVAL_TOKEN_HEADER],
     )
 
     @application.middleware("http")
@@ -159,9 +187,11 @@ def create_app(
 
     @application.exception_handler(ControlPlaneError)
     async def control_plane_error(request: Request, error: ControlPlaneError) -> JSONResponse:
+        headers = {"WWW-Authenticate": "Bearer"} if error.status_code == 401 else None
         return JSONResponse(
             status_code=error.status_code,
             content=_error_payload(request, error.code, error.message, error.details),
+            headers=headers,
         )
 
     @application.exception_handler(RequestValidationError)
@@ -186,11 +216,63 @@ def create_app(
 
     @application.get("/api/v1/health", tags=["system"])
     def health(request: Request) -> Dict[str, Any]:
-        return request.app.state.service.health()
+        payload = request.app.state.service.health()
+        payload["operator_auth"] = request.app.state.operator_auth.status()
+        return payload
 
     @application.get("/api/v1/integrations", tags=["system"])
     def integrations(request: Request) -> Dict[str, Any]:
         return request.app.state.service.integrations()
+
+    @application.get("/api/v1/skills", tags=["skills"])
+    def skills(request: Request) -> Dict[str, Any]:
+        items = list(request.app.state.skill_registry.catalog())
+        return {
+            "items": items,
+            "total": len(items),
+            "executable": sum(bool(item["executable"]) for item in items),
+            "truth_boundary": (
+                "Discovery is not execution. Only allowlisted deterministic handlers can be "
+                "invoked here; SafeRunner remains behind its dedicated approval path."
+            ),
+        }
+
+    @application.get("/api/v1/skill-invocations/{invocation_id}", tags=["skills"])
+    def skill_trace(invocation_id: str, request: Request) -> Dict[str, Any]:
+        try:
+            return request.app.state.skill_registry.trace(invocation_id)
+        except KeyError as error:
+            raise ControlPlaneError("skill_trace_not_found", str(error), 404) from error
+
+    @application.post("/api/v1/skills/{name}/invoke", tags=["skills"])
+    def skill_invoke(
+        name: str,
+        body: SkillInvokeRequest,
+        request: Request,
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        return invoke_skill(request.app.state.skill_registry, name, body)
+
+    @application.get("/api/v1/rxp/schemas", tags=["rxp"])
+    def rxp_schemas() -> Dict[str, Any]:
+        return schema_catalog()
+
+    @application.get("/api/v1/rxp/demo", tags=["rxp", "demo"])
+    def rxp_demo() -> Dict[str, Any]:
+        return demo_ledger()
+
+    @application.post("/api/v1/rxp/verify", tags=["rxp"])
+    def rxp_verify(body: RXPVerifyRequest) -> Dict[str, Any]:
+        try:
+            return verify_uploaded_ledger(body.ledger)
+        except RXPError as error:
+            raise ControlPlaneError(
+                "rxp_%s" % error.code,
+                error.message,
+                422,
+                error.details,
+            ) from error
 
     @application.get("/api/v1/dashboard", tags=["research"])
     def dashboard(request: Request) -> Dict[str, Any]:
@@ -201,6 +283,25 @@ def create_app(
         items = request.app.state.service.list_tasks()
         return {"items": items, "total": len(items)}
 
+    @application.post("/api/v1/tasks", tags=["research"], status_code=201)
+    def create_task(
+        body: CreateTaskRequest,
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        key = _idempotency_key(idempotency_key, body.idempotency_key)
+        body_json = body.model_dump(mode="json", exclude={"idempotency_key"})
+        return _run_idempotent(
+            request.app.state.service,
+            "POST",
+            "/api/v1/tasks",
+            key,
+            body_json,
+            lambda: request.app.state.service.create_live_task(body),
+        )
+
     @application.get("/api/v1/tasks/{task_id}", tags=["research"])
     def task(task_id: str, request: Request) -> Dict[str, Any]:
         return request.app.state.service.get_task(task_id)
@@ -210,7 +311,9 @@ def create_app(
         request: Request,
         body: Optional[DemoResetRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authorize_demo_or_operator(authorization)
         payload = body or DemoResetRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -229,7 +332,13 @@ def create_app(
         request: Request,
         body: Optional[AdvanceRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        task_record = request.app.state.service.store.get_task(task_id)
+        if task_record.synthetic_demo:
+            request.app.state.operator_auth.authorize_demo_or_operator(authorization)
+        else:
+            request.app.state.operator_auth.authenticate(authorization)
         payload = body or AdvanceRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -250,7 +359,13 @@ def create_app(
         request: Request,
         body: Optional[AutorunRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        task_record = request.app.state.service.store.get_task(task_id)
+        if task_record.synthetic_demo:
+            request.app.state.operator_auth.authorize_demo_or_operator(authorization)
+        else:
+            request.app.state.operator_auth.authenticate(authorization)
         payload = body or AutorunRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -263,26 +378,103 @@ def create_app(
             lambda: request.app.state.service.autorun(task_id, payload.approval_token),
         )
 
+    @application.post("/api/v1/tasks/{task_id}/evidence", tags=["research", "evidence"])
+    def ingest_evidence(
+        task_id: str,
+        body: EvidenceIngestRequest,
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        key = _idempotency_key(idempotency_key, body.idempotency_key)
+        body_json = body.model_dump(mode="json", exclude={"idempotency_key"}, by_alias=True)
+        return _run_idempotent(
+            request.app.state.service,
+            "POST",
+            "/api/v1/tasks/%s/evidence" % task_id,
+            key,
+            body_json,
+            lambda: request.app.state.service.ingest_live_evidence(
+                task_id, body.evidence, body.expected_task_version
+            ),
+        )
+
+    @application.post("/api/v1/tasks/{task_id}/finalize", tags=["research", "evidence"])
+    def finalize_task(
+        task_id: str,
+        body: FinalizeTaskRequest,
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        key = _idempotency_key(idempotency_key, body.idempotency_key)
+        body_json = body.model_dump(mode="json", exclude={"idempotency_key"}, by_alias=True)
+        return _run_idempotent(
+            request.app.state.service,
+            "POST",
+            "/api/v1/tasks/%s/finalize" % task_id,
+            key,
+            body_json,
+            lambda: request.app.state.service.finalize_live_task(task_id, body),
+        )
+
     @application.post("/api/v1/approvals/{approval_id}/decision", tags=["approval"])
     def approval_decision(
         approval_id: str,
         body: ApprovalDecisionRequest,
         request: Request,
+        response: Response,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        approval = request.app.state.service.store.get_approval(approval_id)
+        task_record = request.app.state.service.store.get_task(approval.task_id)
+        identity: OperatorIdentity
+        if task_record.synthetic_demo:
+            identity = request.app.state.operator_auth.authorize_demo_or_operator(
+                authorization
+            )
+        else:
+            identity = request.app.state.operator_auth.authenticate(authorization)
+        if body.approver is not None and body.approver != identity.id:
+            raise ControlPlaneError(
+                "approver_identity_mismatch",
+                "The asserted approver does not match the authenticated operator identity",
+                403,
+            )
         key = _idempotency_key(idempotency_key, None)
-        body_json = body.model_dump(mode="json")
-        return _run_idempotent(
+        body_json = {
+            "decision": body.decision.value,
+            "approver": identity.id,
+            "expected_digest": body.expected_digest,
+        }
+        result = _run_idempotent(
             request.app.state.service,
             "POST",
             "/api/v1/approvals/%s/decision" % approval_id,
             key,
             body_json,
             lambda: request.app.state.service.decide_approval(
-                approval_id, body.decision.value, body.approver, body.expected_digest
+                approval_id, body.decision.value, identity.id, body.expected_digest
             ),
             cache_response=_redact_approval_replay,
         )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Vary"] = "Authorization"
+        if not task_record.synthetic_demo:
+            raw_token = result.pop("approval_token", None)
+            result["approval_token"] = None
+            if raw_token:
+                response.headers[APPROVAL_TOKEN_HEADER] = str(raw_token)
+                result["token_notice"] = (
+                    "One-time live token delivered only in %s; it is omitted from JSON and "
+                    "idempotent replays." % APPROVAL_TOKEN_HEADER
+                )
+        return result
 
     @application.get("/api/v1/tasks/{task_id}/events", tags=["audit"])
     def task_events(
@@ -292,6 +484,40 @@ def create_app(
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> Dict[str, Any]:
         return request.app.state.service.events(task_id, after_sequence, limit)
+
+    @application.get("/api/v1/tasks/{task_id}/event-stream", tags=["audit"])
+    def task_event_stream(
+        task_id: str,
+        request: Request,
+        after_sequence: int = Query(default=0, ge=0),
+        follow: bool = Query(default=True),
+        heartbeat_seconds: float = Query(default=15.0, ge=0.05, le=60.0),
+        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
+        # Resolve the task before constructing a streaming response so a missing task
+        # remains a normal structured 404 instead of a late iterator failure.
+        request.app.state.service.store.get_task(task_id)
+        stream = iter_task_events(
+            request.app.state.service,
+            task_id,
+            cursor=last_event_id,
+            after_sequence=after_sequence,
+            follow=follow,
+            heartbeat_seconds=heartbeat_seconds,
+        )
+        return StreamingResponse(
+            stream,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "X-Ego-Event-Mode": (
+                    "postgres-listen-notify-durable-replay"
+                    if request.app.state.service.store.engine == "postgresql"
+                    else "sqlite-cursor-fallback"
+                ),
+            },
+        )
 
     return application
 

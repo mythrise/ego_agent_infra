@@ -1,0 +1,120 @@
+{
+  "benchmark": "rxp-bench/v1",
+  "corpus_version": "1.0.0",
+  "default_repetitions": 5,
+  "master_seed": 20260829,
+  "scenarios": [
+    {
+      "id": "happy_path",
+      "category": "completion",
+      "title": "Approved experiment reaches a gated decision",
+      "description": "Run the complete synthetic research lifecycle, attempt an approval bypass, then grant the exact approval and verify the evidence gate.",
+      "capability": "deterministic_lifecycle",
+      "expected_invariant": "Task completes only after approval and complete evidence."
+    },
+    {
+      "id": "plan_conflict",
+      "category": "state_safety",
+      "title": "Conflicting plan transition",
+      "description": "Attempt to jump from INTAKE directly to PLAN, bypassing frozen context.",
+      "capability": "state_machine",
+      "expected_invariant": "The illegal transition is rejected before side effects."
+    },
+    {
+      "id": "worker_timeout_reassign",
+      "category": "recovery",
+      "title": "Worker timeout and lease reassignment",
+      "description": "Expire a worker lease, route the task to a different eligible worker, and preserve one logical execution.",
+      "capability": "dynamic_worker_leases",
+      "expected_invariant": "A timed-out worker is replaced without duplicate execution."
+    },
+    {
+      "id": "stale_context",
+      "category": "state_safety",
+      "title": "Stale context write",
+      "description": "Write a task snapshot after another actor has advanced its version.",
+      "capability": "optimistic_concurrency",
+      "expected_invariant": "The stale write is rejected and the newer context survives."
+    },
+    {
+      "id": "token_replay",
+      "category": "approval_safety",
+      "title": "Single-use approval token replay",
+      "description": "Consume a scoped token once and submit the same token again.",
+      "capability": "approval_tokens",
+      "expected_invariant": "The second use is rejected with no second action."
+    },
+    {
+      "id": "token_expiry",
+      "category": "approval_safety",
+      "title": "Expired approval token",
+      "description": "Use a valid token after its explicit expiry instant.",
+      "capability": "approval_tokens",
+      "expected_invariant": "Expired authority never crosses the action boundary."
+    },
+    {
+      "id": "token_scope_mismatch",
+      "category": "approval_safety",
+      "title": "Approval scope mismatch",
+      "description": "Present a token issued for one task to a different task scope.",
+      "capability": "approval_tokens",
+      "expected_invariant": "A token cannot authorize a different task, generation, action, or digest."
+    },
+    {
+      "id": "concurrent_duplicate",
+      "category": "exactly_once",
+      "title": "Concurrent duplicate transition",
+      "description": "Two independent service instances advance the same task concurrently.",
+      "capability": "serialized_mutations",
+      "expected_invariant": "Exactly one transition and one dataset-manifest side effect commit."
+    },
+    {
+      "id": "crash_recovery",
+      "category": "recovery",
+      "title": "Control-plane process recovery",
+      "description": "Reopen durable state with a fresh service instance after a committed transition.",
+      "capability": "durable_recovery",
+      "expected_invariant": "The new process resumes the committed stage with a valid audit chain."
+    },
+    {
+      "id": "evidence_tamper",
+      "category": "evidence_safety",
+      "title": "Evidence payload tampering",
+      "description": "Modify an evidence payload without updating its content digest.",
+      "capability": "evidence_gate",
+      "expected_invariant": "The decision gate rejects the artifact digest mismatch."
+    },
+    {
+      "id": "forged_reviewer",
+      "category": "evidence_safety",
+      "title": "Forged independent reviewer",
+      "description": "A producing agent claims to be an independent reviewer.",
+      "capability": "reviewer_independence",
+      "expected_invariant": "The review is rejected because the reviewer is not independent."
+    },
+    {
+      "id": "skill_version_rollback",
+      "category": "recovery",
+      "title": "Skill version rollback",
+      "description": "A newly activated skill fails its health gate and the registry restores the previous content-addressed version.",
+      "capability": "versioned_skill_registry",
+      "expected_invariant": "The prior verified skill version is restored and the failed version remains auditable."
+    },
+    {
+      "id": "matrix_cherry_pick",
+      "category": "experiment_integrity",
+      "title": "Experiment matrix cherry-pick",
+      "description": "Submit only favorable cells from a pre-committed model-by-seed experiment matrix.",
+      "capability": "experiment_matrix",
+      "expected_invariant": "The gate rejects selective reporting against the committed matrix."
+    },
+    {
+      "id": "matrix_missing_seed",
+      "category": "experiment_integrity",
+      "title": "Experiment matrix missing seed",
+      "description": "Omit one required seed result from an otherwise complete matrix.",
+      "capability": "experiment_matrix",
+      "expected_invariant": "The gate blocks aggregation until every committed seed is accounted for."
+    }
+  ]
+}

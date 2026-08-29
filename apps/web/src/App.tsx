@@ -13,6 +13,7 @@ import {
   FlaskConical,
   Gauge,
   GitBranch,
+  KeyRound,
   Menu,
   Network,
   Pause,
@@ -26,8 +27,15 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { researchApi } from "./api";
+import {
+  clearOperatorSession,
+  connectOperatorSession,
+  operatorSessionConnected,
+  researchApi,
+  taskEventStreamUrl,
+} from "./api";
 import { syntheticDashboard } from "./demoData";
+import { syntheticRXP } from "./rxpDemoData";
 import { STAGES } from "./types";
 import type {
   ApprovalGate,
@@ -36,6 +44,7 @@ import type {
   Experiment,
   IntegrationTruth,
   ResearchTask,
+  RXPProtocolData,
   ResourceSnapshot,
   TraceEvent,
 } from "./types";
@@ -52,7 +61,9 @@ function approvalTokenForGeneration(
 
 const navItems = [
   { id: "cockpit", label: "Task cockpit", icon: Gauge },
+  { id: "acceptance", label: "Semifinal acceptance", icon: ShieldCheck },
   { id: "experiments", label: "Experiments", icon: FlaskConical },
+  { id: "protocol", label: "RXP protocol", icon: KeyRound },
   { id: "evidence", label: "Evidence", icon: FileCheck2 },
   { id: "trace", label: "Audit trace", icon: Workflow },
   { id: "integrations", label: "Integrations", icon: Network },
@@ -108,6 +119,7 @@ function formatMetric(value: number | undefined, suffix = ""): string {
 
 function App() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [rxp, setRxp] = useState<RXPProtocolData | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -116,6 +128,7 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [approvalGrant, setApprovalGrant] = useState<SessionApprovalGrant>(null);
+  const [operatorConnected, setOperatorConnected] = useState(operatorSessionConnected);
   const [navOpen, setNavOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const prefersReducedMotion = useReducedMotion();
@@ -140,6 +153,7 @@ function App() {
     else setLoading(true);
     try {
       const next = await researchApi.dashboard();
+      const nextRXP = await researchApi.rxpDemo().catch(() => null);
       const taskId = selectedTaskId || next.activeTaskId || next.tasks[0]?.id;
       let hydrated = next;
       if (taskId) {
@@ -150,6 +164,7 @@ function App() {
         }
       }
       setDashboard(hydrated);
+      setRxp(nextRXP);
       if (hydrated.runtimeMode === "static_replay") setAutoRefresh(false);
       setSelectedTaskId((current) => current || hydrated.activeTaskId || hydrated.tasks[0]?.id || "");
       setError(null);
@@ -167,10 +182,48 @@ function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!autoRefresh || !dashboard) return;
-    const interval = window.setInterval(() => void load(true), 10_000);
-    return () => window.clearInterval(interval);
-  }, [autoRefresh, dashboard, load]);
+    if (
+      !autoRefresh
+      || !activeTask
+      || dashboard?.runtimeMode === "static_replay"
+    ) return;
+
+    let fallbackInterval: number | undefined;
+    let debounceTimer: number | undefined;
+    let connectionTimer: number | undefined;
+    const startFallback = () => {
+      if (fallbackInterval !== undefined) return;
+      // LISTEN/NOTIFY is a wake-up, while a sparse reconciliation remains the
+      // durable safety net for proxies that cannot carry Server-Sent Events.
+      fallbackInterval = window.setInterval(() => void load(true), 30_000);
+    };
+    if (!("EventSource" in window)) {
+      startFallback();
+      return () => window.clearInterval(fallbackInterval);
+    }
+
+    const source = new EventSource(taskEventStreamUrl(activeTask.id));
+    connectionTimer = window.setTimeout(startFallback, 5_000);
+    source.onopen = () => {
+      window.clearTimeout(connectionTimer);
+      if (fallbackInterval !== undefined) {
+        window.clearInterval(fallbackInterval);
+        fallbackInterval = undefined;
+      }
+    };
+    source.onmessage = () => {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => void load(true), 120);
+    };
+    source.onerror = () => startFallback();
+
+    return () => {
+      source.close();
+      window.clearTimeout(connectionTimer);
+      window.clearTimeout(debounceTimer);
+      window.clearInterval(fallbackInterval);
+    };
+  }, [activeTask?.id, autoRefresh, dashboard?.runtimeMode, load]);
 
   const runAction = async (action: Exclude<BusyAction, null>, callback: () => Promise<unknown>, success: string) => {
     setBusy(action);
@@ -190,7 +243,6 @@ function App() {
     try {
       const result = await researchApi.decide(gate.id, {
         decision: decision === "approve" ? "approved" : "denied",
-        approver: "demo.operator",
         expected_digest: gate.expectedDigest,
       });
       if (result.approval_token && activeTask) {
@@ -221,6 +273,7 @@ function App() {
         onRetry={() => void load()}
         onFixture={() => {
           setDashboard(syntheticDashboard);
+          setRxp(structuredClone(syntheticRXP));
           setSelectedTaskId(syntheticDashboard.activeTaskId);
           setError(null);
           setAutoRefresh(false);
@@ -251,10 +304,34 @@ function App() {
           onRefresh={() => void load(true)}
           runtimeMode={dashboard.runtimeMode}
         />
+        {dashboard.runtimeMode === "local_api" && (
+          <OperatorSessionBar
+            connected={operatorConnected}
+            onConnect={(key) => {
+              try {
+                connectOperatorSession(key);
+                setOperatorConnected(true);
+                showNotice("Operator session connected in memory only.");
+                return true;
+              } catch (sessionError) {
+                showNotice(sessionError instanceof Error ? sessionError.message : "Operator session rejected.");
+                return false;
+              }
+            }}
+            onClear={() => {
+              clearOperatorSession();
+              setOperatorConnected(false);
+              setApprovalGrant(null);
+              showNotice("Operator session cleared from memory.");
+            }}
+          />
+        )}
 
         <div className="workspace-grid">
           <div className="primary-column">
             <TaskCommand task={activeTask} runtimeMode={dashboard.runtimeMode} />
+            <RXPProtocolView data={rxp} runtimeMode={dashboard.runtimeMode} />
+            <AcceptanceReadiness runtimeMode={dashboard.runtimeMode} />
             <StageSpine current={activeTask.stage} reducedMotion={Boolean(prefersReducedMotion)} />
 
             <div className="operating-grid">
@@ -266,6 +343,7 @@ function App() {
               <ApprovalPanel
                 gate={activeTask.pendingApproval}
                 busy={busy}
+                operatorReady={dashboard.runtimeMode === "static_replay" || operatorConnected}
                 onDecision={(decision) => void decide(activeTask.pendingApproval!, decision)}
               />
             )}
@@ -331,6 +409,7 @@ function App() {
           )
         }
         runtimeMode={dashboard.runtimeMode}
+        operatorConnected={operatorConnected}
       />
 
       <AnimatePresence>
@@ -348,6 +427,54 @@ function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export function OperatorSessionBar({
+  connected,
+  onConnect,
+  onClear,
+}: {
+  connected: boolean;
+  onConnect: (key: string) => boolean;
+  onClear: () => void;
+}) {
+  const [key, setKey] = useState("");
+
+  return (
+    <section className="operator-strip" aria-label="Operator session">
+      <div className={`operator-state ${connected ? "connected" : "locked"}`}>
+        <KeyRound size={13} aria-hidden="true" />
+        <span>{connected ? "OPERATOR CONNECTED" : "MUTATIONS LOCKED"}</span>
+        <small>{connected ? "MEMORY ONLY · CLEAR ON TAB RELOAD" : "BEARER KEY REQUIRED"}</small>
+      </div>
+      {connected ? (
+        <button className="operator-clear" type="button" onClick={onClear}>
+          Clear session
+        </button>
+      ) : (
+        <form
+          className="operator-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (onConnect(key)) setKey("");
+          }}
+        >
+          <label htmlFor="operator-session-key">Session operator key</label>
+          <input
+            id="operator-session-key"
+            aria-label="Operator session key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={key}
+            onChange={(event) => setKey(event.target.value)}
+            placeholder="Paste deployment key"
+          />
+          <button type="submit" disabled={!key}>Connect session</button>
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -510,6 +637,224 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
             <strong>{task.decision} <small>gate bound</small></strong>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function compactDigest(value: string | undefined): string {
+  if (!value || value === "not-emitted") return "not emitted";
+  return value.length > 28 ? `${value.slice(0, 16)}…${value.slice(-8)}` : value;
+}
+
+function RXPProtocolView({
+  data,
+  runtimeMode,
+}: {
+  data: RXPProtocolData | null;
+  runtimeMode: DashboardData["runtimeMode"];
+}) {
+  const [selectedCellId, setSelectedCellId] = useState("");
+  const selectedCell = data?.cells.find((cell) => cell.cellId === selectedCellId) ?? data?.cells[0];
+  const lifecycle = ["Intent", "Grant", "Receipt", "Evidence", "Decision"];
+
+  return (
+    <section className="rxp-section" id="protocol" aria-labelledby="rxp-title">
+      <SectionHeading
+        id="rxp-title"
+        index="RXP/1"
+        title="Research eXecution Protocol"
+        note="Experiment authority becomes a replayable causal chain"
+      />
+      {data ? (
+        <>
+          <div className="rxp-truthline">
+            <span className={`rxp-verdict ${data.structuralVerification.toLowerCase()}`}>
+              <ShieldCheck size={14} /> STRUCTURE {data.structuralVerification}
+            </span>
+            <span>{runtimeMode === "static_replay" ? "STATIC FIXTURE · VERIFIER NOT EXECUTED HERE" : "LOCAL API · VERIFIER EXECUTED"}</span>
+            <span>GPU RUN · {data.physicalGpuRun ? "VERIFIED" : "NONE"}</span>
+            <span>PRODUCTION SIGNATURE TRUST · {data.productionSignatureTrust ? "VERIFIED" : "NONE"}</span>
+          </div>
+
+          <div className="rxp-rootline">
+            <div>
+              <span>FROZEN MATRIX</span>
+              <strong>{data.matrixId}</strong>
+            </div>
+            <div>
+              <span>APPEND-ONLY ROOT · {data.entryCount} ENTRIES</span>
+              <code title={data.root}>{compactDigest(data.root)}</code>
+            </div>
+            <div className={`rxp-completeness ${data.completeness.toLowerCase()}`}>
+              <span>MATRIX COVERAGE</span>
+              <strong>{data.decidedCellCount}/{data.expectedCellCount} {data.completeness}</strong>
+            </div>
+          </div>
+
+          <div className="rxp-chain" aria-label="RXP causal lifecycle">
+            {lifecycle.map((stage, index) => (
+              <div className="rxp-chain-step" key={stage}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <strong>{stage}</strong>
+                <small>{index === 1 ? "one-use scope" : index === 3 ? "Merkle gate" : "digest bound"}</small>
+                {index < lifecycle.length - 1 && <ArrowRight size={14} aria-hidden="true" />}
+              </div>
+            ))}
+          </div>
+
+          <div className="rxp-inspection">
+            <div className="rxp-cell-index" role="list" aria-label="Committed matrix cells">
+              {data.cells.map((cell) => (
+                <button
+                  type="button"
+                  className={cell.cellId === selectedCell?.cellId ? "active" : ""}
+                  key={cell.cellId}
+                  onClick={() => setSelectedCellId(cell.cellId)}
+                >
+                  <span>{cell.cellId}</span>
+                  <strong>{cell.state}</strong>
+                  <small>{cell.evidenceCount}/7 evidence · {cell.determinismLevel.replace("_BYTE_REPLAY_VERIFIED", "")}</small>
+                </button>
+              ))}
+            </div>
+            {selectedCell && (
+              <dl className="rxp-cell-detail">
+                <div><dt>Intent</dt><dd><code title={selectedCell.intentDigest}>{compactDigest(selectedCell.intentDigest)}</code></dd></div>
+                <div><dt>Grant</dt><dd><code title={selectedCell.grantDigest}>{compactDigest(selectedCell.grantDigest)}</code></dd></div>
+                <div><dt>Receipt</dt><dd><code title={selectedCell.receiptDigest}>{compactDigest(selectedCell.receiptDigest)}</code></dd></div>
+                <div><dt>Decision</dt><dd><code title={selectedCell.decisionDigest}>{compactDigest(selectedCell.decisionDigest)}</code></dd></div>
+              </dl>
+            )}
+          </div>
+
+          <p className="rxp-notice">
+            <CircleAlert size={13} /> {data.verificationNotice}
+          </p>
+        </>
+      ) : (
+        <InlineEmpty icon={KeyRound} text="The RXP ledger endpoint did not return a verifiable protocol document." />
+      )}
+    </section>
+  );
+}
+
+const liveAcceptanceSteps = [
+  ["01", "Plan", "Matrix frozen"],
+  ["02", "Review", "Independent"],
+  ["03", "Approve", "R2 exact scope"],
+  ["04", "Execute", "1 GPU · ≤900s"],
+  ["05", "Evaluate", "Raw metrics"],
+  ["06", "Verify", "Evidence Gate"],
+  ["07", "Decision", "KEEP / REJECT"],
+];
+
+const databaseRoles = [
+  ["runtime", "state + append", "No DELETE"],
+  ["auditor", "SELECT only", "No mutation"],
+  ["evidence writer", "INSERT evidence", "No memory write"],
+  ["memory curator", "INSERT candidate", "No validated write"],
+];
+
+function AcceptanceReadiness({
+  runtimeMode,
+}: {
+  runtimeMode: DashboardData["runtimeMode"];
+}) {
+  const [layer, setLayer] = useState<"gpu" | "database">("gpu");
+  return (
+    <section className="acceptance-readiness" id="acceptance" aria-labelledby="acceptance-readiness-title">
+      <SectionHeading
+        id="acceptance-readiness-title"
+        index="JUDGE"
+        title="Semifinal acceptance path"
+        note="Code-ready · external execution still evidence-gated"
+      />
+      <div className="acceptance-truthline">
+        <span><ShieldCheck size={13} /> CONTRACT PATH IMPLEMENTED</span>
+        <span className="origin-warning">EXTERNAL ORIGIN · UNVERIFIED</span>
+        <span>{runtimeMode === "static_replay" ? "THIS PAGE · STATIC REPLAY" : "THIS TASK · SYNTHETIC API"}</span>
+      </div>
+      <div className="acceptance-tabs" role="tablist" aria-label="Acceptance evidence layer">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={layer === "gpu"}
+          className={layer === "gpu" ? "active" : ""}
+          onClick={() => setLayer("gpu")}
+        >
+          AgentTeams + GPU
+          <small>controlled experiment chain</small>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={layer === "database"}
+          className={layer === "database" ? "active" : ""}
+          onClick={() => setLayer("database")}
+        >
+          PostgreSQL + PolarDB
+          <small>durability and access boundary</small>
+        </button>
+      </div>
+      <AnimatePresence mode="wait" initial={false}>
+        {layer === "gpu" ? (
+          <motion.div
+            className="live-acceptance-flow"
+            key="gpu-acceptance"
+            role="tabpanel"
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+          >
+            {liveAcceptanceSteps.map(([index, title, detail], stepIndex) => (
+              <div className="live-acceptance-step" key={title}>
+                <span>{index}</span>
+                <strong>{title}</strong>
+                <small>{detail}</small>
+                {stepIndex < liveAcceptanceSteps.length - 1 && <ArrowRight size={13} aria-hidden="true" />}
+              </div>
+            ))}
+          </motion.div>
+        ) : (
+          <motion.div
+            className="database-boundaries"
+            key="database-acceptance"
+            role="tabpanel"
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+          >
+            <div className="database-principle">
+              <Database size={20} strokeWidth={1.4} />
+              <div>
+                <span>SOURCE OF TRUTH</span>
+                <strong>PostgreSQL MVCC + JSONB</strong>
+                <small>RLS · immutable ledgers · commit-only NOTIFY · checksum replay</small>
+              </div>
+            </div>
+            <div className="role-matrix" aria-label="Database role write boundaries">
+              {databaseRoles.map(([role, grant, denied]) => (
+                <div className="role-matrix-row" key={role}>
+                  <strong>{role}</strong>
+                  <span>{grant}</span>
+                  <small>{denied}</small>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <div className="acceptance-boundary">
+        <span>LOCAL POSTGRESQL 16 · CONTRACT VERIFIED</span>
+        <span>POLARDB / PITR / OFFICIAL AGENTTEAMS / GPU · NOT RUN</span>
+        <a
+          href="https://github.com/mythrise/ego_agent_infra/blob/main/docs/judge-feedback-implementation.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Evidence map <ArrowRight size={12} />
+        </a>
       </div>
     </section>
   );
@@ -683,10 +1028,12 @@ function ResourceTrace({ resources, trace }: { resources: ResourceSnapshot[]; tr
 function ApprovalPanel({
   gate,
   busy,
+  operatorReady,
   onDecision,
 }: {
   gate: ApprovalGate;
   busy: BusyAction;
+  operatorReady: boolean;
   onDecision: (decision: "approve" | "reject") => void;
 }) {
   return (
@@ -707,14 +1054,14 @@ function ApprovalPanel({
         <button
           className="button secondary"
           onClick={() => onDecision("reject")}
-          disabled={Boolean(busy) || !gate.expectedDigest}
+          disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
           {busy === "reject" ? "Recording…" : "Reject"}
         </button>
         <button
           className="button primary"
           onClick={() => onDecision("approve")}
-          disabled={Boolean(busy) || !gate.expectedDigest}
+          disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
           {busy === "approve" ? "Recording…" : "Approve digest"}
           {busy !== "approve" && <ArrowRight size={14} />}
@@ -986,6 +1333,7 @@ function ActionDock({
   onAdvance,
   onAutorun,
   runtimeMode,
+  operatorConnected,
 }: {
   task: ResearchTask;
   busy: BusyAction;
@@ -994,8 +1342,10 @@ function ActionDock({
   onAdvance: () => void;
   onAutorun: () => void;
   runtimeMode: DashboardData["runtimeMode"];
+  operatorConnected: boolean;
 }) {
   const approvalBlocked = task.stage === "APPROVAL" && !approvalToken;
+  const operatorLocked = runtimeMode === "local_api" && !operatorConnected;
   const terminal = task.stage === "COMPLETED";
   return (
     <div className="action-dock" aria-label="Task controls">
@@ -1004,19 +1354,21 @@ function ActionDock({
         <div><small>{runtimeMode === "static_replay" ? "BROWSER REPLAY" : "CONTROL PLANE"}</small><strong>{task.stage.replaceAll("_", " ")}</strong></div>
       </div>
       <div className="dock-actions">
-        <button className="button ghost" onClick={onReset} disabled={Boolean(busy)}>
+        <button className="button ghost" onClick={onReset} disabled={Boolean(busy) || operatorLocked}>
           <RotateCcw size={13} />{busy === "reset" ? "Resetting…" : "Reset demo"}
         </button>
-        <button className="button secondary" onClick={onAdvance} disabled={Boolean(busy) || approvalBlocked || terminal}>
+        <button className="button secondary" onClick={onAdvance} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
           {busy === "advance" ? "Advancing…" : "Advance once"}
         </button>
-        <button className="button primary" onClick={onAutorun} disabled={Boolean(busy) || approvalBlocked || terminal}>
+        <button className="button primary" onClick={onAutorun} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
           <Play size={13} fill="currentColor" />{busy === "autorun" ? "Running…" : "Run to next gate"}
         </button>
       </div>
-      {approvalBlocked && (
+      {(operatorLocked || approvalBlocked) && (
         <span className="dock-hint">
-          {runtimeMode === "static_replay" ? "Synthetic browser grant required" : "Approval token required"}
+          {operatorLocked
+            ? "Connect operator session to mutate"
+            : runtimeMode === "static_replay" ? "Synthetic browser grant required" : "Approval token required"}
         </span>
       )}
     </div>
@@ -1075,4 +1427,4 @@ function EmptyScreen({ onReset }: { onReset: () => void }) {
 }
 
 export default App;
-export { approvalTokenForGeneration, EvidenceLedger, StageSpine };
+export { approvalTokenForGeneration, EvidenceLedger, RXPProtocolView, StageSpine };

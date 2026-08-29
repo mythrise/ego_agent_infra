@@ -1,0 +1,254 @@
+{
+  "$defs": {
+    "DeterminismLevel": {
+      "description": "Ordered evidence strength; names are stable protocol values.",
+      "enum": [
+        "D0_UNVERIFIED",
+        "D1_INPUTS_BOUND",
+        "D2_SEEDED_ENV_BOUND",
+        "D3_BYTE_REPLAY_VERIFIED"
+      ],
+      "title": "DeterminismLevel",
+      "type": "string"
+    },
+    "LegacyApprovalV1Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "action_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Action Digest",
+          "type": "string"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "jti": {
+          "pattern": "^[A-Za-z0-9_-]{16,128}$",
+          "title": "Jti",
+          "type": "string"
+        },
+        "token_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Token Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jti",
+        "action_digest",
+        "config_sha256",
+        "token_sha256"
+      ],
+      "title": "LegacyApprovalV1Binding",
+      "type": "object"
+    },
+    "ResourceRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_bytes": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Artifact Bytes",
+          "type": "integer"
+        },
+        "gpu_count": {
+          "maximum": 1024,
+          "minimum": 0,
+          "title": "Gpu Count",
+          "type": "integer"
+        },
+        "gpu_time_seconds": {
+          "maximum": 32292864000,
+          "minimum": 0,
+          "title": "Gpu Time Seconds",
+          "type": "integer"
+        },
+        "wall_time_seconds": {
+          "maximum": 31536000,
+          "minimum": 1,
+          "title": "Wall Time Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "gpu_count",
+        "wall_time_seconds",
+        "gpu_time_seconds",
+        "artifact_bytes"
+      ],
+      "title": "ResourceRequest",
+      "type": "object"
+    },
+    "RunManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "base_model_sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Base Model Sha256",
+          "type": "string"
+        },
+        "config_sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "dataset_manifest_sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Dataset Manifest Sha256",
+          "type": "string"
+        },
+        "environment_lock_sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Environment Lock Sha256",
+          "type": "string"
+        },
+        "git_commit": {
+          "pattern": "^[0-9a-f]{7,64}$",
+          "title": "Git Commit",
+          "type": "string"
+        },
+        "seed": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "git_commit",
+        "config_sha256",
+        "dataset_manifest_sha256",
+        "environment_lock_sha256",
+        "base_model_sha256",
+        "seed"
+      ],
+      "title": "RunManifest",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-intent-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Action",
+      "type": "string"
+    },
+    "action_payload": {
+      "additionalProperties": true,
+      "title": "Action Payload",
+      "type": "object"
+    },
+    "action_payload_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Action Payload Digest",
+      "type": "string"
+    },
+    "actor_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Actor Id",
+      "type": "string"
+    },
+    "approval_v1_binding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LegacyApprovalV1Binding"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "cell_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "coordinates": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "title": "Coordinates",
+      "type": "object"
+    },
+    "created_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "title": "Extensions",
+      "type": "object"
+    },
+    "intent_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Intent",
+      "default": "Intent",
+      "title": "Kind",
+      "type": "string"
+    },
+    "matrix_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Matrix Id",
+      "type": "string"
+    },
+    "requested_resources": {
+      "$ref": "#/$defs/ResourceRequest"
+    },
+    "required_determinism": {
+      "$ref": "#/$defs/DeterminismLevel"
+    },
+    "run_manifest": {
+      "$ref": "#/$defs/RunManifest"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    },
+    "scope": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_id",
+    "matrix_id",
+    "cell_id",
+    "coordinates",
+    "actor_id",
+    "created_at",
+    "action",
+    "scope",
+    "action_payload",
+    "action_payload_digest",
+    "run_manifest",
+    "requested_resources",
+    "required_determinism"
+  ],
+  "title": "Intent",
+  "type": "object"
+}

@@ -1,29 +1,52 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://egoagentos.dev/schemas/agentteams-message-envelope.v1.json",
-  "title": "AgentTeams collaboration envelope",
+  "$id": "https://egoagentos.dev/schemas/agentteams-envelope.v2.json",
+  "title": "EgoAgentOS to AgentTeams collaboration envelope",
   "type": "object",
-  "required": ["schema", "message_id", "task_id", "trace_id", "sender", "kind", "payload_ref", "created_at"],
+  "required": [
+    "schema",
+    "envelope_id",
+    "task_id",
+    "project_id",
+    "trace_id",
+    "correlation_id",
+    "context_version",
+    "attempt",
+    "kind",
+    "sender",
+    "recipient",
+    "body",
+    "body_sha256",
+    "created_at"
+  ],
   "properties": {
-    "schema": {"const": "egoagentos.agent-message.v1"},
-    "message_id": {"type": "string", "minLength": 8},
+    "schema": {"const": "egoagentos.agentteams-envelope.v2"},
+    "envelope_id": {"type": "string", "pattern": "^env_[a-f0-9]{32}$"},
     "task_id": {"type": "string", "minLength": 3},
+    "project_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
     "trace_id": {"type": "string", "minLength": 8},
-    "sender": {"type": "string", "pattern": "^[a-z0-9-]+$"},
-    "recipient": {"type": ["string", "null"]},
-    "kind": {"enum": ["command", "artifact_ref", "review", "status", "approval_request"]},
-    "stage": {"type": "string"},
-    "payload_ref": {
-      "type": "object",
-      "required": ["uri", "sha256"],
-      "properties": {
-        "uri": {"type": "string", "pattern": "^ego://"},
-        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-      },
-      "additionalProperties": false
+    "correlation_id": {"type": "string", "minLength": 8},
+    "context_version": {"type": "integer", "minimum": 1},
+    "attempt": {"type": "integer", "minimum": 1},
+    "kind": {
+      "enum": [
+        "TASK_REQUEST",
+        "TASK_UPDATE",
+        "ARTIFACT_ACCEPTED",
+        "CONFLICT",
+        "REPLAN",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_GRANTED",
+        "COMPENSATION",
+        "TERMINAL"
+      ]
     },
+    "sender": {"type": "string", "pattern": "^[a-z0-9._-]+$"},
+    "recipient": {"type": "string", "minLength": 1},
+    "causation_id": {"type": ["string", "null"]},
+    "body": {"type": "object"},
+    "body_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "created_at": {"type": "string", "format": "date-time"}
   },
   "additionalProperties": false
 }
-

@@ -1,0 +1,330 @@
+{
+  "committed_evidence_indexes": {
+    "agentteams_contract_lock": {
+      "api_version": "agentteams.io/v1beta1",
+      "file": {
+        "bytes": 1768,
+        "path": "integrations/agentteams/official-contract.lock.json",
+        "sha256": "0b79d9fac2923f85bee8dad609e62888d65cf3f951ca7b5e8ac0dcf3ca5b1ffb",
+        "tracked": true
+      },
+      "main_commit": "223ddc2b8073e4c8b93bcbb15e1d717f196c04d9",
+      "pinned_artifact_count": 7,
+      "pinned_artifacts_digest": "6f1d6707e260fa78db879147c95caa26837dea8e4dda1f8be404d134c14c7e68",
+      "repository": "https://github.com/agentscope-ai/AgentTeams",
+      "schema": "egoagentos.agentteams-contract-lock.v1",
+      "stable_commit": "849182af8e017168a5a200a87b1062142caf462d",
+      "stable_tag": "v1.2.2",
+      "status": "VERIFIED_COMMITTED_PIN_SET",
+      "truth_boundary": "Source/API pin integrity only; not evidence of a live AgentTeams run."
+    },
+    "benchmark": {
+      "benchmark": "rxp-bench/v1",
+      "corpus_digest": "eed5d4e06adc4713a765b3961643cda538b393bf651a848a24077a77b15098a4",
+      "corpus_version": "1.0.0",
+      "files": [
+        {
+          "bytes": 195542,
+          "path": "benchmarks/artifacts/2026-08-29-local-cpu.json",
+          "sha256": "4c6918a43ccbe59e7ab6b33167c18ab4bc1dce8fd5455e3370faaeb47eda3440",
+          "tracked": true
+        },
+        {
+          "bytes": 3739,
+          "path": "benchmarks/artifacts/2026-08-29-local-cpu.md",
+          "sha256": "1e63c2abf417f80ac733eefb3de76322e02d8974ac52c4de050b34b764f20e63",
+          "tracked": true
+        },
+        {
+          "bytes": 182,
+          "path": "benchmarks/artifacts/2026-08-29-local-cpu.sha256",
+          "sha256": "a01e11cd76dbcef571b42d4b109dfcf7d3ff8648d6d985d5f289cb5f69d403c7",
+          "tracked": true
+        },
+        {
+          "bytes": 3908,
+          "path": "benchmarks/trace-contract.md",
+          "sha256": "ccb981121b6a7fc0f86b8770725c986c049961ad0697540ac112824911c3234e",
+          "tracked": true
+        }
+      ],
+      "master_seed": 20260829,
+      "profiles": [
+        {
+          "coverage": 0.0,
+          "errors": 0,
+          "failed": 0,
+          "name": "agentteams-rxp-target",
+          "passed": 0,
+          "scenario_clusters": 0,
+          "scenario_clusters_passed": 0,
+          "skipped": 70,
+          "trials": 70
+        },
+        {
+          "coverage": 0.7142857142857143,
+          "errors": 0,
+          "failed": 0,
+          "name": "deterministic-core-v0.1",
+          "passed": 50,
+          "scenario_clusters": 10,
+          "scenario_clusters_passed": 10,
+          "skipped": 20,
+          "trials": 70
+        },
+        {
+          "coverage": 1.0,
+          "errors": 0,
+          "failed": 70,
+          "name": "scripted-negative-control-v1",
+          "passed": 0,
+          "scenario_clusters": 14,
+          "scenario_clusters_passed": 0,
+          "skipped": 0,
+          "trials": 70
+        }
+      ],
+      "repetitions": 5,
+      "semantic_digest": "05cab481a525210026d07377bb841ca0cd73f27790e9856b3c29211320b6b996",
+      "status": "VERIFIED_COMMITTED_ARTIFACT",
+      "truth_boundary": "Committed local synthetic CPU control-plane benchmark; target live AgentTeams trials are all SKIP and are never counted as PASS.",
+      "verification_scope": "local synthetic CPU-only control-plane benchmark"
+    },
+    "postgresql_local_contract": {
+      "database_image_observed_in_committed_proof": "postgres:16-alpine",
+      "engine": "PostgreSQL",
+      "file": {
+        "bytes": 2337,
+        "path": "docs/evidence/postgres-local-proof-2026-08-29.md",
+        "sha256": "05d73dc209dc37baa83cda8b37f4bf7543970793743907b1e3cb43c81042169c",
+        "tracked": true
+      },
+      "proof_reexecuted_by_builder": false,
+      "status": "VERIFIED_FROM_COMMITTED_LOCAL_PROOF",
+      "tests_passed": 32,
+      "truth_boundary": "Index of a committed disposable local PostgreSQL proof; this builder does not re-run Docker, PolarDB, backup, failover, or PITR.",
+      "version": "16.14"
+    }
+  },
+  "determinism": {
+    "self_checksum": "submission/evidence/semifinal-local-proof.sha256",
+    "serialization": "UTF-8 JSON, sorted keys, two-space indent, NaN forbidden",
+    "timestamps": "omitted; proof is content-derived"
+  },
+  "external_runtime_boundaries": {
+    "application_docker_image": {
+      "reason": "The EgoAgentOS application image was not built or run by this proof builder.",
+      "status": "NOT_RUN",
+      "verification": "UNVERIFIED"
+    },
+    "live_agentteams": {
+      "reason": "No live AgentTeams Controller/team/workers and bound scenario credentials were used by this proof build.",
+      "status": "SKIP",
+      "verification": "UNVERIFIED"
+    },
+    "pitr_restore": {
+      "reason": "No backup policy export, restore job, or measured RPO/RTO exists.",
+      "status": "NOT_RUN",
+      "verification": "UNVERIFIED"
+    },
+    "polardb_deployment": {
+      "reason": "No PolarDB account, endpoint, or deployment drill was used.",
+      "status": "NOT_RUN",
+      "verification": "UNVERIFIED"
+    }
+  },
+  "local_executable_proofs": {
+    "rxp": {
+      "byte_replay_equal": true,
+      "command_equivalent": "rxp demo && rxp verify --demo-key",
+      "completeness": "COMPLETE",
+      "decided_cells": 2,
+      "demo_sha256": "178a24b303f13a480262498cd793fba6fe63570ceedb27928805b7c321362524",
+      "entry_count": 23,
+      "expected_cells": 2,
+      "matrix_id": "matrix:synthetic-ablation-v1",
+      "matrix_root": "sha256:2e313a284dcaaa6542d9d81919fc22bb61ab2015e18659f2dc0d323cbad47fd3",
+      "schemas_current": true,
+      "signatures_verified": true,
+      "status": "PASS",
+      "truth_boundary": "Public synthetic demo key and fixture; no physical/GPU experiment claim.",
+      "verification_scope": "LOCAL_SYNTHETIC_DETERMINISTIC_FIXTURE"
+    },
+    "skill_runtime": {
+      "catalog": [
+        {
+          "canary_percent": 0,
+          "description": "Compute deterministic baseline comparisons, paired confidence intervals, and threshold verdict inputs.",
+          "evidence_emitted": [
+            "metric",
+            "trace"
+          ],
+          "executable": false,
+          "manifest_state": "draft",
+          "name": "ablation-analyzer",
+          "owner_agent": "evaluator",
+          "package_digest": "eda5dec5f328bd0560ad486b8a68fc010e18d3dc411ab107f55070efa99645e7",
+          "package_path": "skills/ablation-analyzer",
+          "reviewer_agent": "reviewer",
+          "risk_level": "R0",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        },
+        {
+          "canary_percent": 0,
+          "description": "Publish and verify immutable dataset manifests so training workers avoid repeated full-content hashing.",
+          "evidence_emitted": [
+            "dataset_manifest",
+            "trace"
+          ],
+          "executable": true,
+          "manifest_state": "draft",
+          "name": "dataset-manifest",
+          "owner_agent": "runtime",
+          "package_digest": "ba3b23c6fb9e27dd48805798f7e9ec2f19e251047f431edfd76b31d0aeef60bd",
+          "package_path": "skills/dataset-manifest",
+          "reviewer_agent": "reviewer",
+          "risk_level": "R1",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        },
+        {
+          "canary_percent": 0,
+          "description": "Block research decisions until required artifacts, digests, raw metrics, and independent review verify.",
+          "evidence_emitted": [
+            "review",
+            "trace"
+          ],
+          "executable": true,
+          "manifest_state": "draft",
+          "name": "evidence-gate",
+          "owner_agent": "reviewer",
+          "package_digest": "18bcd15dc49c47e4fae01fb2bb93f686530127e2fb627c500f808c4eaa54bd54",
+          "package_path": "skills/evidence-gate",
+          "reviewer_agent": "research-pi",
+          "risk_level": "R0",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        },
+        {
+          "canary_percent": 0,
+          "description": "Retrieve and persist evidence-linked semantic, episodic, and procedural research memory.",
+          "evidence_emitted": [
+            "trace"
+          ],
+          "executable": false,
+          "manifest_state": "draft",
+          "name": "research-memory",
+          "owner_agent": "memory-curator",
+          "package_digest": "48a9547607d5cb41c673bb49621a6e0891a27d20890f76f808b8d733ca4475d7",
+          "package_path": "skills/research-memory",
+          "reviewer_agent": "reviewer",
+          "risk_level": "R1",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        },
+        {
+          "canary_percent": 0,
+          "description": "Compile a frozen research goal and bounded context into a falsifiable, budgeted experiment DAG.",
+          "evidence_emitted": [
+            "config",
+            "trace",
+            "review"
+          ],
+          "executable": true,
+          "manifest_state": "draft",
+          "name": "research-plan",
+          "owner_agent": "experiment-architect",
+          "package_digest": "c725e582439b8d06a67ddae5d98f31eb4d0a21a0852488435da5482ecee1f679",
+          "package_path": "skills/research-plan",
+          "reviewer_agent": "reviewer",
+          "risk_level": "R0",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        },
+        {
+          "canary_percent": 0,
+          "description": "Submit reproducible experiments through typed allowlisted entrypoints and scoped approval checks.",
+          "evidence_emitted": [
+            "code",
+            "config",
+            "log",
+            "trace"
+          ],
+          "executable": false,
+          "manifest_state": "draft",
+          "name": "safe-experiment-runner",
+          "owner_agent": "runtime",
+          "package_digest": "e2a0c9a0b8e375b099dc013a823b1b888c5f235ad90c02a235b0e572a8a6fc44",
+          "package_path": "skills/safe-experiment-runner",
+          "reviewer_agent": "reviewer",
+          "risk_level": "dynamic",
+          "runtime_state": "draft",
+          "version": "0.1.0"
+        }
+      ],
+      "catalog_count": 6,
+      "catalog_digest": "121debe701e66bcc26582e30b1982453b219a0445e6d261e4d8fb75449262c62",
+      "executable_count": 3,
+      "repeat_invocation_equal": true,
+      "research_plan_invocation": {
+        "result": {
+          "plan": {
+            "arms": [
+              "baseline",
+              "candidate"
+            ],
+            "budget_gpu_hours": 3,
+            "context_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "estimated_gpu_hours": 2,
+            "goal_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "hypotheses": [
+              "candidate improves throughput without exceeding the frozen error budget"
+            ],
+            "metrics": [
+              {
+                "aggregation": "mean",
+                "direction": "higher_better",
+                "name": "throughput",
+                "split": "synthetic-test-v1",
+                "threshold": 10,
+                "unit": "fps"
+              }
+            ],
+            "rollback_target": "git:semifinal-proof-fixture",
+            "seeds": [
+              11,
+              22,
+              33
+            ]
+          },
+          "plan_digest": "ea6163fdc44c49076a801cc6b55eb08827915cfa14da93b3d2de04ec7fba93a9",
+          "status": "READY_FOR_INDEPENDENT_REVIEW"
+        },
+        "trace": {
+          "correlation_id": "semifinal-local-proof:research-plan:v1",
+          "error_code": null,
+          "input_digest": "cb8f25a56b8025ea6f35acc9f0e75319a75ee5a97473e6d5ee99566eaad5993e",
+          "invocation_id": "skinv_616a50bcd1ede04fc0b98ba5",
+          "output_digest": "628c28d7fbdbbd1020a033e4dba2586f1a3f92365bb961dc21e1b425a6a25b24",
+          "package_digest": "c725e582439b8d06a67ddae5d98f31eb4d0a21a0852488435da5482ecee1f679",
+          "release_state": "draft",
+          "skill_name": "research-plan",
+          "skill_version": "0.1.0",
+          "status": "PASS"
+        }
+      },
+      "status": "PASS",
+      "truth_boundary": "In-process deterministic registry/handler proof; no Nacos publication or distributed rollout claim.",
+      "verification_scope": "LOCAL_ALLOWLISTED_SKILL_RUNTIME"
+    }
+  },
+  "overall": {
+    "release_claim": false,
+    "scope": "DETERMINISTIC_LOCAL_SEMIFINAL_PROOF",
+    "status": "PASS_WITH_EXPLICIT_SKIPS",
+    "truth_boundary": "PASS covers only the executable local RXP/Skill proofs and integrity of committed evidence indexes. External runtime gaps remain explicit."
+  },
+  "proof_id": "egoagentos-semifinal-local-proof-2026-08-29",
+  "schema_version": "egoagentos.semifinal-local-proof/v1"
+}

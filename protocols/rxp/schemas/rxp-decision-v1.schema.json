@@ -1,0 +1,192 @@
+{
+  "$defs": {
+    "DeterminismLevel": {
+      "description": "Ordered evidence strength; names are stable protocol values.",
+      "enum": [
+        "D0_UNVERIFIED",
+        "D1_INPUTS_BOUND",
+        "D2_SEEDED_ENV_BOUND",
+        "D3_BYTE_REPLAY_VERIFIED"
+      ],
+      "title": "DeterminismLevel",
+      "type": "string"
+    },
+    "GateAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_digests": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Digests",
+          "type": "array"
+        },
+        "evidence_root": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence Root",
+          "type": "string"
+        },
+        "independent_reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Independent Reviewer"
+        },
+        "missing_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Types",
+          "type": "array"
+        },
+        "present_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Present Types",
+          "type": "array"
+        },
+        "reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "required_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Types",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "required_types",
+        "present_types",
+        "missing_types",
+        "evidence_digests",
+        "evidence_root"
+      ],
+      "title": "GateAssessment",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-decision-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cell_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "decided_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "decided_by": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Decided By",
+      "type": "string"
+    },
+    "decision_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "determinism_level": {
+      "$ref": "#/$defs/DeterminismLevel"
+    },
+    "evidence_digests": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Digests",
+      "type": "array"
+    },
+    "evidence_root": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Evidence Root",
+      "type": "string"
+    },
+    "gate": {
+      "$ref": "#/$defs/GateAssessment"
+    },
+    "intent_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Intent Digest",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Decision",
+      "default": "Decision",
+      "title": "Kind",
+      "type": "string"
+    },
+    "matrix_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Matrix Id",
+      "type": "string"
+    },
+    "rationale_code": {
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "title": "Rationale Code",
+      "type": "string"
+    },
+    "receipt_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Receipt Digest",
+      "type": "string"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "KEEP",
+        "REJECT",
+        "INCONCLUSIVE"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "matrix_id",
+    "cell_id",
+    "intent_digest",
+    "receipt_digest",
+    "evidence_digests",
+    "evidence_root",
+    "gate",
+    "verdict",
+    "determinism_level",
+    "decided_by",
+    "decided_at",
+    "rationale_code"
+  ],
+  "title": "Decision",
+  "type": "object"
+}

@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "uri": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "media_type",
+        "sha256",
+        "bytes"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "DeterminismLevel": {
+      "description": "Ordered evidence strength; names are stable protocol values.",
+      "enum": [
+        "D0_UNVERIFIED",
+        "D1_INPUTS_BOUND",
+        "D2_SEEDED_ENV_BOUND",
+        "D3_BYTE_REPLAY_VERIFIED"
+      ],
+      "title": "DeterminismLevel",
+      "type": "string"
+    },
+    "ResourceUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_bytes": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Artifact Bytes",
+          "type": "integer"
+        },
+        "gpu_count": {
+          "maximum": 1024,
+          "minimum": 0,
+          "title": "Gpu Count",
+          "type": "integer"
+        },
+        "gpu_time_seconds": {
+          "maximum": 32292864000,
+          "minimum": 0,
+          "title": "Gpu Time Seconds",
+          "type": "integer"
+        },
+        "wall_time_seconds": {
+          "maximum": 31536000,
+          "minimum": 0,
+          "title": "Wall Time Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "gpu_count",
+        "wall_time_seconds",
+        "gpu_time_seconds",
+        "artifact_bytes"
+      ],
+      "title": "ResourceUsage",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-receipt-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cell_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "completed_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "determinism_level": {
+      "$ref": "#/$defs/DeterminismLevel"
+    },
+    "executor_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Executor Id",
+      "type": "string"
+    },
+    "grant_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Grant Digest",
+      "type": "string"
+    },
+    "grant_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Grant Id",
+      "type": "string"
+    },
+    "intent_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Intent Digest",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Receipt",
+      "default": "Receipt",
+      "title": "Kind",
+      "type": "string"
+    },
+    "matrix_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Matrix Id",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "outcome": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "output": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "receipt_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "replay_count": {
+      "maximum": 1000000,
+      "minimum": 1,
+      "title": "Replay Count",
+      "type": "integer"
+    },
+    "replay_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Replay Digest"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    },
+    "started_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "title": "Started At",
+      "type": "string"
+    },
+    "usage": {
+      "$ref": "#/$defs/ResourceUsage"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "matrix_id",
+    "cell_id",
+    "intent_digest",
+    "grant_digest",
+    "grant_id",
+    "executor_id",
+    "started_at",
+    "completed_at",
+    "outcome",
+    "output",
+    "usage",
+    "determinism_level",
+    "replay_count"
+  ],
+  "title": "Receipt",
+  "type": "object"
+}

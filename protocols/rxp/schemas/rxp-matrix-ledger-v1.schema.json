@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "CellSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "decision_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision Digest"
+        },
+        "determinism_level": {
+          "$ref": "#/$defs/DeterminismLevel",
+          "default": "D0_UNVERIFIED"
+        },
+        "evidence_digests": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Digests",
+          "type": "array"
+        },
+        "grant_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grant Digest"
+        },
+        "intent_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Intent Digest",
+          "type": "string"
+        },
+        "receipt_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Receipt Digest"
+        },
+        "state": {
+          "$ref": "#/$defs/CellState"
+        }
+      },
+      "required": [
+        "cell_id",
+        "state",
+        "intent_digest"
+      ],
+      "title": "CellSnapshot",
+      "type": "object"
+    },
+    "CellState": {
+      "enum": [
+        "INTENT_RECORDED",
+        "GRANTED",
+        "RECEIPT_RECORDED",
+        "EVIDENCE_READY",
+        "DECIDED"
+      ],
+      "title": "CellState",
+      "type": "string"
+    },
+    "DeterminismLevel": {
+      "description": "Ordered evidence strength; names are stable protocol values.",
+      "enum": [
+        "D0_UNVERIFIED",
+        "D1_INPUTS_BOUND",
+        "D2_SEEDED_ENV_BOUND",
+        "D3_BYTE_REPLAY_VERIFIED"
+      ],
+      "title": "DeterminismLevel",
+      "type": "string"
+    },
+    "LedgerEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "causal_parents": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Causal Parents",
+          "type": "array"
+        },
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "document": {
+          "additionalProperties": true,
+          "title": "Document",
+          "type": "object"
+        },
+        "document_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Document Digest",
+          "type": "string"
+        },
+        "document_kind": {
+          "enum": [
+            "MatrixPlan",
+            "Intent",
+            "Grant",
+            "Receipt",
+            "Evidence",
+            "Decision"
+          ],
+          "title": "Document Kind",
+          "type": "string"
+        },
+        "entry_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Entry Digest",
+          "type": "string"
+        },
+        "event_type": {
+          "enum": [
+            "MATRIX_FROZEN",
+            "INTENT_RECORDED",
+            "GRANT_RECORDED",
+            "RECEIPT_RECORDED",
+            "EVIDENCE_RECORDED",
+            "DECISION_RECORDED"
+          ],
+          "title": "Event Type",
+          "type": "string"
+        },
+        "matrix_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+          "title": "Matrix Id",
+          "type": "string"
+        },
+        "previous_root": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Previous Root",
+          "type": "string"
+        },
+        "recorded_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "root": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "event_type",
+        "matrix_id",
+        "cell_id",
+        "document_kind",
+        "document_digest",
+        "document",
+        "causal_parents",
+        "previous_root",
+        "recorded_at",
+        "entry_digest",
+        "root"
+      ],
+      "title": "LedgerEntry",
+      "type": "object"
+    }
+  },
+  "$id": "https://egoagentos.dev/rxp/1/schemas/rxp-matrix-ledger-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/CellSnapshot"
+      },
+      "title": "Cells",
+      "type": "array"
+    },
+    "completeness": {
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE"
+      ],
+      "title": "Completeness",
+      "type": "string"
+    },
+    "decided_cell_count": {
+      "maximum": 10000,
+      "minimum": 0,
+      "title": "Decided Cell Count",
+      "type": "integer"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/LedgerEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "entry_count": {
+      "minimum": 0,
+      "title": "Entry Count",
+      "type": "integer"
+    },
+    "expected_cell_count": {
+      "maximum": 10000,
+      "minimum": 1,
+      "title": "Expected Cell Count",
+      "type": "integer"
+    },
+    "kind": {
+      "const": "MatrixLedger",
+      "default": "MatrixLedger",
+      "title": "Kind",
+      "type": "string"
+    },
+    "matrix_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$",
+      "title": "Matrix Id",
+      "type": "string"
+    },
+    "matrix_plan_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Matrix Plan Digest",
+      "type": "string"
+    },
+    "missing_decisions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Decisions",
+      "type": "array"
+    },
+    "root": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Root",
+      "type": "string"
+    },
+    "rxp_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Rxp Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "matrix_id",
+    "matrix_plan_digest",
+    "expected_cell_count",
+    "decided_cell_count",
+    "missing_decisions",
+    "completeness",
+    "entry_count",
+    "root",
+    "entries",
+    "cells"
+  ],
+  "title": "MatrixLedgerDocument",
+  "type": "object"
+}

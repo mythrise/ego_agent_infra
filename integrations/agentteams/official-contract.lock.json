@@ -1,0 +1,47 @@
+{
+  "schema": "egoagentos.agentteams-contract-lock.v1",
+  "repository": "https://github.com/agentscope-ai/AgentTeams",
+  "observed_at": "2026-08-29",
+  "stable": {
+    "tag": "v1.2.2",
+    "commit": "849182af8e017168a5a200a87b1062142caf462d",
+    "note": "Latest stable release shown by the official README during implementation."
+  },
+  "main": {
+    "commit": "223ddc2b8073e4c8b93bcbb15e1d717f196c04d9",
+    "describe": "v1.2.3",
+    "required_for_live_bridge": true,
+    "reason": "The Controller Project Workflow mutation/inspection endpoints are present on this main pin but were not shipped in v1.2.2."
+  },
+  "apiVersion": "agentteams.io/v1beta1",
+  "artifacts": [
+    {
+      "path": "helm/agentteams/crds/workers.agentteams.io.yaml",
+      "sha256": "993894baccb55ea3e9c6c546f3f67258d72e10809fd80ec372272a44da3d5cb5"
+    },
+    {
+      "path": "helm/agentteams/crds/managers.agentteams.io.yaml",
+      "sha256": "7240ef8a49b1b90a4b763d96c275f9cb95ef1e4ba19578d87d2b31de39ddda49"
+    },
+    {
+      "path": "helm/agentteams/crds/teams.agentteams.io.yaml",
+      "sha256": "4592d3eaf68256ae536a083709b6884081deddbd426d715a3d5f9432da153915"
+    },
+    {
+      "path": "helm/agentteams/crds/humans.agentteams.io.yaml",
+      "sha256": "853c89ec2508773f5f3dbf4f0fb6b5a9688e6e5724c1db4277f6ff15939c5bcd"
+    },
+    {
+      "path": "agentteams-controller/api/v1beta1/types.go",
+      "sha256": "508b9f10b62f0132236a3795107c93adfc9d389c6dacaa497baab9c0b1ca64b2"
+    },
+    {
+      "path": "plugins/teamharness/plugin.yaml",
+      "sha256": "0c740c91b19c249796409d1d66de37cec135edcf40c0924a254d32f4351e70b8"
+    },
+    {
+      "path": "docs/usage/project-workflow-api.md",
+      "sha256": "e305d3e69bf57d03381f27c70c5cbf8d7b4dfb469540d4ae7090a2ef75b57e16"
+    }
+  ]
+}

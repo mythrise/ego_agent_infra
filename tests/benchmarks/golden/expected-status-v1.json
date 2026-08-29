@@ -1,0 +1,34 @@
+{
+  "deterministic-core-v0.1": {
+    "concurrent_duplicate": "pass",
+    "crash_recovery": "pass",
+    "evidence_tamper": "pass",
+    "forged_reviewer": "pass",
+    "happy_path": "pass",
+    "matrix_cherry_pick": "skip",
+    "matrix_missing_seed": "skip",
+    "plan_conflict": "pass",
+    "skill_version_rollback": "skip",
+    "stale_context": "pass",
+    "token_expiry": "pass",
+    "token_replay": "pass",
+    "token_scope_mismatch": "pass",
+    "worker_timeout_reassign": "skip"
+  },
+  "scripted-negative-control-v1": {
+    "concurrent_duplicate": "fail",
+    "crash_recovery": "fail",
+    "evidence_tamper": "fail",
+    "forged_reviewer": "fail",
+    "happy_path": "fail",
+    "matrix_cherry_pick": "fail",
+    "matrix_missing_seed": "fail",
+    "plan_conflict": "fail",
+    "skill_version_rollback": "fail",
+    "stale_context": "fail",
+    "token_expiry": "fail",
+    "token_replay": "fail",
+    "token_scope_mismatch": "fail",
+    "worker_timeout_reassign": "fail"
+  }
+}

@@ -20,6 +20,7 @@ playwright-report/
 test-results/
 *.sqlite3
 *.db
+agentteams-benchmark-bindings*.json
 artifacts/runtime/
 submission/dist/
 .tmp/

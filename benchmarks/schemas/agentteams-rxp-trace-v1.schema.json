@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://egoagentos.dev/schemas/agentteams-rxp-trace-v1.schema.json",
+  "title": "EgoAgentOS AgentTeams + RXP Verified Trace v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "source",
+    "execution_mode",
+    "external_origin_status",
+    "seed",
+    "scenario_id",
+    "project_id",
+    "task_id",
+    "correlation_id",
+    "trace_id",
+    "context_version",
+    "agents",
+    "principals",
+    "events",
+    "rxp",
+    "bridge",
+    "official_contract",
+    "official_response_identifiers",
+    "snapshots",
+    "bridge_event_chain",
+    "replay",
+    "truth_boundary"
+  ],
+  "properties": {
+    "schema_version": {"const": "egoagentos.agentteams-trace/v1"},
+    "source": {"const": "AgentTeams"},
+    "execution_mode": {"const": "real-agentteams"},
+    "external_origin_status": {"const": "UNVERIFIED"},
+    "seed": {"type": "integer", "minimum": 0},
+    "scenario_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "correlation_id": {"type": "string", "minLength": 1},
+    "trace_id": {"type": "string", "minLength": 1},
+    "context_version": {"type": "integer", "minimum": 1},
+    "agents": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "role", "matrix_user_id", "source"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1},
+          "matrix_user_id": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "principals": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "kind", "source"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["bridge", "human", "ego", "agentteams"]},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["sequence", "type", "actor", "task_id", "correlation_id", "payload"],
+        "properties": {
+          "sequence": {"type": "integer", "minimum": 1},
+          "type": {"type": "string", "minLength": 1},
+          "actor": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "correlation_id": {"type": "string", "minLength": 1},
+          "payload": {"type": "object"}
+        }
+      }
+    },
+    "rxp": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["intent_digest", "grant_id", "receipt_digest", "evidence_digest", "matrix_root"]
+    },
+    "bridge": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["api_version", "endpoint", "run_id"]
+    },
+    "official_contract": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["repository", "main_commit", "api_version", "controller"]
+    },
+    "official_response_identifiers": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["project_id", "project_create_sha256", "matrix_root", "approval_matrix_event_id", "workflow_sha256"]
+    },
+    "snapshots": {"type": "array", "minItems": 1},
+    "bridge_event_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valid",
+        "hash_algorithm",
+        "external_origin_status",
+        "total",
+        "head",
+        "source_ledger_total",
+        "items"
+      ],
+      "properties": {
+        "valid": {"const": true},
+        "hash_algorithm": {"const": "sha256-canonical-json-v1"},
+        "external_origin_status": {"const": "UNVERIFIED"},
+        "total": {"type": "integer", "minimum": 1},
+        "head": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_ledger_total": {"type": "integer", "minimum": 1},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sequence",
+              "event_id",
+              "run_id",
+              "kind",
+              "envelope",
+              "previous_hash",
+              "event_hash",
+              "created_at"
+            ],
+            "properties": {
+              "sequence": {"type": "integer", "minimum": 1},
+              "event_id": {"type": "string", "minLength": 1},
+              "run_id": {"type": "string", "minLength": 1},
+              "kind": {"type": "string", "minLength": 1},
+              "envelope": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "schema",
+                  "envelope_id",
+                  "task_id",
+                  "project_id",
+                  "trace_id",
+                  "correlation_id",
+                  "context_version",
+                  "attempt",
+                  "kind",
+                  "sender",
+                  "recipient",
+                  "causation_id",
+                  "body",
+                  "body_sha256",
+                  "created_at"
+                ],
+                "properties": {
+                  "schema": {"const": "egoagentos.agentteams-envelope.v2"},
+                  "envelope_id": {"type": "string", "minLength": 1},
+                  "task_id": {"type": "string", "minLength": 1},
+                  "project_id": {"type": "string", "minLength": 1},
+                  "trace_id": {"type": "string", "minLength": 1},
+                  "correlation_id": {"type": "string", "minLength": 1},
+                  "context_version": {"type": "integer", "minimum": 1},
+                  "attempt": {"type": "integer", "minimum": 1},
+                  "kind": {
+                    "enum": [
+                      "TASK_REQUEST",
+                      "TASK_UPDATE",
+                      "ARTIFACT_ACCEPTED",
+                      "CONFLICT",
+                      "REPLAN",
+                      "APPROVAL_REQUIRED",
+                      "APPROVAL_GRANTED",
+                      "COMPENSATION",
+                      "TERMINAL"
+                    ]
+                  },
+                  "sender": {"type": "string", "minLength": 1},
+                  "recipient": {"type": "string", "minLength": 1},
+                  "causation_id": {"type": ["string", "null"]},
+                  "body": {"type": "object"},
+                  "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "created_at": {"type": "string", "format": "date-time"}
+                }
+              },
+              "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "created_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["run_ids", "semantic_digests"],
+      "properties": {
+        "run_ids": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+        "semantic_digests": {"type": "array", "minItems": 2, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+      }
+    },
+    "truth_boundary": {"type": "string", "minLength": 1}
+  }
+}

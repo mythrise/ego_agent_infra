@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://egoagentos.dev/schemas/rxp-bench-corpus-v1.json",
+  "title": "RXP Benchmark Corpus v1",
+  "type": "object",
+  "required": ["benchmark", "corpus_version", "default_repetitions", "master_seed", "scenarios"],
+  "properties": {
+    "benchmark": {"const": "rxp-bench/v1"},
+    "corpus_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "default_repetitions": {"type": "integer", "minimum": 1},
+    "master_seed": {"type": "integer", "minimum": 0},
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "title", "description", "capability", "expected_invariant"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "category": {"type": "string"},
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "capability": {"type": "string"},
+          "expected_invariant": {"type": "string"}
+        }
+      }
+    }
+  }
+}

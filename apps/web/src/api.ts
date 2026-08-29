@@ -1,4 +1,5 @@
 import { syntheticTask } from "./demoData";
+import { syntheticRXP } from "./rxpDemoData";
 import { createStaticReplayApi } from "./staticReplay";
 import { STAGES } from "./types";
 import type {
@@ -11,12 +12,38 @@ import type {
   IntegrationTruth,
   ResearchStage,
   ResearchTask,
+  RXPProtocolData,
   ResourceSnapshot,
   TraceEvent,
 } from "./types";
 
 const API_ROOT = import.meta.env.VITE_API_ROOT ?? "/api/v1";
 const FORCE_STATIC_REPLAY = import.meta.env.VITE_STATIC_DEMO === "true";
+const APPROVAL_TOKEN_HEADER = "X-Ego-Approval-Token";
+const MIN_OPERATOR_KEY_BYTES = 32;
+const MAX_OPERATOR_KEY_BYTES = 4096;
+
+// Deliberately module-memory only. The operator key must never be persisted,
+// placed in a URL, or compiled into the frontend bundle.
+let operatorSessionKey: string | undefined;
+
+export function connectOperatorSession(key: string): void {
+  const byteLength = new TextEncoder().encode(key).length;
+  if (byteLength < MIN_OPERATOR_KEY_BYTES || byteLength > MAX_OPERATOR_KEY_BYTES) {
+    throw new Error(
+      `Operator key must contain ${MIN_OPERATOR_KEY_BYTES}-${MAX_OPERATOR_KEY_BYTES} UTF-8 bytes.`,
+    );
+  }
+  operatorSessionKey = key;
+}
+
+export function clearOperatorSession(): void {
+  operatorSessionKey = undefined;
+}
+
+export function operatorSessionConnected(): boolean {
+  return operatorSessionKey !== undefined;
+}
 
 class ApiError extends Error {
   status: number;
@@ -28,13 +55,17 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function taskEventStreamUrl(taskId: string): string {
+  return `${API_ROOT}/tasks/${encodeURIComponent(taskId)}/event-stream`;
+}
+
+async function checkedResponse(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (operatorSessionKey) headers.set("Authorization", `Bearer ${operatorSessionKey}`);
   const response = await fetch(`${API_ROOT}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -51,6 +82,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(response.status, detail);
   }
+
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await checkedResponse(path, init);
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -337,6 +374,48 @@ function normalizeIntegration(value: unknown, index: number): IntegrationTruth {
   };
 }
 
+export function normalizeRXP(value: unknown): RXPProtocolData {
+  const row = record(value);
+  const ledger = record(row.ledger ?? row);
+  return {
+    protocol: text(row.protocol, "RXP/1.0"),
+    executionClass: text(row.execution_class, "unknown"),
+    physicalGpuRun: row.physical_gpu_run === true,
+    productionSignatureTrust: row.production_signature_trust === true,
+    fixtureSignatureVerified: row.fixture_signature_verified === true,
+    structuralVerification: (["PASS", "FAIL", "NOT_RUN"] as const).includes(
+      text(row.structural_verification, "NOT_RUN") as RXPProtocolData["structuralVerification"],
+    )
+      ? (text(row.structural_verification, "NOT_RUN") as RXPProtocolData["structuralVerification"])
+      : "NOT_RUN",
+    verificationNotice: text(
+      row.fixture_key_notice,
+      "No production issuer trust claim was supplied.",
+    ),
+    matrixId: text(ledger.matrix_id, "matrix:not-emitted"),
+    completeness: text(ledger.completeness) === "COMPLETE" ? "COMPLETE" : "INCOMPLETE",
+    expectedCellCount: number(ledger.expected_cell_count) ?? 0,
+    decidedCellCount: number(ledger.decided_cell_count) ?? 0,
+    missingDecisions: array(ledger.missing_decisions).map((item) => text(item, "unknown-cell")),
+    entryCount: number(ledger.entry_count) ?? 0,
+    root: text(ledger.root, "not-emitted"),
+    canonicalSha256: text(row.canonical_sha256, "not-emitted"),
+    cells: array(ledger.cells).map((item, index) => {
+      const cell = record(item);
+      return {
+        cellId: text(cell.cell_id, `cell-${index}`),
+        state: text(cell.state, "UNKNOWN"),
+        determinismLevel: text(cell.determinism_level, "D0_UNVERIFIED"),
+        intentDigest: text(cell.intent_digest, "not-emitted"),
+        grantDigest: text(cell.grant_digest) || undefined,
+        receiptDigest: text(cell.receipt_digest) || undefined,
+        decisionDigest: text(cell.decision_digest) || undefined,
+        evidenceCount: array(cell.evidence_digests).length,
+      };
+    }),
+  };
+}
+
 export function normalizeDashboard(value: unknown, integrationsValue?: unknown): DashboardData {
   const row = record(value);
   const taskValues = array(row.tasks);
@@ -404,10 +483,20 @@ const backendApi = {
   },
 
   async decide(approvalId: string, payload: DecisionRequest): Promise<{ approval_token?: string }> {
-    return request(`/approvals/${encodeURIComponent(approvalId)}/decision`, {
+    const response = await checkedResponse(`/approvals/${encodeURIComponent(approvalId)}/decision`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    const body = (await response.json()) as { approval_token?: string | null };
+    const headerToken = response.headers.get(APPROVAL_TOKEN_HEADER);
+    return {
+      ...body,
+      approval_token: headerToken ?? body.approval_token ?? undefined,
+    };
+  },
+
+  async rxpDemo(): Promise<RXPProtocolData> {
+    return normalizeRXP(await request<unknown>("/rxp/demo"));
   },
 };
 
@@ -453,6 +542,10 @@ export function createResearchApi(forceStaticReplay = FORCE_STATIC_REPLAY) {
       return mode === "static_replay"
         ? staticReplay.decide(approvalId, payload)
         : backendApi.decide(approvalId, payload);
+    },
+
+    async rxpDemo(): Promise<RXPProtocolData> {
+      return mode === "static_replay" ? structuredClone(syntheticRXP) : backendApi.rxpDemo();
     },
   };
 }

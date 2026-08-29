@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://egoagentos.dev/schemas/polardb-live-acceptance-v1.json",
+  "title": "EgoAgentOS PolarDB live acceptance manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "target", "operations", "truth_boundary"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": "egoagentos.polardb-live-acceptance/v1"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "expected_database",
+        "writer_url_env",
+        "minimum_server_version_num",
+        "require_tls",
+        "require_polardb_marker",
+        "require_read_endpoint",
+        "require_rls",
+        "require_force_rls",
+        "require_role_logins",
+        "disposable_database_prefix",
+        "disposable_database_marker",
+        "roles",
+        "pgvector"
+      ],
+      "properties": {
+        "environment": {"enum": ["nonproduction", "staging", "production"]},
+        "expected_database": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 63,
+          "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,62}$"
+        },
+        "writer_url_env": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+        "reader_url_env": {"type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]*$"},
+        "runtime_url_env": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable containing a dedicated LOGIN URL whose identity is a MEMBER of roles.runtime"
+        },
+        "auditor_url_env": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable containing a dedicated LOGIN URL whose identity is a MEMBER of roles.auditor"
+        },
+        "evidence_writer_url_env": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable containing a dedicated LOGIN URL whose identity is a MEMBER of roles.evidence_writer"
+        },
+        "memory_curator_url_env": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable containing a dedicated LOGIN URL whose identity is a MEMBER of roles.memory_curator"
+        },
+        "minimum_server_version_num": {"type": "integer", "minimum": 110000},
+        "require_tls": {"type": "boolean"},
+        "require_polardb_marker": {"type": "boolean"},
+        "require_read_endpoint": {"type": "boolean"},
+        "require_rls": {"type": "boolean"},
+        "require_force_rls": {"type": "boolean"},
+        "require_role_logins": {"type": "boolean"},
+        "disposable_database_prefix": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 63,
+          "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{7,62}$"
+        },
+        "disposable_database_marker": {"const": "EGOAGENTOS_DISPOSABLE_DATABASE_V1"},
+        "roles": {
+          "type": "object",
+          "description": "Expected NOLOGIN capability groups. The dedicated LOGIN identities come from the corresponding *_url_env connection URLs and must be members of these groups.",
+          "additionalProperties": false,
+          "required": ["runtime", "auditor", "evidence_writer", "memory_curator"],
+          "properties": {
+            "runtime": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 63,
+              "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,62}$"
+            },
+            "auditor": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 63,
+              "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,62}$"
+            },
+            "evidence_writer": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 63,
+              "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,62}$"
+            },
+            "memory_curator": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 63,
+              "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,62}$"
+            }
+          }
+        },
+        "pgvector": {"enum": ["optional", "required", "disabled"]}
+      }
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fresh_schema_replay", "pitr_restore", "multi_az_failover"],
+      "properties": {
+        "active_notify": {"type": "boolean"},
+        "active_topology": {"type": "boolean"},
+        "fresh_schema_replay": {"$ref": "#/$defs/operation"},
+        "pitr_restore": {
+          "allOf": [
+            {"$ref": "#/$defs/operation"},
+            {
+              "type": "object",
+              "properties": {
+                "restore_job_id": {"type": ["string", "null"]},
+                "restore_target": {"type": ["string", "null"]},
+                "requested_restore_time": {"type": ["string", "null"]},
+                "observed_rpo_seconds": {"type": ["number", "null"], "minimum": 0},
+                "observed_rto_seconds": {"type": ["number", "null"], "minimum": 0},
+                "event_chain_verified": {"type": "boolean"},
+                "teardown_record": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        },
+        "multi_az_failover": {"$ref": "#/$defs/operation"}
+      }
+    },
+    "truth_boundary": {"type": "object"}
+  },
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "required": ["authorized", "status"],
+      "properties": {
+        "authorized": {"type": "boolean"},
+        "status": {"type": "string"}
+      }
+    }
+  }
+}

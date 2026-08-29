@@ -131,8 +131,37 @@ export interface DashboardData {
   generatedAt: string;
 }
 
+export interface RXPCell {
+  cellId: string;
+  state: string;
+  determinismLevel: string;
+  intentDigest: string;
+  grantDigest?: string;
+  receiptDigest?: string;
+  decisionDigest?: string;
+  evidenceCount: number;
+}
+
+export interface RXPProtocolData {
+  protocol: string;
+  executionClass: string;
+  physicalGpuRun: boolean;
+  productionSignatureTrust: boolean;
+  fixtureSignatureVerified: boolean;
+  structuralVerification: "PASS" | "FAIL" | "NOT_RUN";
+  verificationNotice: string;
+  matrixId: string;
+  completeness: "COMPLETE" | "INCOMPLETE";
+  expectedCellCount: number;
+  decidedCellCount: number;
+  missingDecisions: string[];
+  entryCount: number;
+  root: string;
+  canonicalSha256: string;
+  cells: RXPCell[];
+}
+
 export interface DecisionRequest {
   decision: "approved" | "denied";
-  approver: string;
   expected_digest: string;
 }

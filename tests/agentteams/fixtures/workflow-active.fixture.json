@@ -1,0 +1,14 @@
+{
+  "_fixture_notice": "CONTRACT FIXTURE ONLY — not a live AgentTeams response",
+  "project_id": "ego-task-live-v1-00000000",
+  "title": "EgoAgentOS fixture project",
+  "status": "active",
+  "plan_type": "dag",
+  "team_id": "ego-researchops",
+  "mode": "project",
+  "nodes": [],
+  "edges": [],
+  "next": [],
+  "interrupts": [],
+  "tasks_detail": []
+}

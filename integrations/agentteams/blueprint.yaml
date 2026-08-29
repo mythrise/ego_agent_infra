@@ -1,41 +1,57 @@
-schema: egoagentos.agentteams-blueprint.v1
+schema: egoagentos.agentteams-blueprint.v2
 name: egoagentos-researchops
-mode: manager-worker
-source_of_truth: egoagentos-control-plane-api
-room_policy:
-  scope: agentteams-managed-with-task-correlation
-  task_key: task_id
-  human_observable: true
-  human_approval_transport: api-only
-manager:
-  identity: ../../agents/research-pi.yaml
-  owns: [control_flow, task_decomposition, result_aggregation]
-workers:
-  - ../../agents/scout.yaml
-  - ../../agents/experiment-architect.yaml
-  - ../../agents/runtime.yaml
-  - ../../agents/evaluator.yaml
-  - ../../agents/reviewer.yaml
-  - ../../agents/memory-curator.yaml
-command_transport:
-  schema: ./message-envelope.schema.json
-  accepted_kinds: [command, artifact_ref, review, status, approval_request]
-  rejects: [raw_shell, embedded_secret, unbound_metric, chat_approval]
+truth_boundary:
+  live_requires:
+    - official-controller-health
+    - team-phase-active
+    - team-leader-ready
+    - all-worker-members-ready
+    - matrix-event-id
+    - controller-project-workflow
+  dry_run_label: DRY_RUN_ONLY
+official_contract:
+  repository: https://github.com/agentscope-ai/AgentTeams
+  stable_tag: v1.2.2
+  stable_commit: 849182af8e017168a5a200a87b1062142caf462d
+  main_commit: 223ddc2b8073e4c8b93bcbb15e1d717f196c04d9
+  api_version: agentteams.io/v1beta1
+control_plane:
+  source_of_truth: egoagentos-api
+  bridge: ../../apps/agentteams_bridge
+collaboration_plane:
+  resource: Team/ego-researchops
+  team_leader: Worker/ego-research-lead
+  manager: Manager/ego-manager
+  transport: Matrix
+  runtime_protocol: TeamHarness
 state_mapping:
-  INTAKE: research-pi
-  CONTEXT: scout
-  PLAN: experiment-architect
-  PLAN_REVIEW: reviewer
-  APPROVAL: research-pi
-  EXECUTE: runtime
-  OBSERVE: runtime
-  EVALUATE: evaluator
-  VERIFY: reviewer
-  DECIDE: research-pi
-  ARCHIVE: research-pi
-  MEMORY_SKILL: memory-curator
-security:
-  external_calls: higress-consumer-token
-  upstream_secrets_in_workers: forbidden
-  state_mutation: control-plane-api-only
-  r2_r3_approval: scoped-api-token-only
+  AgentTeams:
+    planned: pending
+    assigned: delegated
+    in_progress: in-progress
+    submitted: in-progress
+    completed: completed
+    revision: revision
+    blocked: blocked
+    cancelled: blocked
+  EgoAgentOS:
+    CONTEXT: ego-scout
+    PLAN: ego-architect
+    PLAN_REVIEW: ego-reviewer
+    APPROVAL: bridge-pause-and-human-r2
+    EXECUTE: ego-runtime
+    OBSERVE: ego-runtime
+    EVALUATE: ego-evaluator
+    VERIFY: ego-reviewer
+    MEMORY_SKILL: ego-memory-curator
+failure_semantics:
+  conflict: result-envelope-or-agentteams-terminal-state
+  replan: POST-/api/v1/projects/{id}/replan
+  timeout: controller-task-cancel-plus-replacementTaskId
+  resume: scoped-ego-r2-token-then-controller-resume
+  compensation: pause-project-and-persist-recovery-checkpoint
+observability:
+  task_trace: agentteams.task.id
+  project_trace: agentteams.project.id
+  bridge_correlation: [task_id, project_id, trace_id, correlation_id, context_version]
+  skill_evidence_levels: [DECLARED, SPAWN_AUTHORIZED, TOOL_INVOKED]

@@ -28,15 +28,18 @@ stateDiagram-v2
 ## Invariants
 
 - Only the control-plane transition function can change `current_stage`.
-- Every local mutation uses one SQLite transaction, optimistic version checking, and an
-  immutable hash-chained audit event; an executor failure rolls the approval consumption
-  and stage claim back together.
+- Every mutation uses one store transaction. PostgreSQL is the production path and combines
+  optimistic versions with row/advisory locks and database-enforced append-only audit events;
+  SQLite implements the same atomic contract only as the developer fallback. An executor
+  failure rolls the approval consumption and stage claim back together.
 - `PLAN → DONE`, `APPROVAL → DECIDE`, and all other shortcuts are illegal.
 - R2/R3 can leave APPROVAL only with a matching, unexpired, single-use approval.
 - The shipped local OBSERVE stage records an explicitly synthetic terminal log fixture.
 - VERIFY can enter DECIDE only with a PASS result from the configured gate version.
 - A Decision binds the gate digest and metric snapshot.
-- A validated memory binds a final decision and evidence closure.
+- The Memory Curator may only append a candidate. A separate deterministic
+  `memory-validator` can promote it to validated memory after binding the final Decision and
+  evidence closure.
 
 See backend tests for the allow/deny matrix and branch coverage.
 

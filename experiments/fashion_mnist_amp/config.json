@@ -1,0 +1,52 @@
+{
+  "schema": "egoagentos.real-gpu-config/v1",
+  "workload_id": "fashion-mnist-amp-v1",
+  "dataset": {
+    "name": "FashionMNIST",
+    "source": "https://github.com/zalandoresearch/fashion-mnist",
+    "license": "MIT",
+    "synthetic": false,
+    "download": false,
+    "train_samples": 8192,
+    "eval_samples": 1024
+  },
+  "model": {
+    "architecture": "tiny-cnn-v1",
+    "classes": 10,
+    "epochs": 2,
+    "train_batch_size": 512,
+    "eval_batch_size": 512,
+    "learning_rate": 0.001
+  },
+  "comparison": {
+    "baseline": "cuda-fp32",
+    "candidate": "cuda-amp-fp16",
+    "warmup_repetitions": 5,
+    "latency_repetitions": 20,
+    "max_accuracy_degradation": 0.005,
+    "min_latency_speedup": 0.0
+  },
+  "budget": {
+    "gpu_count": 1,
+    "max_duration_seconds": 900,
+    "max_gpu_hours": 0.25,
+    "max_download_bytes": 104857600
+  },
+  "governance": {
+    "risk_level": "R2",
+    "human_approval_required": true,
+    "max_physical_launches": 1,
+    "independent_review_required": true
+  },
+  "telemetry": {
+    "nvidia_smi_path": "/usr/bin/nvidia-smi",
+    "sampling": "stage_boundaries"
+  },
+  "determinism": {
+    "cublas_workspace_config": ":4096:8",
+    "deterministic_algorithms": true,
+    "cudnn_benchmark": false,
+    "tf32": false
+  },
+  "seed": 42
+}
