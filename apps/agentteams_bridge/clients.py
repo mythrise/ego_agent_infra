@@ -560,11 +560,13 @@ class EgoClient(JSONClient):
         self,
         base_url: str,
         *,
+        operator_key: str = "",
         timeout: float = 15.0,
         transport: Optional[HTTPTransport] = None,
     ) -> None:
         super().__init__(
             base_url,
+            token=operator_key,
             timeout=timeout,
             transport=transport,
             upstream_name="egoagentos",

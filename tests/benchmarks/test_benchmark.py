@@ -380,6 +380,22 @@ def test_release_gate_fails_closed_on_target_skips(tmp_path: Path) -> None:
     assert any("passed 0/14" in failure for failure in failures)
 
 
+def test_live_opt_in_is_an_explicit_unimplemented_skip_not_adapter_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AGENTTEAMS_BENCHMARK_LIVE", "1")
+
+    observation = AgentTeamsRXPProfile().run(_happy(), 7, 0, tmp_path)
+
+    assert observation.status == "skip"
+    assert observation.reason is not None and "not implemented" in observation.reason
+    assert observation.details["capability_status"] == "UNIMPLEMENTED"
+    assert observation.details["execution_mode"] == (
+        "agentteams-live-target-unimplemented"
+    )
+    assert not list(tmp_path.glob("agentteams-live-trace.json"))
+
+
 def test_development_strict_gate_does_not_mislabel_negative_control_as_safe() -> None:
     result = run_benchmark([ScriptedNegativeControlProfile()], 1, 20260829)
     assert strict_failures(result) == []

@@ -88,11 +88,7 @@ def test_bridge_store_restarts_from_jsonb_checkpoint_and_replays_migration_once(
         run.model_copy(update={"checkpoint": checkpoint}), expected_version=run.version
     )
     non_utc_envelope = _envelope(run, 1).model_copy(
-        update={
-            "created_at": datetime(
-                2026, 8, 29, 21, 30, tzinfo=timezone(timedelta(hours=8))
-            )
-        }
+        update={"created_at": datetime(2026, 8, 29, 21, 30, tzinfo=timezone(timedelta(hours=8)))}
     )
     first.append_event(run.id, non_utc_envelope)
     first.archive_receipt(
@@ -187,13 +183,62 @@ def test_concurrent_event_writers_form_one_database_serialized_chain(postgres_ur
 def test_bridge_event_rejects_naive_timestamp(postgres_url: str) -> None:
     store = PostgresBridgeStore(postgres_url)
     run = store.create_run(_run())
-    naive = _envelope(run, 1).model_copy(
-        update={"created_at": datetime(2026, 8, 29, 21, 30)}
-    )
+    naive = _envelope(run, 1).model_copy(update={"created_at": datetime(2026, 8, 29, 21, 30)})
     with pytest.raises(BridgeError) as raised:
         store.append_event(run.id, naive)
     assert raised.value.code == "event_time_invalid"
     assert store.events(run.id)["total"] == 0
+
+
+def test_bridge_ledgers_require_the_current_operation_lease_owner(
+    postgres_url: str,
+) -> None:
+    store = PostgresBridgeStore(postgres_url)
+    run = store.create_run(_run())
+    claimed = store.claim_operation(
+        run.id,
+        "ledger-fence",
+        "owner-a",
+        timeout_seconds=30,
+    )
+
+    for owner in (None, "owner-b"):
+        with pytest.raises(BridgeError) as event_error:
+            store.append_event(run.id, _envelope(run, 1), lease_owner=owner)
+        assert event_error.value.code == "operation_lease_lost"
+        with pytest.raises(BridgeError) as receipt_error:
+            store.archive_receipt(
+                run.id,
+                receipt_key="lease-fence:%s" % (owner or "missing"),
+                source="test",
+                kind="lease-fence",
+                payload={"owner": owner},
+                lease_owner=owner,
+            )
+        assert receipt_error.value.code == "operation_lease_lost"
+
+    renewed = store.renew_operation(
+        run.id,
+        "owner-a",
+        timeout_seconds=30,
+    )
+    assert renewed.checkpoint["_operation_lease"]["owner_id"] == "owner-a"
+    event = store.append_event(
+        run.id,
+        _envelope(claimed, 2),
+        lease_owner="owner-a",
+    )
+    receipt = store.archive_receipt(
+        run.id,
+        receipt_key="lease-fence:owner-a",
+        source="test",
+        kind="lease-fence",
+        payload={"owner": "owner-a"},
+        lease_owner="owner-a",
+    )
+    assert event["sequence"] == 1
+    assert receipt["sequence"] == 1
+    store.release_operation(run.id, "owner-a")
 
 
 def test_concurrent_receipt_replay_is_idempotent_and_conflicts_fail_closed(
@@ -323,8 +368,7 @@ def test_bridge_runtime_role_cannot_mutate_ledgers_or_disable_triggers(
     run = store.create_run(_run())
     store.append_event(run.id, _envelope(run, 1))
     security_sql = (
-        Path(__file__).resolve().parents[2]
-        / "deploy/postgres/agentteams_bridge_security.sql"
+        Path(__file__).resolve().parents[2] / "deploy/postgres/agentteams_bridge_security.sql"
     ).read_text(encoding="utf-8")
     with psycopg.connect(postgres_url) as connection:
         connection.execute(security_sql)
@@ -360,7 +404,7 @@ def test_bridge_runtime_role_cannot_mutate_ledgers_or_disable_triggers(
                 connection.execute(statement, parameters)
 
     login_role = "egoagentos_bridge_login_test"
-    login_password = "bridge-runtime-local-only"
+    login_password = "b" * 64
     with psycopg.connect(postgres_url, autocommit=True) as connection:
         exists = connection.execute(
             "SELECT 1 FROM pg_roles WHERE rolname=%s", (login_role,)
@@ -372,15 +416,32 @@ def test_bridge_runtime_role_cannot_mutate_ledgers_or_disable_triggers(
                 )
             )
         connection.execute(
-            sql.SQL("GRANT egoagentos_bridge_runtime TO {}").format(
-                sql.Identifier(login_role)
-            )
+            sql.SQL("GRANT egoagentos_bridge_runtime TO {}").format(sql.Identifier(login_role))
         )
 
-    runtime_store = PostgresBridgeStore(
-        _login_url(postgres_url, login_role, login_password),
-        migration_database_url=postgres_url,
-    )
+    runtime_url = _login_url(postgres_url, login_role, login_password)
+    runtime_store = PostgresBridgeStore(runtime_url, migration_mode="verify")
+    with psycopg.connect(runtime_url) as connection:
+        state = connection.execute(
+            """
+            SELECT current_user, session_user, rolsuper, rolcreatedb, rolcreaterole,
+                   rolreplication, rolbypassrls,
+                   has_schema_privilege(current_user, 'public', 'CREATE')
+              FROM pg_roles WHERE rolname=current_user
+            """
+        ).fetchone()
+        assert state == (
+            login_role,
+            login_role,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("CREATE TABLE bridge_runtime_must_not_create(id integer)")
     assert runtime_store.get_run(run.id).id == run.id
     runtime_store.append_event(run.id, _envelope(run, 2))
     runtime_store.archive_receipt(

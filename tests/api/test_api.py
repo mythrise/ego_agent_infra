@@ -5,6 +5,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from tests.api.operator_auth_helpers import (
+    TEST_AUTHORIZATION_HEADERS,
+    TEST_OPERATOR_ID,
+    TEST_OPERATOR_KEY,
+)
 
 
 TASK_ID = "ego-lite-001"
@@ -29,7 +34,7 @@ def _approve(client: TestClient, approval):
         "/api/v1/approvals/%s/decision" % approval["id"],
         json={
             "decision": "approved",
-            "approver": "demo-operator",
+            "approver": TEST_OPERATOR_ID,
             "expected_digest": approval["action_digest"],
         },
         headers={"Idempotency-Key": "approve-demo-0001"},
@@ -76,7 +81,7 @@ def test_e2e_happy_path_pauses_for_human_then_completes(client: TestClient) -> N
         "/api/v1/approvals/%s/decision" % approval["id"],
         json={
             "decision": "approved",
-            "approver": "demo-operator",
+            "approver": TEST_OPERATOR_ID,
             "expected_digest": "0" * 64,
         },
     )
@@ -137,7 +142,7 @@ def test_approval_decision_is_idempotent_and_token_is_still_single_use(client: T
     approval = _pause_for_approval(client)
     request = {
         "decision": "approved",
-        "approver": "demo-operator",
+        "approver": TEST_OPERATOR_ID,
         "expected_digest": approval["action_digest"],
     }
     first = client.post(
@@ -175,7 +180,7 @@ def test_approval_idempotency_cache_never_persists_plaintext_token(client: TestC
     approval = _pause_for_approval(client)
     request = {
         "decision": "approved",
-        "approver": "cache-auditor",
+        "approver": TEST_OPERATOR_ID,
         "expected_digest": approval["action_digest"],
     }
     first = client.post(
@@ -206,7 +211,7 @@ def test_reentering_approval_after_denial_issues_a_fresh_record(client: TestClie
         "/api/v1/approvals/%s/decision" % original["id"],
         json={
             "decision": "denied",
-            "approver": "risk-owner",
+            "approver": TEST_OPERATOR_ID,
             "expected_digest": original["action_digest"],
         },
     )
@@ -294,14 +299,27 @@ def test_idempotency_key_reuse_with_different_body_is_rejected(client: TestClien
 
 def test_sqlite_survives_restart_and_audit_rows_are_immutable(tmp_path: Path) -> None:
     database = tmp_path / "persistent.sqlite3"
-    with TestClient(create_app(str(database))) as first_client:
+    with TestClient(
+        create_app(
+            str(database),
+            operator_key=TEST_OPERATOR_KEY,
+            operator_id=TEST_OPERATOR_ID,
+        )
+    ) as first_client:
+        first_client.headers.update(TEST_AUTHORIZATION_HEADERS)
         advanced = first_client.post(
             "/api/v1/tasks/%s/advance" % TASK_ID, json={"target": "CONTEXT"}
         )
         assert advanced.status_code == 200
         generation = advanced.json()["task"]["generation"]
 
-    with TestClient(create_app(str(database))) as restarted_client:
+    with TestClient(
+        create_app(
+            str(database),
+            operator_key=TEST_OPERATOR_KEY,
+            operator_id=TEST_OPERATOR_ID,
+        )
+    ) as restarted_client:
         persisted = restarted_client.get("/api/v1/tasks/%s" % TASK_ID)
         assert persisted.status_code == 200
         assert persisted.json()["stage"] == "CONTEXT"

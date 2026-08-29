@@ -34,7 +34,11 @@ VITE_STATIC_DEMO=true VITE_BASE_PATH=/ego_agent_infra/ npm --prefix apps/web run
 
 ```bash
 cp .env.example .env
-# 将 `openssl rand -hex 32` 的输出填入 .env 的 EGO_POSTGRES_PASSWORD
+# 分别执行 `openssl rand -hex 32`，为以下五项填入互不复用的值：
+# EGO_POSTGRES_PASSWORD、EGO_RUNTIME_PASSWORD、
+# EGO_AGENTTEAMS_RUNTIME_PASSWORD、EGO_OPERATOR_KEY、
+# EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY
+# 仅为本地浏览器 synthetic Judge Replay，将 EGO_ALLOW_UNAUTHENTICATED_DEMO 改为 true
 docker compose up --build
 ```
 
@@ -47,7 +51,7 @@ docker compose up --build
 默认场景明确标记为 **SYNTHETIC DEMO DATA**。它真实运行控制面、PostgreSQL 16 状态、审批、哈希、评测、证据门禁与审计，但不会声称已经使用 8×RTX 4090 训练，也不会伪造 PolarDB/PITR、AgentTeams、Nacos 或 Higress 在线状态。生产数据路径是 PostgreSQL；直接启动 API 且不设置 `EGO_DATABASE_URL` 时，才使用 SQLite 开发 fallback。
 
 截至 2026-08-29，本机已通过 `docker compose config` 和真实 PostgreSQL 16.14
-数据层的 27/27 集成测试；API/Web 镜像构建在拉取 Docker Hub metadata 时网络超时，
+数据层的 32/32 集成测试；API/Web 镜像构建在拉取 Docker Hub metadata 时网络超时，
 因此本仓库不把这次 `docker compose up --build` 记作已验证镜像构建。评委网络可用时可
 直接走上述一键路径；原生启动路径不依赖镜像拉取：
 
@@ -57,6 +61,10 @@ docker compose up --build
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[dev]'
+export EGO_OPERATOR_KEY="$(openssl rand -hex 32)"
+export EGO_OPERATOR_ID=local.judge
+# 仅开放固定 demo.operator 身份的 synthetic 路径；live 写接口仍必须带 Bearer key
+export EGO_ALLOW_UNAUTHENTICATED_DEMO=true
 uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
 
 npm --prefix apps/web ci
@@ -247,11 +255,11 @@ make install
 make test
 ```
 
-截至 **2026-08-29** 的当前提交快照为 **210 个测试**：API 56、RXP 26、Skills 6、
-Semifinal proof 2、Benchmark 28、Acceptance 16、AgentTeams 28、Experiments 13、MCP 23、
-Web 12。这个数字是带日期的提交证据，不是永久承诺；后续提交应以实时 `make test` 与
-CI 输出为准。真实本地 PostgreSQL 16.14 集成套件为 27/27，因需要显式数据库 URL，
-不计入上述默认 210。
+截至 **2026-08-29** 的当前提交快照为 **242 个测试**：API 69、RXP 26、Skills 6、
+Semifinal proof 3、Benchmark 29、Acceptance 16、AgentTeams 41、Experiments 13、MCP 23、
+Web 16。这个数字是带日期的提交证据，不是永久承诺；后续提交应以实时 `make test` 与
+CI 输出为准。真实本地 PostgreSQL 16.14 集成套件为 32/32，因需要显式数据库 URL，
+不计入上述默认 242。
 
 分项运行：
 
@@ -301,9 +309,9 @@ submission/               ≤500 字简介、答辩稿、演示与提交清单
 
 | Integration | 本仓库状态 | 不做的虚假声明 |
 |---|---|---|
-| AgentTeams | 可执行 Controller/Matrix bridge、PostgreSQL checkpoint/event/receipt backend、7 Worker/1 Team/1 Manager 资源与官方契约锁；本机无 live 配置，target benchmark 诚实 `SKIP` | contract/fixture 测试不冒充 live；只有真实握手与 trace 才可升级 claim |
+| AgentTeams | 可执行 Controller/Matrix bridge、PostgreSQL checkpoint/event/receipt backend、7 Worker/1 Team/1 Manager 资源与官方契约锁；逐场景 fault/replay harness 尚未实现，target benchmark 即使 live opt-in 也诚实 `UNIMPLEMENTED/SKIP` | contract/fixture 测试不冒充 live；只有真实逐场景故障注入、fresh replay 与 trace 才可升级 claim |
 | Nacos | 6 个 Skill package + 本地进程内 registry/lifecycle reference | 不声称 Skill 已上线或 rollout 状态已持久化 |
-| PostgreSQL / PolarDB-PG | PostgreSQL 为生产数据路径；真实本地 16.14 合同测试 27/27 PASS，含最小权限、append-only、LISTEN/NOTIFY、迁移校验和与 preflight | PolarDB 云部署、备份策略、PITR 与实测 RPO/RTO 明确为 `NOT RUN` |
+| PostgreSQL / PolarDB-PG | PostgreSQL 为生产数据路径；真实本地 16.14 合同测试 32/32 PASS，含最小权限、历史直授权清理、append-only、LISTEN/NOTIFY、迁移校验和与 preflight | PolarDB 云部署、备份策略、PITR 与实测 RPO/RTO 明确为 `NOT RUN` |
 | Higress | 精确 MCP route / credential policy contract | 不声称 gateway 已部署或完成 secret-isolation 负测 |
 | Aliyun SLS Skill | 只读官方 Skill 选择与 lock | 不声称已查询真实项目日志 |
 | GPU / EgoLite | synthetic UI fixture；另有真实 Fashion-MNIST 单 GPU FP32/AMP adapter 与验收 verifier | adapter 已实现不等于已运行；官方 GPU/AgentTeams origin 仍为 `UNVERIFIED` |

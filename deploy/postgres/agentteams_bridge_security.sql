@@ -10,6 +10,18 @@ BEGIN
 END
 $$;
 
+ALTER ROLE egoagentos_bridge_runtime
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+DO $$
+BEGIN
+    EXECUTE format(
+        'GRANT CONNECT ON DATABASE %I TO egoagentos_bridge_runtime',
+        current_database()
+    );
+END
+$$;
+
 GRANT USAGE ON SCHEMA public TO egoagentos_bridge_runtime;
 REVOKE ALL ON bridge_runs, bridge_events, bridge_receipts, bridge_schema_migrations
     FROM egoagentos_bridge_runtime;
@@ -18,6 +30,7 @@ GRANT SELECT, INSERT ON bridge_runs TO egoagentos_bridge_runtime;
 GRANT UPDATE(state, task_graph, checkpoint, version, updated_at)
     ON bridge_runs TO egoagentos_bridge_runtime;
 GRANT SELECT, INSERT ON bridge_events, bridge_receipts TO egoagentos_bridge_runtime;
+GRANT SELECT ON bridge_schema_migrations TO egoagentos_bridge_runtime;
 
 REVOKE ALL ON FUNCTION egoagentos_bridge_guard_event_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION egoagentos_bridge_guard_receipt_insert() FROM PUBLIC;

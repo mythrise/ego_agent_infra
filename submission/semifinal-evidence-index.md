@@ -34,17 +34,17 @@ fail-closed: without live AgentTeams evidence it exits non-zero and records SKIP
 | RXP verifier/API | `protocols/rxp/`, `/api/v1/rxp/demo`, `/api/v1/rxp/verify` | executable; task-store persistence not yet wired |
 | Skill discovery/invoke | `skill_runtime/`, `/api/v1/skills` | 6 packages; 3 allowlisted handlers |
 | Fault benchmark | `benchmarks/artifacts/2026-08-29-local-cpu.*` | 5 repetitions, 210 trials, independent oracle |
-| Dynamic collaboration bridge | `apps/agentteams_bridge/`, `tests/agentteams/` | 28 contract/fault tests PASS; live Controller absent |
+| Dynamic collaboration bridge | `apps/agentteams_bridge/`, `tests/agentteams/` | 41 contract/fault tests PASS; live Controller absent |
 | Real-workload adapter | `experiments/fashion_mnist_amp/` | 13 contract/negative tests PASS; real GPU execution absent |
 | One-command acceptance | `semifinal_acceptance/` | 16 tests PASS; v1 result is `CONTRACT_PASS_ORIGIN_UNVERIFIED` |
-| PostgreSQL production path | `docs/evidence/postgres-local-proof-2026-08-29.md`, `deploy/postgres/` | real local PostgreSQL 16.14 tests 27/27 PASS; four roles, append-only ledgers, notifications, preflight contract |
+| PostgreSQL production path | `docs/evidence/postgres-local-proof-2026-08-29.md`, `deploy/postgres/` | real local PostgreSQL 16.14 tests 32/32 PASS; runtime login hardening, append-only ledgers, notifications, preflight contract |
 | Judge-facing UI | `submission/screenshots/semifinal-rxp-cockpit.png` | static fixture, no backend/GPU/signature claim |
 | Release gate | `make benchmark-release EVIDENCE_DIR=...` | no live target → expected non-zero/SKIP |
 
 ## Frozen identifiers
 
 - Semifinal proof SHA-256:
-  `b8142cb5b3d3e2b8ca6e500bab0b3c982f80a5b5e58fdd3da06b70bef9e1a2ed`
+  `4697748cf82283b9db832f771f997efe85da4b992f82807b510dc6d64f7f7479`
 - RXP demo SHA-256:
   `178a24b303f13a480262498cd793fba6fe63570ceedb27928805b7c321362524`
 - RXP ledger root:

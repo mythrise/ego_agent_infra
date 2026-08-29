@@ -26,6 +26,21 @@ runtime image attestation.
 
 ## Live completion and export boundary
 
+Every bridge mutation (`runs`, `reconcile`, `r2-grant`, and `recover`) requires
+`Authorization: Bearer` with the bridge-only
+`EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY`. The key must contain at least 32 UTF-8 bytes and
+must be generated independently from `EGO_OPERATOR_KEY`; equal configured values are
+rejected at startup. Missing configuration leaves mutations fail-closed with `503`, while
+missing and invalid credentials return `401` and `403`. Health and GET-only audit exports
+remain public. Put a shared deployment behind an identity-aware ingress because this
+deployment key does not identify individual operators.
+
+The bridge reads `EGO_OPERATOR_KEY` and sends it as a Bearer credential on EgoAgentOS API
+mutations. The corresponding `BridgeSettings.ego_operator_key` field is excluded from repr, and
+upstream receipts never copy request authorization headers. Live startup should therefore use
+the same key (minimum 32 UTF-8 bytes) as the Ego API. An empty value leaves Ego live writes
+fail-closed; it is not a development fallback.
+
 A live run can attach only to an EgoAgentOS task created with `synthetic=false`; the task's team,
 trace, correlation id, context version, objective, and initial stage must match exactly. Completed
 AgentTeams TaskMeta entries are accepted only after their declared result-envelope and primary
@@ -67,6 +82,15 @@ Each public store call is atomic. A higher-level service sequence that calls
 `update_run`, `archive_receipt`, and `append_event` separately is not one distributed
 transaction; recovery relies on the persisted compensation checkpoint and upstream
 reconciliation. This backend does not claim exactly-once external effects.
+
+Live operations hold a persisted, time-bounded owner lease. The bridge atomically renews and
+asserts that owner immediately before every Controller, Matrix, worker-lifecycle, or Ego API
+mutation. Event and receipt inserts validate the same owner in their write transaction, so an
+expired process cannot append after another process takes over. This fencing deliberately does
+not erase the crash-after-effect boundary: an upstream idempotent mutation can commit and the
+bridge can crash before its receipt/checkpoint write. Start reservation, stable idempotency keys,
+official workflow reads, and compensation recovery reconcile that case; they are not a claim of
+distributed exactly-once delivery.
 
 The real integration suite uses local disposable PostgreSQL 16. It is not evidence of a
 live PolarDB instance, managed backup, PITR, failover, or official AgentTeams execution.

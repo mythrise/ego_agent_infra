@@ -19,6 +19,31 @@ import type {
 
 const API_ROOT = import.meta.env.VITE_API_ROOT ?? "/api/v1";
 const FORCE_STATIC_REPLAY = import.meta.env.VITE_STATIC_DEMO === "true";
+const APPROVAL_TOKEN_HEADER = "X-Ego-Approval-Token";
+const MIN_OPERATOR_KEY_BYTES = 32;
+const MAX_OPERATOR_KEY_BYTES = 4096;
+
+// Deliberately module-memory only. The operator key must never be persisted,
+// placed in a URL, or compiled into the frontend bundle.
+let operatorSessionKey: string | undefined;
+
+export function connectOperatorSession(key: string): void {
+  const byteLength = new TextEncoder().encode(key).length;
+  if (byteLength < MIN_OPERATOR_KEY_BYTES || byteLength > MAX_OPERATOR_KEY_BYTES) {
+    throw new Error(
+      `Operator key must contain ${MIN_OPERATOR_KEY_BYTES}-${MAX_OPERATOR_KEY_BYTES} UTF-8 bytes.`,
+    );
+  }
+  operatorSessionKey = key;
+}
+
+export function clearOperatorSession(): void {
+  operatorSessionKey = undefined;
+}
+
+export function operatorSessionConnected(): boolean {
+  return operatorSessionKey !== undefined;
+}
 
 class ApiError extends Error {
   status: number;
@@ -34,13 +59,13 @@ export function taskEventStreamUrl(taskId: string): string {
   return `${API_ROOT}/tasks/${encodeURIComponent(taskId)}/event-stream`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function checkedResponse(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (operatorSessionKey) headers.set("Authorization", `Bearer ${operatorSessionKey}`);
   const response = await fetch(`${API_ROOT}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -57,6 +82,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(response.status, detail);
   }
+
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await checkedResponse(path, init);
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -452,10 +483,16 @@ const backendApi = {
   },
 
   async decide(approvalId: string, payload: DecisionRequest): Promise<{ approval_token?: string }> {
-    return request(`/approvals/${encodeURIComponent(approvalId)}/decision`, {
+    const response = await checkedResponse(`/approvals/${encodeURIComponent(approvalId)}/decision`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    const body = (await response.json()) as { approval_token?: string | null };
+    const headerToken = response.headers.get(APPROVAL_TOKEN_HEADER);
+    return {
+      ...body,
+      approval_token: headerToken ?? body.approval_token ?? undefined,
+    };
   },
 
   async rxpDemo(): Promise<RXPProtocolData> {

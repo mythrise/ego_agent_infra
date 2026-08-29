@@ -10,7 +10,7 @@
 | 复赛维度 | 权重 | EgoAgentOS 设计回应 | 已落库证据 | 当前真实边界 |
 |---|---:|---|---|---|
 | 场景价值与可迁移性 | 20% | 把具身 AI 的高成本实验从聊天式黑盒改为目标、矩阵、授权、执行、复核和决策闭环 | `apps/api/`、`protocols/rxp/`、6 个 Skills、14 场景 benchmark、真实 Fashion-MNIST 单 GPU adapter | adapter 与验收器已实现，但官方 GPU/AgentTeams origin 未验证；尚无真实科研用户基线和跨领域验收 |
-| 多 Agent 协作 | 25% | AgentTeams 负责真实团队协作；PI、Scout、Architect、Runtime、Evaluator、Reviewer、Memory Curator 分权；中间结果可 replan，超时可改派，重启可恢复 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook | bridge 与合同已完成；没有官方 live 服务，所以不能声称核心链已接通 |
+| 多 Agent 协作 | 25% | AgentTeams 负责真实团队协作；PI、Scout、Architect、Runtime、Evaluator、Reviewer、Memory Curator 分权；中间结果可 replan，超时可改派，重启可恢复 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook | bridge 与合同已完成；官方 live 服务与逐场景 fault/replay harness 均未验收，所以不能声称核心链已接通 |
 | Skill 工程化 | 20% | Skill 不是提示词附件，而是可发现、版本固定、可调用、可追踪、可回滚的运行时资产 | `skills/`、`skill_runtime/`、`/api/v1/skills/*`、`tests/skills/` | 本地 runtime 已验证；真实 Worker 的 discovery/tool invocation 仍待 live trace |
 | 工程实现与安全审计 | 30% | 确定性控制面拥有状态、授权、幂等、证据和最终验收；RXP 固化实验承诺链；benchmark 与 acceptance bundle 独立验证 adapter 证据 | RXP schemas/verifier、PostgreSQL 生产路径与四类角色、R2 token、append-only hash-chain、LISTEN/NOTIFY、PolarDB preflight、evidence gate、persistent bundle | 本地/contract 证据不等于生产安全认证，也不证明真实 GPU/AgentTeams/PolarDB/PITR |
 | 开源贡献 | 5% | 发布代码、协议文档、JSON Schema、Skill 包、adapter、负对照与可复现测试 | Apache-2.0 repository、README、runbooks、CI commands | 尚无正式 release/adoption 证据；RXP 是项目协议，不是行业标准 |
@@ -37,8 +37,9 @@
 - adapter 自报 `PASS`、但没有 benchmark-owned schema 校验和持久化 trace；
 - 用合成性能数据、未执行的 GPU/云调用或截图冒充真实结果。
 
-因此当前 canonical `agentteams-rxp-target` 诚实返回 `SKIP`。这说明 live 条件缺失，不是
-测试通过；在 release gate 中 `SKIP` 与 `FAIL`/`ERROR` 一样阻止放行。
+因此当前 canonical `agentteams-rxp-target` 诚实返回 `SKIP`；即使 live opt-in 也明确为
+`UNIMPLEMENTED/SKIP`。这说明逐场景 harness 与 live 证据缺失，不是测试通过；在 release
+gate 中 `SKIP` 与 `FAIL`/`ERROR` 一样阻止放行。
 
 ## 业务全链路映射
 

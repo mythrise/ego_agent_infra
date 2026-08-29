@@ -270,6 +270,123 @@ p {
   backdrop-filter: blur(18px);
 }
 
+.operator-strip {
+  position: sticky;
+  top: 64px;
+  z-index: 14;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(9, 12, 11, 0.94);
+  backdrop-filter: blur(18px);
+}
+
+.operator-state,
+.operator-form {
+  display: flex;
+  align-items: center;
+}
+
+.operator-state {
+  flex: 0 0 auto;
+  gap: 8px;
+  color: var(--text-soft);
+  font-family: var(--mono);
+}
+
+.operator-state svg {
+  color: var(--muted);
+}
+
+.operator-state.connected svg,
+.operator-state.connected span {
+  color: var(--green);
+}
+
+.operator-state span {
+  font-size: 8px;
+  letter-spacing: 0.11em;
+}
+
+.operator-state small {
+  padding-left: 8px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+
+.operator-form {
+  min-width: 360px;
+  max-width: 540px;
+  flex: 1 1 480px;
+  justify-content: flex-end;
+}
+
+.operator-form label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 9px;
+}
+
+.operator-form input {
+  width: min(260px, 36vw);
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-right: 0;
+  border-radius: 0;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.operator-form input::placeholder {
+  color: var(--muted);
+}
+
+.operator-form button,
+.operator-clear {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.operator-form button:not(:disabled):hover,
+.operator-clear:hover {
+  border-color: rgba(137, 242, 174, 0.5);
+  color: var(--green);
+}
+
+.operator-form button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.operator-form input:focus-visible,
+.operator-form button:focus-visible,
+.operator-clear:focus-visible {
+  outline: 1px solid var(--green);
+  outline-offset: 2px;
+}
+
 .context-line,
 .topbar-meta {
   display: flex;
@@ -2506,6 +2623,33 @@ p {
   .topbar {
     height: 58px;
     padding: 0 14px;
+  }
+
+  .operator-strip {
+    top: 58px;
+    min-height: 46px;
+    padding: 7px 14px;
+    gap: 10px;
+  }
+
+  .operator-state small,
+  .operator-form label {
+    display: none;
+  }
+
+  .operator-form {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .operator-form input {
+    width: 100%;
+    min-width: 84px;
+  }
+
+  .operator-form button,
+  .operator-clear {
+    white-space: nowrap;
   }
 
   .mobile-menu {

@@ -4,6 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -17,6 +18,19 @@ from apps.api.models import ApprovalStatus, Stage
 from apps.api.postgres_store import PostgresStore, STAGE_EVENT_CHANNEL
 from apps.api.service import DEMO_TASK_ID, ResearchOpsService
 from apps.api.store_factory import create_store
+from tests.api.operator_auth_helpers import (
+    TEST_AUTHORIZATION_HEADERS,
+    TEST_OPERATOR_ID,
+    TEST_OPERATOR_KEY,
+)
+
+
+def _login_url(postgres_url: str, user: str, password: str) -> str:
+    parsed = urlsplit(postgres_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = ":%d" % parsed.port if parsed.port else ""
+    netloc = "%s:%s@%s%s" % (quote(user), quote(password), host, port)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def _pause_for_approval(client: TestClient) -> dict[str, Any]:
@@ -32,7 +46,7 @@ def _approve(client: TestClient, approval: dict[str, Any]) -> str:
         "/api/v1/approvals/%s/decision" % approval["id"],
         json={
             "decision": "approved",
-            "approver": "postgres-contract-test",
+            "approver": TEST_OPERATOR_ID,
             "expected_digest": approval["action_digest"],
         },
     )
@@ -49,7 +63,14 @@ def test_factory_and_full_api_contract_use_real_postgres(
     assert store.engine == "postgresql"
     assert "@" not in store.location
 
-    with TestClient(create_app(database_url=postgres_url)) as client:
+    with TestClient(
+        create_app(
+            database_url=postgres_url,
+            operator_key=TEST_OPERATOR_KEY,
+            operator_id=TEST_OPERATOR_ID,
+        )
+    ) as client:
+        client.headers.update(TEST_AUTHORIZATION_HEADERS)
         health = client.get("/api/v1/health").json()
         assert health["database"] == {
             "status": "ready",
@@ -102,7 +123,9 @@ def test_transaction_rolls_back_all_control_plane_writes(
     approval = store.latest_approval(task.id, task.generation)
     assert task.stage == Stage.APPROVAL
     assert approval is not None and approval.status == ApprovalStatus.APPROVED
-    assert not any(record.kind.value == "code" for record in store.list_evidence(task.id, task.generation))
+    assert not any(
+        record.kind.value == "code" for record in store.list_evidence(task.id, task.generation)
+    )
     assert not any(
         event.event_type == "approval.token.consumed"
         for event in store.list_events(task.id, task.generation, limit=1000)
@@ -305,8 +328,16 @@ def test_migrations_replay_cleanly_and_idempotent_requests_execute_once(postgres
     ]
     assert all(len(row["sha256"]) == 64 for row in migrations)
 
-    first_app = create_app(database_url=postgres_url)
-    second_app = create_app(database_url=postgres_url)
+    first_app = create_app(
+        database_url=postgres_url,
+        operator_key=TEST_OPERATOR_KEY,
+        operator_id=TEST_OPERATOR_ID,
+    )
+    second_app = create_app(
+        database_url=postgres_url,
+        operator_key=TEST_OPERATOR_KEY,
+        operator_id=TEST_OPERATOR_ID,
+    )
     barrier = threading.Barrier(2)
     original_first: Callable[..., Any] = first_app.state.service.reset_demo
     original_second: Callable[..., Any] = second_app.state.service.reset_demo
@@ -323,6 +354,8 @@ def test_migrations_replay_cleanly_and_idempotent_requests_execute_once(postgres
     )
 
     with TestClient(first_app) as first_client, TestClient(second_app) as second_client:
+        first_client.headers.update(TEST_AUTHORIZATION_HEADERS)
+        second_client.headers.update(TEST_AUTHORIZATION_HEADERS)
 
         def reset(client: TestClient) -> dict[str, Any]:
             barrier.wait()
@@ -377,6 +410,27 @@ def test_security_roles_are_least_privilege_and_rls_scopes_tenants(postgres_url:
             True,
             False,
         )
+        forced_rls = connection.execute(
+            """
+            SELECT relname, relrowsecurity, relforcerowsecurity
+              FROM pg_class
+             WHERE relname = ANY(%s)
+             ORDER BY relname
+            """,
+            (
+                [
+                    "approvals",
+                    "audit_events",
+                    "evidence",
+                    "idempotency",
+                    "memories",
+                    "memory_candidates",
+                    "tasks",
+                ],
+            ),
+        ).fetchall()
+        assert len(forced_rls) == 7
+        assert all(row[1:] == (True, True) for row in forced_rls)
 
         connection.execute(
             """
@@ -447,21 +501,55 @@ def test_restricted_runtime_starts_in_verify_only_migration_mode(postgres_url: s
     security_sql = (
         Path(__file__).resolve().parents[2] / "deploy/postgres/security_roles.sql"
     ).read_text(encoding="utf-8")
-    with psycopg.connect(postgres_url) as connection:
+    login_role = "egoagentos_api_login_test"
+    login_password = "a" * 64
+    with psycopg.connect(postgres_url, autocommit=True) as connection:
         connection.execute(security_sql)
+        exists = connection.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname=%s", (login_role,)
+        ).fetchone()
+        if exists is None:
+            connection.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                    "NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                ).format(sql.Identifier(login_role), sql.Literal(login_password))
+            )
+        else:
+            connection.execute(
+                sql.SQL(
+                    "ALTER ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                    "NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                ).format(sql.Identifier(login_role), sql.Literal(login_password))
+            )
+        connection.execute(
+            sql.SQL("GRANT egoagentos_runtime TO {}").format(sql.Identifier(login_role))
+        )
 
-    separator = "&" if "?" in postgres_url else "?"
-    runtime_url = "%s%soptions=-c%%20role%%3Degoagentos_runtime" % (
-        postgres_url,
-        separator,
-    )
+    runtime_url = _login_url(postgres_url, login_role, login_password)
     runtime = PostgresStore(runtime_url, migration_mode="verify")
     assert runtime.ping() is True
     with psycopg.connect(runtime_url) as connection:
-        privileges = connection.execute(
-            "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+        state = connection.execute(
+            """
+            SELECT current_user, session_user, rolsuper, rolcreatedb, rolcreaterole,
+                   rolreplication, rolbypassrls,
+                   has_schema_privilege(current_user, 'public', 'CREATE')
+              FROM pg_roles WHERE rolname=current_user
+            """
         ).fetchone()
-    assert privileges == (False,)
+        assert state == (
+            login_role,
+            login_role,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("CREATE TABLE runtime_must_not_create_tables(id integer)")
 
 
 @pytest.mark.parametrize("table", ["evidence", "memory_candidates", "memories"])

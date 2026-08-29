@@ -23,14 +23,12 @@ describe("browser-only deterministic replay", () => {
     await expect(
       replay.decide(approval.id, {
         decision: "approved",
-        approver: "test.operator",
         expected_digest: "wrong-digest",
       }),
     ).rejects.toThrow(/digest does not match/i);
 
     const result = await replay.decide(approval.id, {
       decision: "approved",
-      approver: "test.operator",
       expected_digest: approval.expectedDigest,
     });
     expect(result.approval_token).toMatch(/^synthetic_replay_grant:/);
@@ -53,7 +51,6 @@ describe("browser-only deterministic replay", () => {
     const approval = first.tasks[0].pendingApproval!;
     const grant = await replay.decide(approval.id, {
       decision: "approved",
-      approver: "test.operator",
       expected_digest: approval.expectedDigest,
     });
 
@@ -73,7 +70,6 @@ describe("browser-only deterministic replay", () => {
     const approval = task.pendingApproval!;
     const result = await replay.decide(approval.id, {
       decision: "approved",
-      approver: "test.operator",
       expected_digest: approval.expectedDigest,
     });
     const executing = await replay.advance(task.id, result.approval_token);

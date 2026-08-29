@@ -163,6 +163,5 @@ export interface RXPProtocolData {
 
 export interface DecisionRequest {
   decision: "approved" | "denied";
-  approver: string;
   expected_digest: string;
 }

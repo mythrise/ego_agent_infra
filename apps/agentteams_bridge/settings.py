@@ -13,6 +13,8 @@ class BridgeSettings:
     matrix_base_url: str = "http://127.0.0.1:18080"
     matrix_access_token: str = field(default="", repr=False)
     ego_base_url: str = "http://127.0.0.1:8000"
+    ego_operator_key: str = field(default="", repr=False)
+    bridge_operator_key: str = field(default="", repr=False)
     database_url: str = field(default="", repr=False)
     migration_database_url: str = field(default="", repr=False)
     database_path: str = "/tmp/egoagentos-agentteams-bridge.sqlite3"
@@ -30,6 +32,10 @@ class BridgeSettings:
             ).rstrip("/"),
             matrix_access_token=os.getenv("AGENTTEAMS_MATRIX_ACCESS_TOKEN", ""),
             ego_base_url=os.getenv("EGO_API_URL", "http://127.0.0.1:8000").rstrip("/"),
+            ego_operator_key=os.getenv("EGO_OPERATOR_KEY", ""),
+            bridge_operator_key=os.getenv(
+                "EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY", ""
+            ),
             database_url=os.getenv("EGO_AGENTTEAMS_DATABASE_URL", "").strip(),
             migration_database_url=os.getenv(
                 "EGO_AGENTTEAMS_MIGRATION_DATABASE_URL", ""

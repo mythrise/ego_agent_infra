@@ -4,7 +4,7 @@ import os
 import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,12 +24,16 @@ from .models import (
     FinalizeTaskRequest,
     RXPVerifyRequest,
 )
+from .operator_auth import OperatorAuthenticator, OperatorIdentity
 from .provenance import canonical_sha256
 from .rxp_runtime import demo_ledger, schema_catalog, verify_uploaded_ledger
 from .service import ResearchOpsService
 from .skill_runtime_api import SkillInvokeRequest, create_skill_registry, invoke_skill
 from .store_factory import create_store
 from protocols.rxp import RXPError
+
+
+APPROVAL_TOKEN_HEADER = "X-Ego-Approval-Token"
 
 
 def _request_id(request: Request) -> str:
@@ -117,10 +121,18 @@ def create_app(
     *,
     database_url: Optional[str] = None,
     skills_path: Optional[str] = None,
+    operator_key: Optional[str] = None,
+    operator_id: Optional[str] = None,
+    allow_unauthenticated_demo: Optional[bool] = None,
 ) -> FastAPI:
     store = create_store(database_url=database_url, sqlite_path=db_path)
     service = ResearchOpsService(store, approval_hmac_secret=approval_hmac_secret)
     skill_registry = create_skill_registry(skills_path)
+    operator_auth = OperatorAuthenticator(
+        key=operator_key,
+        operator_id=operator_id,
+        allow_unauthenticated_demo=allow_unauthenticated_demo,
+    )
 
     application = FastAPI(
         title="EgoAgentOS ResearchOps API",
@@ -134,6 +146,7 @@ def create_app(
     )
     application.state.service = service
     application.state.skill_registry = skill_registry
+    application.state.operator_auth = operator_auth
 
     default_origins = ",".join(
         [
@@ -155,8 +168,13 @@ def create_app(
         allow_origins=origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Idempotency-Key", "X-Request-ID"],
-        expose_headers=["X-Request-ID"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Idempotency-Key",
+            "X-Request-ID",
+        ],
+        expose_headers=["X-Request-ID", APPROVAL_TOKEN_HEADER],
     )
 
     @application.middleware("http")
@@ -169,9 +187,11 @@ def create_app(
 
     @application.exception_handler(ControlPlaneError)
     async def control_plane_error(request: Request, error: ControlPlaneError) -> JSONResponse:
+        headers = {"WWW-Authenticate": "Bearer"} if error.status_code == 401 else None
         return JSONResponse(
             status_code=error.status_code,
             content=_error_payload(request, error.code, error.message, error.details),
+            headers=headers,
         )
 
     @application.exception_handler(RequestValidationError)
@@ -196,7 +216,9 @@ def create_app(
 
     @application.get("/api/v1/health", tags=["system"])
     def health(request: Request) -> Dict[str, Any]:
-        return request.app.state.service.health()
+        payload = request.app.state.service.health()
+        payload["operator_auth"] = request.app.state.operator_auth.status()
+        return payload
 
     @application.get("/api/v1/integrations", tags=["system"])
     def integrations(request: Request) -> Dict[str, Any]:
@@ -227,7 +249,9 @@ def create_app(
         name: str,
         body: SkillInvokeRequest,
         request: Request,
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
         return invoke_skill(request.app.state.skill_registry, name, body)
 
     @application.get("/api/v1/rxp/schemas", tags=["rxp"])
@@ -264,7 +288,9 @@ def create_app(
         body: CreateTaskRequest,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
         key = _idempotency_key(idempotency_key, body.idempotency_key)
         body_json = body.model_dump(mode="json", exclude={"idempotency_key"})
         return _run_idempotent(
@@ -285,7 +311,9 @@ def create_app(
         request: Request,
         body: Optional[DemoResetRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authorize_demo_or_operator(authorization)
         payload = body or DemoResetRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -304,7 +332,13 @@ def create_app(
         request: Request,
         body: Optional[AdvanceRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        task_record = request.app.state.service.store.get_task(task_id)
+        if task_record.synthetic_demo:
+            request.app.state.operator_auth.authorize_demo_or_operator(authorization)
+        else:
+            request.app.state.operator_auth.authenticate(authorization)
         payload = body or AdvanceRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -325,7 +359,13 @@ def create_app(
         request: Request,
         body: Optional[AutorunRequest] = None,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        task_record = request.app.state.service.store.get_task(task_id)
+        if task_record.synthetic_demo:
+            request.app.state.operator_auth.authorize_demo_or_operator(authorization)
+        else:
+            request.app.state.operator_auth.authenticate(authorization)
         payload = body or AutorunRequest()
         key = _idempotency_key(idempotency_key, payload.idempotency_key)
         body_json = payload.model_dump(mode="json", exclude={"idempotency_key"})
@@ -344,7 +384,9 @@ def create_app(
         body: EvidenceIngestRequest,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
         key = _idempotency_key(idempotency_key, body.idempotency_key)
         body_json = body.model_dump(mode="json", exclude={"idempotency_key"}, by_alias=True)
         return _run_idempotent(
@@ -364,7 +406,9 @@ def create_app(
         body: FinalizeTaskRequest,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
         key = _idempotency_key(idempotency_key, body.idempotency_key)
         body_json = body.model_dump(mode="json", exclude={"idempotency_key"}, by_alias=True)
         return _run_idempotent(
@@ -381,21 +425,56 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest,
         request: Request,
+        response: Response,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
+        approval = request.app.state.service.store.get_approval(approval_id)
+        task_record = request.app.state.service.store.get_task(approval.task_id)
+        identity: OperatorIdentity
+        if task_record.synthetic_demo:
+            identity = request.app.state.operator_auth.authorize_demo_or_operator(
+                authorization
+            )
+        else:
+            identity = request.app.state.operator_auth.authenticate(authorization)
+        if body.approver is not None and body.approver != identity.id:
+            raise ControlPlaneError(
+                "approver_identity_mismatch",
+                "The asserted approver does not match the authenticated operator identity",
+                403,
+            )
         key = _idempotency_key(idempotency_key, None)
-        body_json = body.model_dump(mode="json")
-        return _run_idempotent(
+        body_json = {
+            "decision": body.decision.value,
+            "approver": identity.id,
+            "expected_digest": body.expected_digest,
+        }
+        result = _run_idempotent(
             request.app.state.service,
             "POST",
             "/api/v1/approvals/%s/decision" % approval_id,
             key,
             body_json,
             lambda: request.app.state.service.decide_approval(
-                approval_id, body.decision.value, body.approver, body.expected_digest
+                approval_id, body.decision.value, identity.id, body.expected_digest
             ),
             cache_response=_redact_approval_replay,
         )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Vary"] = "Authorization"
+        if not task_record.synthetic_demo:
+            raw_token = result.pop("approval_token", None)
+            result["approval_token"] = None
+            if raw_token:
+                response.headers[APPROVAL_TOKEN_HEADER] = str(raw_token)
+                result["token_notice"] = (
+                    "One-time live token delivered only in %s; it is omitted from JSON and "
+                    "idempotent replays." % APPROVAL_TOKEN_HEADER
+                )
+        return result
 
     @application.get("/api/v1/tasks/{task_id}/events", tags=["audit"])
     def task_events(

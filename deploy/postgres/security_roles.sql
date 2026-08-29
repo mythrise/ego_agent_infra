@@ -17,6 +17,26 @@ BEGIN
 END
 $$;
 
+ALTER ROLE egoagentos_runtime
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE egoagentos_auditor
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE egoagentos_evidence_writer
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE egoagentos_memory_curator
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+DO $$
+BEGIN
+    EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database());
+    EXECUTE format(
+        'GRANT CONNECT ON DATABASE %I TO egoagentos_runtime, egoagentos_auditor, '
+        || 'egoagentos_evidence_writer, egoagentos_memory_curator',
+        current_database()
+    );
+END
+$$;
+
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO
     egoagentos_runtime,
@@ -34,7 +54,11 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM
     egoagentos_evidence_writer,
     egoagentos_memory_curator;
 
-GRANT SELECT, INSERT, UPDATE ON tasks, approvals TO egoagentos_runtime;
+GRANT SELECT, INSERT ON tasks, approvals TO egoagentos_runtime;
+GRANT UPDATE(generation, version, task_json, created_at, updated_at)
+    ON tasks TO egoagentos_runtime;
+GRANT UPDATE(status, expires_at, token_hash, record_json)
+    ON approvals TO egoagentos_runtime;
 GRANT SELECT, INSERT ON evidence, memory_candidates, memories, idempotency
     TO egoagentos_runtime;
 GRANT SELECT, INSERT ON audit_events TO egoagentos_runtime;
@@ -55,6 +79,13 @@ ALTER TABLE memory_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE idempotency ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
+ALTER TABLE approvals FORCE ROW LEVEL SECURITY;
+ALTER TABLE evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_candidates FORCE ROW LEVEL SECURITY;
+ALTER TABLE memories FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE idempotency FORCE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION egoagentos_current_tenant()
 RETURNS TEXT
@@ -104,5 +135,5 @@ CREATE POLICY idempotency_tenant_policy ON idempotency
     USING (tenant_id = egoagentos_current_tenant())
     WITH CHECK (tenant_id = egoagentos_current_tenant());
 
--- A deployment DBA should create LOGIN users separately, source passwords from a secret
--- manager, GRANT these NOLOGIN roles, then connect the API as that runtime user.
+-- Compose and deployment automation create hardened LOGIN identities separately, source
+-- passwords from secret storage, grant these NOLOGIN roles, and run the API in verify mode.

@@ -49,10 +49,14 @@ read/write endpoints. The Matrix token must belong to a user already present in
 the Team room. Workers receive gateway consumer access, not upstream provider
 secrets. Never print either token in test output.
 
-The bundled Compose profile publishes the operator API on loopback only. It
-does not implement public-user authentication; any shared or remote deployment
-must place it behind an authenticated operator ingress and must not expose port
-8010 directly.
+The bundled Compose profile publishes both operator APIs on loopback only. The Ego API and bridge
+each enforce a deployment-owned Bearer credential for writes, but this is not per-user
+authentication; any shared or remote deployment must also place them behind an identity-aware
+operator ingress and must not expose port 8010 directly. Generate `EGO_OPERATOR_KEY` and
+`EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY` independently, each with at least 32 UTF-8 bytes. Equal
+values are rejected. Set the authoritative `EGO_OPERATOR_ID`. The bridge uses the first key only
+for outbound Ego API calls and the second only for inbound bridge mutations; neither is included
+in receipts or configured-setting reprs.
 
 Set:
 
@@ -62,17 +66,21 @@ AGENTTEAMS_AUTH_TOKEN
 AGENTTEAMS_MATRIX_URL
 AGENTTEAMS_MATRIX_ACCESS_TOKEN
 EGO_API_URL
+EGO_OPERATOR_KEY
+EGO_OPERATOR_ID
+EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY
 EGO_AGENTTEAMS_DATABASE_URL
-EGO_AGENTTEAMS_MIGRATION_DATABASE_URL
+EGO_AGENTTEAMS_MIGRATION_MODE=verify
 ```
 
-The live Compose profile uses PostgreSQL. In a shared deployment, the migration URL is
-an owner credential used for checksummed schema replay, while the runtime URL belongs to
-a separate LOGIN granted `egoagentos_bridge_runtime` after applying
-`deploy/postgres/agentteams_bridge_security.sql` with a database/platform administrator
-(role creation can require privileges beyond the migration owner). Leave both URLs blank
-only for local SQLite development through `EGO_AGENTTEAMS_BRIDGE_DB`. An explicit
-PostgreSQL URL never falls back to SQLite after a connection or migration error.
+The live Compose profile uses PostgreSQL and starts a one-shot migration/security chain before
+the long-lived bridge. In a shared deployment, run checksummed migration replay as a separate
+owner process, apply `deploy/postgres/agentteams_bridge_security.sql` with a database/platform
+administrator, then start the bridge with only a separate LOGIN granted
+`egoagentos_bridge_runtime` and `EGO_AGENTTEAMS_MIGRATION_MODE=verify`. Do not expose
+`EGO_AGENTTEAMS_MIGRATION_DATABASE_URL` to the long-lived bridge. Leave the runtime URL blank
+only for local SQLite development through `EGO_AGENTTEAMS_BRIDGE_DB`. An explicit PostgreSQL
+URL never falls back to SQLite after a connection or migration error.
 
 ## 4. Probe
 
@@ -107,19 +115,30 @@ silently retried over newer state.
 
 Run reconcile periodically. Restarting the bridge is safe: the PostgreSQL JSONB
 checkpoint (or SQLite development checkpoint) is reloaded and Controller workflow is fetched again. Use
-`POST /api/v1/agentteams/recover` after restart.
+`POST /api/v1/agentteams/recover` after restart. Every bridge POST must carry
+`Authorization: Bearer <EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY>`; health and GET-only run, event,
+receipt, index, and Skill-evidence reads remain public. Missing bridge-key configuration returns
+`503`, while missing and invalid credentials return `401` and `403`.
 
 One store operation is one database transaction. A service path containing several
 store operations and external Controller/Matrix calls is not a single atomic
 transaction; crash recovery depends on the durable compensation checkpoint and a fresh
-Controller workflow read. Do not describe it as exactly-once external execution.
+Controller workflow read. A persisted owner lease is atomically renewed immediately before every
+Controller, Matrix, worker-lifecycle, and Ego mutation; ledger writes validate the same owner in
+their transaction, so a stale process fails closed after takeover. The lease cannot close the
+crash-after-effect window: an idempotent upstream request can commit before the process records
+its receipt. Reservation, stable idempotency keys, official workflow reconciliation, and
+compensation checkpoints recover that boundary. Do not describe it as exactly-once external
+execution.
 
 ## 6. R2 recovery
 
 When all pre-R2 artifacts validate, the bridge pauses the Controller project
-and enters `WAITING_R2`. A chat reply does nothing. Approve through EgoAgentOS,
-then send the one-time scoped token to the bridge R2 endpoint with an
-idempotency key.
+and enters `WAITING_R2`. A chat reply does nothing. Approve through EgoAgentOS with the operator
+Bearer credential and the exact action digest. For live tasks the first successful decision
+response carries the one-time token only in `X-Ego-Approval-Token` and never in JSON; capture it
+without printing it, then send it to the bridge R2 endpoint with an idempotency key. A replay of
+the approval decision does not recover a lost token; request a fresh approval instead.
 
 The order is fixed:
 
@@ -155,9 +174,20 @@ Exercise at least:
 
 ## 8. Benchmark evidence
 
-Set `AGENTTEAMS_BENCHMARK_LIVE=1` only for this live stack. The canonical
-benchmark inputs do not contain an Ego task ID or R2 token. Bind each scenario
-to a separately prepared, non-synthetic task through an uncommitted file:
+Current capability status is **UNIMPLEMENTED**. The bridge clients, binding format,
+trace schema, and independent verifier are target scaffolding; there is not yet a real
+per-scenario fault-injection and fresh-replay harness for the 14 canonical cases.
+Accordingly, the public adapter is fail-closed in both modes:
+
+- without `AGENTTEAMS_BENCHMARK_LIVE=1`, it returns lowercase `skip` as unavailable;
+- with `AGENTTEAMS_BENCHMARK_LIVE=1`, it returns lowercase `skip` with
+  `capability_status=UNIMPLEMENTED` and
+  `execution_mode=agentteams-live-target-unimplemented`.
+
+The live opt-in does not start the bridge, consume an approval token, write a trace, or
+enter an inevitably failing pseudo release gate. The future harness will bind each
+scenario to a separately prepared, non-synthetic task through an uncommitted file shaped
+like:
 
 ```json
 {
@@ -169,11 +199,12 @@ to a separately prepared, non-synthetic task through an uncommitted file:
 }
 ```
 
-Set its path with `AGENTTEAMS_BENCHMARK_BINDINGS_FILE` and restrict its file
-permissions. Without both the live opt-in and a per-scenario binding, the
-adapter returns lowercase `skip` and writes no trace.
+The future harness will read its path from `AGENTTEAMS_BENCHMARK_BINDINGS_FILE`; such a
+file must remain uncommitted and access-restricted. Today, providing that file does not
+enable execution or upgrade the adapter beyond `UNIMPLEMENTED/SKIP`.
 
-A `pass` requires the adapter to write `agentteams-live-trace.json` using schema
+Once a real harness is implemented, a `pass` will require the adapter to write
+`agentteams-live-trace.json` using schema
 `egoagentos.agentteams-trace/v1`. Verify the returned SHA-256 against file
 bytes. The trace must contain at least three agents and ordered events for task
 creation, delegation, acceptance, Skill/tool invocation, human approval,
@@ -184,13 +215,14 @@ is `benchmarks/schemas/agentteams-rxp-trace-v1.schema.json`; semantic authority
 belongs to `benchmarks.trace_verifier.verify_trace_bytes`, not an adapter
 boolean or a second integration-local schema.
 
-The 14 canonical scenarios are fail-closed: each needs its own fault events.
-Every PASS also needs top-level `replay.run_ids` and
+The 14 canonical scenarios remain fail-closed: each needs its own real fault events.
+Every future PASS also needs top-level `replay.run_ids` and
 `replay.semantic_digests` for at least two distinct live runs whose semantic
 digests agree. Even `happy_path` additionally needs a blocked unsafe action and
-exactly one committed effect. A generic successful terminal run cannot satisfy
-another scenario and is returned as `error` with the missing event types.
+exactly one committed effect. A generic successful terminal run cannot satisfy another
+scenario; the public adapter therefore never attempts that generic run while the scenario
+harness is unimplemented.
 Contract fixtures never produce `execution_mode=real-agentteams`.
 
-If any item is absent, the correct benchmark result is `ERROR` or `SKIP`, not a
+Until the harness exists, the only correct result is `SKIP`, not `ERROR` and never a
 synthetic PASS.

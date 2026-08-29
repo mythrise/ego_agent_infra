@@ -1,10 +1,27 @@
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from tests.api.operator_auth_helpers import (
+    TEST_AUTHORIZATION_HEADERS,
+    TEST_OPERATOR_ID,
+    TEST_OPERATOR_KEY,
+)
 
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
+
+
+def _client(database: str) -> TestClient:
+    client = TestClient(
+        create_app(
+            database,
+            operator_key=TEST_OPERATOR_KEY,
+            operator_id=TEST_OPERATOR_ID,
+        )
+    )
+    client.headers.update(TEST_AUTHORIZATION_HEADERS)
+    return client
 
 
 def _plan_payload() -> dict:
@@ -32,7 +49,7 @@ def _plan_payload() -> dict:
 
 
 def test_skill_catalog_distinguishes_discovery_from_execution(tmp_path) -> None:
-    client = TestClient(create_app(str(tmp_path / "catalog.sqlite3")))
+    client = _client(str(tmp_path / "catalog.sqlite3"))
     response = client.get("/api/v1/skills")
     assert response.status_code == 200
     payload = response.json()
@@ -45,7 +62,7 @@ def test_skill_catalog_distinguishes_discovery_from_execution(tmp_path) -> None:
 
 
 def test_skill_invoke_and_trace_are_correlated_and_digest_pinned(tmp_path) -> None:
-    client = TestClient(create_app(str(tmp_path / "invoke.sqlite3")))
+    client = _client(str(tmp_path / "invoke.sqlite3"))
     catalog = client.get("/api/v1/skills").json()["items"]
     plan = next(item for item in catalog if item["name"] == "research-plan")
     body = {
@@ -65,7 +82,7 @@ def test_skill_invoke_and_trace_are_correlated_and_digest_pinned(tmp_path) -> No
 
 
 def test_generic_safe_runner_invocation_fails_closed_with_a_trace(tmp_path) -> None:
-    client = TestClient(create_app(str(tmp_path / "deny.sqlite3")))
+    client = _client(str(tmp_path / "deny.sqlite3"))
     response = client.post(
         "/api/v1/skills/safe-experiment-runner/invoke",
         json={"correlation_id": "task_deny", "payload": {}},

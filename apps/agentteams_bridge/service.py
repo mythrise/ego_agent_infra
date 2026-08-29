@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 from pydantic import ValidationError
 
 from .clients import AgentTeamsClient, EgoClient, MatrixClient
-from .errors import BridgeError, LiveAgentTeamsUnavailable
+from .errors import BridgeError, LiveAgentTeamsUnavailable, UpstreamError
 from .models import (
     OFFICIAL_MAIN_COMMIT,
     BridgeRun,
@@ -31,7 +31,7 @@ from .models import (
     canonical_sha256,
     utc_now,
 )
-from .store import BridgeStoreContract
+from .store import OPERATION_LEASE_KEY, BridgeStoreContract
 
 
 PRE_APPROVAL_STAGES = {"CONTEXT", "PLAN", "PLAN_REVIEW"}
@@ -45,6 +45,7 @@ POST_APPROVAL_STAGES = {
 TERMINAL_NODE_STATUSES = {"completed", "revision", "blocked"}
 ACTIVE_NODE_STATUSES = {"delegated", "in-progress"}
 SUCCESS_RESULT_STATUSES = {"SUCCESS", "SUCCESS_WITH_NOTES"}
+DEFAULT_OPERATION_LEASE_SECONDS = 900
 
 ROLE_PLAN: Tuple[Tuple[str, str, str, Tuple[str, ...]], ...] = (
     ("context", "CONTEXT", "ego-scout", ("research-memory",)),
@@ -62,6 +63,11 @@ def _safe_project_id(task_id: str, context_version: int) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-._") or "task"
     digest = hashlib.sha256((task_id + ":" + str(context_version)).encode("utf-8")).hexdigest()[:8]
     return "ego-%s-v%d-%s" % (slug[:36], context_version, digest)
+
+
+def _safe_run_id(project_id: str) -> str:
+    digest = hashlib.sha256(("bridge-run:" + project_id).encode("utf-8")).hexdigest()
+    return "atrun_%s" % digest[:32]
 
 
 def _iso_now(clock: Callable[[], datetime]) -> str:
@@ -88,12 +94,38 @@ class AgentTeamsBridge:
         ego: EgoClient,
         *,
         clock: Callable[[], datetime] = utc_now,
+        operation_lease_seconds: int = DEFAULT_OPERATION_LEASE_SECONDS,
     ) -> None:
+        if not 30 <= operation_lease_seconds <= 3600:
+            raise ValueError("operation_lease_seconds must be between 30 and 3600")
         self.store = store
         self.agentteams = agentteams
         self.matrix = matrix
         self.ego = ego
         self.clock = clock
+        self.operation_lease_seconds = operation_lease_seconds
+
+    def _claim_operation(self, run_id: str, operation: str) -> Tuple[BridgeRun, str]:
+        owner_id = "op_%s" % uuid.uuid4().hex
+        run = self.store.claim_operation(
+            run_id,
+            operation,
+            owner_id,
+            timeout_seconds=self.operation_lease_seconds,
+        )
+        return run, owner_id
+
+    def _renew_operation(self, run: BridgeRun, lease_owner: str) -> BridgeRun:
+        """Atomically prove ownership and extend the lease before an external write."""
+
+        renewed = self.store.renew_operation(
+            run.id,
+            lease_owner,
+            timeout_seconds=self.operation_lease_seconds,
+        )
+        checkpoint = dict(run.checkpoint)
+        checkpoint[OPERATION_LEASE_KEY] = renewed.checkpoint[OPERATION_LEASE_KEY]
+        return run.model_copy(update={"checkpoint": checkpoint})
 
     def probe_live(self, team_name: str) -> Dict[str, Any]:
         if not self.matrix.token:
@@ -155,14 +187,11 @@ class AgentTeamsBridge:
     def _load_workers(
         self, team_name: str, worker_names: Iterable[str]
     ) -> Dict[str, Dict[str, Any]]:
+        """Read immutable dispatch metadata without mutating worker lifecycle state."""
+
         workers: Dict[str, Dict[str, Any]] = {}
         for name in sorted(set(worker_names)):
-            worker = self.agentteams.ensure_worker_ready(name)
-            if worker.phase not in {"Running", "Ready"}:
-                raise LiveAgentTeamsUnavailable(
-                    "AgentTeams Worker is not running",
-                    details={"worker": name, "phase": worker.phase},
-                )
+            worker = self.agentteams.get_worker(name)
             if worker.team and worker.team != team_name:
                 raise LiveAgentTeamsUnavailable(
                     "AgentTeams Worker belongs to a different Team",
@@ -170,6 +199,42 @@ class AgentTeamsBridge:
                 )
             workers[name] = worker.model_dump(mode="json")
         return workers
+
+    def _ensure_workers_ready(
+        self,
+        run: BridgeRun,
+        worker_names: Iterable[str],
+        lease_owner: str,
+    ) -> BridgeRun:
+        """Fence every lifecycle POST and reject identity drift before dispatch."""
+
+        planned_workers = run.checkpoint.get("workers", {})
+        for name in sorted(set(worker_names)):
+            run = self._renew_operation(run, lease_owner)
+            worker = self.agentteams.ensure_worker_ready(name)
+            if worker.phase not in {"Running", "Ready"}:
+                raise LiveAgentTeamsUnavailable(
+                    "AgentTeams Worker is not running",
+                    details={"worker": name, "phase": worker.phase},
+                )
+            if worker.team and worker.team != run.team:
+                raise LiveAgentTeamsUnavailable(
+                    "AgentTeams Worker belongs to a different Team",
+                    details={
+                        "worker": name,
+                        "expected_team": run.team,
+                        "actual": worker.team,
+                    },
+                )
+            planned = planned_workers.get(name) or {}
+            if planned.get("matrixUserID") != worker.matrixUserID:
+                raise BridgeError(
+                    "worker_identity_drift",
+                    "Worker Matrix identity changed after the start intent was reserved",
+                    retryable=False,
+                    details={"worker": name},
+                )
+        return run
 
     def _build_task_graph(
         self,
@@ -239,8 +304,14 @@ class AgentTeamsBridge:
         leader = self.agentteams.get_worker(team.leaderName)
         return team.teamRoomID, leader.matrixUserID
 
-    def _send(self, run: BridgeRun, envelope: CollaborationEnvelope) -> str:
+    def _send(
+        self,
+        run: BridgeRun,
+        envelope: CollaborationEnvelope,
+        lease_owner: str,
+    ) -> Tuple[str, BridgeRun]:
         room_id, leader_matrix_id = self._leader_context(run)
+        run = self._renew_operation(run, lease_owner)
         event_id, receipt = self.matrix.send_envelope_with_receipt(
             room_id=room_id,
             leader_matrix_id=leader_matrix_id,
@@ -253,9 +324,15 @@ class AgentTeamsBridge:
             source="matrix",
             kind="raw-message",
             payload=receipt,
+            lease_owner=lease_owner,
         )
-        self.store.append_event(run.id, envelope)
-        return event_id
+        already_recorded = any(
+            item.get("envelope", {}).get("envelope_id") == envelope.envelope_id
+            for item in self.store.events(run.id)["items"]
+        )
+        if not already_recorded:
+            self.store.append_event(run.id, envelope, lease_owner=lease_owner)
+        return event_id, run
 
     @staticmethod
     def _task_request_body(
@@ -369,8 +446,8 @@ class AgentTeamsBridge:
 
     def start_run(self, request: StartRunRequest) -> BridgeRun:
         project_id = _safe_project_id(request.ego_task_id, request.context_version)
-        run_id = "atrun_%s" % uuid.uuid4().hex
         if request.mode == "dry_run":
+            run_id = "atrun_%s" % uuid.uuid4().hex
             placeholder_workers = {
                 worker: {"matrixUserID": "@%s:fixture.invalid" % worker}
                 for _, _, worker, _ in ROLE_PLAN
@@ -402,6 +479,19 @@ class AgentTeamsBridge:
                 )
             )
 
+        run_id = _safe_run_id(project_id)
+        existing: Optional[BridgeRun]
+        try:
+            existing = self.store.get_run(run_id)
+        except BridgeError as error:
+            if error.code != "run_not_found":
+                raise
+            existing = None
+        if existing is not None:
+            self._assert_start_reservation(existing, request, project_id)
+            if existing.state != RunState.PROVISIONING:
+                return existing
+
         live_probe = self.probe_live(request.team)
         ego_task = self.ego.get_task(request.ego_task_id)
         self._validate_ego_live_binding(request, ego_task)
@@ -415,67 +505,104 @@ class AgentTeamsBridge:
                 "ego_task_id": request.ego_task_id,
                 "project_id": project_id,
                 "objective": request.objective,
+                "team": request.team,
+                "trace_id": request.trace_id,
+                "correlation_id": request.correlation_id,
                 "context_version": request.context_version,
                 "task_graph": [task.model_dump(mode="json") for task in graph],
+                "ack_timeout_seconds": request.ack_timeout_seconds,
+                "execution_timeout_seconds": request.execution_timeout_seconds,
+                "max_reassignments": request.max_reassignments,
             }
         )
-        run = BridgeRun(
-            id=run_id,
-            ego_task_id=request.ego_task_id,
-            agentteams_project_id=project_id,
-            team=request.team,
-            trace_id=request.trace_id,
-            correlation_id=request.correlation_id,
-            context_version=request.context_version,
-            state=RunState.PROVISIONING,
-            mode="live",
-            objective=request.objective,
-            task_graph=graph,
-            checkpoint={
-                "truth": "LIVE",
-                "live_probe": live_probe,
-                "workers": workers,
-                "node_status": {},
-                "accepted_contracts": {},
-                "reassignments": {},
-                "ego_grant_committed": False,
-                "intent_digest": intent_digest,
-                "bridge_api_version": "0.3.0",
-                "official_main_commit": OFFICIAL_MAIN_COMMIT,
-            },
-            ack_timeout_seconds=request.ack_timeout_seconds,
-            execution_timeout_seconds=request.execution_timeout_seconds,
-            max_reassignments=request.max_reassignments,
-        )
-        create_response, create_receipt = self.agentteams.create_project_with_receipt(
-            project_id=project_id,
-            title="EgoAgentOS · %s" % request.objective[:120],
-            team=request.team,
-            requester="egoagentos:%s" % request.ego_task_id,
-            source_room_id=team.teamRoomID,
-        )
-        checkpoint = dict(run.checkpoint)
-        checkpoint["project_create_response_sha256"] = canonical_sha256(create_response)
-        checkpoint["project_create_identifier"] = create_response.get("project_id")
-        run = run.model_copy(update={"checkpoint": checkpoint})
-        run = self.store.create_run(run)
-        self.store.archive_receipt(
-            run.id,
-            receipt_key="agentteams:project-create",
-            source="agentteams",
-            kind="official-response",
-            payload=create_receipt,
-        )
+        if existing is None:
+            run = BridgeRun(
+                id=run_id,
+                ego_task_id=request.ego_task_id,
+                agentteams_project_id=project_id,
+                team=request.team,
+                trace_id=request.trace_id,
+                correlation_id=request.correlation_id,
+                context_version=request.context_version,
+                state=RunState.PROVISIONING,
+                mode="live",
+                objective=request.objective,
+                task_graph=graph,
+                checkpoint={
+                    "truth": "LIVE",
+                    "live_probe": live_probe,
+                    "workers": workers,
+                    "node_status": {},
+                    "accepted_contracts": {},
+                    "reassignments": {},
+                    "ego_grant_committed": False,
+                    "intent_digest": intent_digest,
+                    "project_create_committed": False,
+                    "project_create_confirmation": "NOT_CONFIRMED",
+                    "bridge_api_version": "0.3.0",
+                    "official_main_commit": OFFICIAL_MAIN_COMMIT,
+                },
+                ack_timeout_seconds=request.ack_timeout_seconds,
+                execution_timeout_seconds=request.execution_timeout_seconds,
+                max_reassignments=request.max_reassignments,
+            )
+            try:
+                run = self.store.create_run(run)
+            except BridgeError as error:
+                if error.code != "run_conflict":
+                    raise
+                run = self.store.get_run(run_id)
+                self._assert_start_reservation(run, request, project_id)
+                if run.checkpoint.get("intent_digest") != intent_digest:
+                    raise BridgeError(
+                        "start_intent_conflict",
+                        "Existing bridge reservation has a different immutable start intent",
+                        details={"run_id": run.id, "project_id": project_id},
+                    ) from error
+                if run.state != RunState.PROVISIONING:
+                    return run
+        else:
+            run = existing
+            if run.checkpoint.get("intent_digest") != intent_digest:
+                raise BridgeError(
+                    "start_intent_conflict",
+                    "Existing bridge reservation has a different immutable start intent",
+                    details={"run_id": run.id, "project_id": project_id},
+                )
+
+        run, lease_owner = self._claim_operation(run.id, "live-start")
         try:
-            workflow = self.agentteams.replan(
-                project_id, request.team, self._controller_tasks(graph)
-            )
-            envelope = self._envelope(
+            run = self._ensure_workers_ready(run, required_workers, lease_owner)
+            run = self._confirm_reserved_project(
                 run,
-                EnvelopeKind.TASK_REQUEST,
-                self._task_request_body(run, workflow),
+                request,
+                source_room_id=team.teamRoomID,
+                lease_owner=lease_owner,
             )
-            matrix_event_id = self._send(run, envelope)
+            run = self._renew_operation(run, lease_owner)
+            workflow = self.agentteams.replan(
+                project_id, request.team, self._controller_tasks(run.task_graph)
+            )
+            stored_envelope = run.checkpoint.get("start_dispatch_envelope")
+            if stored_envelope is None:
+                envelope = self._envelope(
+                    run,
+                    EnvelopeKind.TASK_REQUEST,
+                    self._task_request_body(run, workflow),
+                )
+                checkpoint = dict(run.checkpoint)
+                checkpoint["start_dispatch_envelope"] = envelope.model_dump(
+                    mode="json", by_alias=True
+                )
+                run = run.model_copy(update={"checkpoint": checkpoint})
+                run = self.store.update_run(
+                    run,
+                    expected_version=run.version,
+                    lease_owner=lease_owner,
+                )
+            else:
+                envelope = CollaborationEnvelope.model_validate(stored_envelope)
+            matrix_event_id, run = self._send(run, envelope, lease_owner)
             checkpoint = dict(run.checkpoint)
             checkpoint["dispatch_matrix_event_id"] = matrix_event_id
             checkpoint["matrix_root"] = matrix_event_id
@@ -483,9 +610,16 @@ class AgentTeamsBridge:
                 workflow.model_dump(mode="json")
             )
             run = run.model_copy(update={"state": RunState.PRE_APPROVAL, "checkpoint": checkpoint})
-            return self.store.update_run(run, expected_version=run.version)
+            self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
         except Exception as error:
+            if not run.checkpoint.get("project_create_committed"):
+                raise
             try:
+                run = self._renew_operation(run, lease_owner)
                 self.agentteams.pause(project_id, request.team, "bridge dispatch failed")
             except Exception:
                 pass
@@ -499,7 +633,11 @@ class AgentTeamsBridge:
             run = run.model_copy(
                 update={"state": RunState.COMPENSATION_REQUIRED, "checkpoint": checkpoint}
             )
-            self.store.update_run(run, expected_version=run.version)
+            self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
             if isinstance(error, BridgeError):
                 error.details.setdefault("bridge_run_id", run.id)
                 error.details.setdefault("compensation_operation", "start-dispatch")
@@ -515,6 +653,163 @@ class AgentTeamsBridge:
                     "cause": str(error),
                 },
             ) from error
+        finally:
+            self.store.release_operation(run.id, lease_owner)
+        return self.store.get_run(run.id)
+
+    @staticmethod
+    def _assert_start_reservation(
+        run: BridgeRun, request: StartRunRequest, project_id: str
+    ) -> None:
+        expected = {
+            "ego_task_id": request.ego_task_id,
+            "agentteams_project_id": project_id,
+            "team": request.team,
+            "trace_id": request.trace_id,
+            "correlation_id": request.correlation_id,
+            "context_version": request.context_version,
+            "mode": "live",
+            "objective": request.objective,
+            "ack_timeout_seconds": request.ack_timeout_seconds,
+            "execution_timeout_seconds": request.execution_timeout_seconds,
+            "max_reassignments": request.max_reassignments,
+        }
+        actual = {key: getattr(run, key) for key in expected}
+        if actual != expected:
+            raise BridgeError(
+                "start_reservation_conflict",
+                "A deterministic bridge reservation already exists for a different request",
+                details={"run_id": run.id, "expected": expected, "actual": actual},
+            )
+
+    def _confirm_reserved_project(
+        self,
+        run: BridgeRun,
+        request: StartRunRequest,
+        *,
+        source_room_id: str,
+        lease_owner: str,
+    ) -> BridgeRun:
+        if run.checkpoint.get("project_create_committed"):
+            return run
+        existing_receipt = next(
+            (
+                item
+                for item in self.store.receipts(run.id)["items"]
+                if item["receipt_key"] == "agentteams:project-create"
+            ),
+            None,
+        )
+        if existing_receipt is not None:
+            receipt_payload = existing_receipt["payload"]
+            if not isinstance(receipt_payload, dict):
+                raise BridgeError(
+                    "project_receipt_identity_conflict",
+                    "Persisted project receipt payload is malformed",
+                    details={"run_id": run.id, "project_id": run.agentteams_project_id},
+                )
+            response_identifier = receipt_payload.get("response_identifier")
+            response_digest = receipt_payload.get("response_sha256")
+            response_body = receipt_payload.get("response_body")
+            request_body = receipt_payload.get("request_body")
+            create_receipt_matches = (
+                existing_receipt["source"] == "agentteams"
+                and existing_receipt["kind"] == "official-response"
+                and receipt_payload.get("schema") == "egoagentos.upstream-http-receipt/v1"
+                and receipt_payload.get("operation") == "create-project"
+                and receipt_payload.get("http_status") == 201
+                and isinstance(request_body, dict)
+                and request_body.get("project_id") == run.agentteams_project_id
+                and request_body.get("team_id") == run.team
+                and isinstance(response_body, dict)
+                and response_body.get("project_id") == run.agentteams_project_id
+            )
+            recovery_receipt_matches = (
+                existing_receipt["source"] == "agentteams"
+                and existing_receipt["kind"] == "recovered-project-observation"
+                and receipt_payload.get("schema") == "egoagentos.upstream-http-receipt/v1"
+                and receipt_payload.get("operation") == "get-workflow"
+                and receipt_payload.get("http_status") == 200
+                and isinstance(response_body, dict)
+                and response_body.get("project_id") == run.agentteams_project_id
+                and response_body.get("team_id") == run.team
+            )
+            if (
+                not (create_receipt_matches or recovery_receipt_matches)
+                or response_identifier != run.agentteams_project_id
+                or not isinstance(response_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", response_digest) is None
+            ):
+                raise BridgeError(
+                    "project_receipt_identity_conflict",
+                    "Persisted project receipt does not prove the reserved AgentTeams identity",
+                    details={"run_id": run.id, "project_id": run.agentteams_project_id},
+                )
+            confirmation = "RECOVERED_FROM_PERSISTED_RECEIPT"
+        else:
+            try:
+                run = self._renew_operation(run, lease_owner)
+                create_response, create_receipt = self.agentteams.create_project_with_receipt(
+                    project_id=run.agentteams_project_id,
+                    title="EgoAgentOS · %s" % request.objective[:120],
+                    team=request.team,
+                    requester="egoagentos:%s" % request.ego_task_id,
+                    source_room_id=source_room_id,
+                )
+                if create_response.get("project_id") != run.agentteams_project_id:
+                    raise BridgeError(
+                        "project_create_identity_conflict",
+                        "AgentTeams create response does not match the reserved project",
+                    )
+                confirmation = "OFFICIAL_CREATE_RESPONSE"
+                response_identifier = create_response.get("project_id")
+                response_digest = canonical_sha256(create_response)
+            except UpstreamError as error:
+                if error.code != "agentteams_conflict":
+                    raise
+                workflow, create_receipt = self.agentteams.workflow_with_receipt(
+                    run.agentteams_project_id, run.team
+                )
+                if (
+                    workflow.project_id != run.agentteams_project_id
+                    or workflow.team_id != run.team
+                ):
+                    raise BridgeError(
+                        "project_recovery_identity_conflict",
+                        "Existing AgentTeams project does not match the persisted reservation",
+                        details={
+                            "expected_project": run.agentteams_project_id,
+                            "actual_project": workflow.project_id,
+                            "expected_team": run.team,
+                            "actual_team": workflow.team_id,
+                        },
+                    ) from error
+                confirmation = "RECOVERED_FROM_OFFICIAL_WORKFLOW"
+                response_identifier = workflow.project_id
+                response_digest = canonical_sha256(workflow.model_dump(mode="json"))
+            self.store.archive_receipt(
+                run.id,
+                receipt_key="agentteams:project-create",
+                source="agentteams",
+                kind=(
+                    "official-response"
+                    if confirmation == "OFFICIAL_CREATE_RESPONSE"
+                    else "recovered-project-observation"
+                ),
+                payload=create_receipt,
+                lease_owner=lease_owner,
+            )
+        checkpoint = dict(run.checkpoint)
+        checkpoint["project_create_committed"] = True
+        checkpoint["project_create_confirmation"] = confirmation
+        checkpoint["project_create_response_sha256"] = response_digest
+        checkpoint["project_create_identifier"] = response_identifier
+        run = run.model_copy(update={"checkpoint": checkpoint})
+        return self.store.update_run(
+            run,
+            expected_version=run.version,
+            lease_owner=lease_owner,
+        )
 
     def get_run(self, run_id: str) -> BridgeRun:
         return self.store.get_run(run_id)
@@ -620,7 +915,7 @@ class AgentTeamsBridge:
         return paths
 
     def _validate_task_contract(
-        self, run: BridgeRun, detail: TaskDetail
+        self, run: BridgeRun, detail: TaskDetail, lease_owner: str
     ) -> Tuple[WorkerResultEnvelope, str, Dict[str, Any]]:
         paths = self._deliverable_paths(detail)
         envelope_paths = [path for path in paths if path.endswith(".ego-envelope.json")]
@@ -640,6 +935,7 @@ class AgentTeamsBridge:
             source="agentteams",
             kind="official-artifact-response",
             payload=envelope_receipt,
+            lease_owner=lease_owner,
         )
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -709,6 +1005,7 @@ class AgentTeamsBridge:
             source="agentteams",
             kind="official-artifact-response",
             payload=primary_receipt,
+            lease_owner=lease_owner,
         )
         actual_digest = hashlib.sha256(primary_bytes).hexdigest()
         if actual_digest != envelope.output_sha256:
@@ -789,6 +1086,7 @@ class AgentTeamsBridge:
                         "artifact_response_sha256": primary_receipt["response_sha256"],
                         "result_envelope_sha256": hashlib.sha256(raw).hexdigest(),
                     },
+                    lease_owner=lease_owner,
                 )
         return (
             envelope,
@@ -807,7 +1105,7 @@ class AgentTeamsBridge:
         )
 
     def _observe_statuses(
-        self, run: BridgeRun, workflow: WorkflowResponse
+        self, run: BridgeRun, workflow: WorkflowResponse, lease_owner: str
     ) -> Tuple[BridgeRun, List[Dict[str, Any]]]:
         checkpoint = dict(run.checkpoint)
         statuses = dict(checkpoint.get("node_status", {}))
@@ -836,7 +1134,9 @@ class AgentTeamsBridge:
                         "source": "GET /api/v1/projects/{id}/workflow?includeTasks=true",
                     },
                 )
-                self.store.append_event(run.id, envelope)
+                self.store.append_event(
+                    run.id, envelope, lease_owner=lease_owner
+                )
         checkpoint["node_status"] = statuses
         checkpoint["last_workflow_sha256"] = canonical_sha256(
             workflow.model_dump(mode="json")
@@ -874,6 +1174,7 @@ class AgentTeamsBridge:
         *,
         reason: str,
         suggested_worker: Optional[str] = None,
+        lease_owner: str,
     ) -> Tuple[BridgeRun, Dict[str, Any]]:
         checkpoint = dict(run.checkpoint)
         counts = dict(checkpoint.get("reassignments", {}))
@@ -923,6 +1224,7 @@ class AgentTeamsBridge:
         current_node = next((node for node in workflow.nodes if node.id == task.task_id), None)
         current_status = current_node.status if current_node else task.status
         if current_status in ACTIVE_NODE_STATUSES:
+            run = self._renew_operation(run, lease_owner)
             self.agentteams.cancel_task(
                 run.agentteams_project_id,
                 run.team,
@@ -954,9 +1256,11 @@ class AgentTeamsBridge:
             }
         )
         graph.append(replacement)
+        run = self._renew_operation(run, lease_owner)
         self.agentteams.replan(
             run.agentteams_project_id, run.team, self._controller_tasks(graph)
         )
+        checkpoint[OPERATION_LEASE_KEY] = run.checkpoint[OPERATION_LEASE_KEY]
         counts[origin] = count + 1
         checkpoint["reassignments"] = counts
         checkpoint.pop("pending_replan", None)
@@ -972,7 +1276,9 @@ class AgentTeamsBridge:
             },
             attempt=replacement.attempt,
         )
-        self.store.append_event(updated.id, conflict)
+        self.store.append_event(
+            updated.id, conflict, lease_owner=lease_owner
+        )
         replan = self._envelope(
             updated,
             EnvelopeKind.REPLAN,
@@ -988,9 +1294,10 @@ class AgentTeamsBridge:
             causation_id=conflict.envelope_id,
         )
         try:
-            matrix_event_id = self._send(updated, replan)
+            matrix_event_id, updated = self._send(updated, replan, lease_owner)
         except Exception as error:
             try:
+                updated = self._renew_operation(updated, lease_owner)
                 self.agentteams.pause(
                     updated.agentteams_project_id,
                     updated.team,
@@ -1026,6 +1333,7 @@ class AgentTeamsBridge:
                     attempt=replacement.attempt,
                     causation_id=conflict.envelope_id,
                 ),
+                lease_owner=lease_owner,
             )
             return updated, {
                 "action": "compensation_required",
@@ -1042,7 +1350,7 @@ class AgentTeamsBridge:
         }
 
     def _first_conflict(
-        self, run: BridgeRun, workflow: WorkflowResponse
+        self, run: BridgeRun, workflow: WorkflowResponse, lease_owner: str
     ) -> Optional[Tuple[ResearchTaskSpec, str, Optional[str]]]:
         details = self._detail_by_id(workflow)
         accepted = dict(run.checkpoint.get("accepted_contracts", {}))
@@ -1072,7 +1380,7 @@ class AgentTeamsBridge:
                 return task, "result_status=%s" % detail.result_status, None
             try:
                 envelope, artifact_hash, primary_artifact = self._validate_task_contract(
-                    run, detail
+                    run, detail, lease_owner
                 )
             except BridgeError as error:
                 suggested = None
@@ -1103,6 +1411,7 @@ class AgentTeamsBridge:
                         "source": "AgentTeams declared artifact endpoint",
                     },
                 ),
+                lease_owner=lease_owner,
             )
         return None
 
@@ -1164,7 +1473,9 @@ class AgentTeamsBridge:
                 details={"expected": expected, "actual": task.get("live_source")},
             )
 
-    def _advance_ego_to_approval(self, run: BridgeRun) -> Tuple[BridgeRun, Dict[str, Any]]:
+    def _advance_ego_to_approval(
+        self, run: BridgeRun, lease_owner: str
+    ) -> Tuple[BridgeRun, Dict[str, Any]]:
         task = self.ego.get_task(run.ego_task_id)
         self._assert_ego_run_binding(run, task)
         stages = ["INTAKE", "CONTEXT", "PLAN", "PLAN_REVIEW", "APPROVAL"]
@@ -1177,6 +1488,7 @@ class AgentTeamsBridge:
         actions: List[Dict[str, Any]] = []
         index = stages.index(str(task["stage"]))
         for target in stages[index + 1 :]:
+            run = self._renew_operation(run, lease_owner)
             response, receipt = self.ego.advance_stage_with_receipt(
                 run.ego_task_id,
                 target,
@@ -1197,6 +1509,7 @@ class AgentTeamsBridge:
                 source="egoagentos",
                 kind="control-plane-response",
                 payload=receipt,
+                lease_owner=lease_owner,
             )
             actions.append({"action": "ego_stage_advanced", "target": target})
         pending = task.get("pending_approval") if isinstance(task, dict) else None
@@ -1439,7 +1752,9 @@ class AgentTeamsBridge:
         }
         return [items[kind] for kind in sorted(items)]
 
-    def _finalize_ego(self, run: BridgeRun) -> Tuple[BridgeRun, Dict[str, Any]]:
+    def _finalize_ego(
+        self, run: BridgeRun, lease_owner: str
+    ) -> Tuple[BridgeRun, Dict[str, Any]]:
         checkpoint = dict(run.checkpoint)
         if checkpoint.get("ego_finalization_committed"):
             task = self.ego.get_task(run.ego_task_id)
@@ -1464,6 +1779,8 @@ class AgentTeamsBridge:
             "evidence": self._build_finalization_evidence(run, task),
             "terminal_actor": task.get("owner_agent"),
         }
+        run = self._renew_operation(run, lease_owner)
+        checkpoint = dict(run.checkpoint)
         response, receipt = self.ego.finalize_live(
             run.ego_task_id,
             body,
@@ -1488,6 +1805,7 @@ class AgentTeamsBridge:
             source="egoagentos",
             kind="terminal-finalization",
             payload=receipt,
+            lease_owner=lease_owner,
         )
         checkpoint["ego_finalization_committed"] = True
         checkpoint["ego_finalization_receipt_sha256"] = archived["payload_sha256"]
@@ -1495,10 +1813,17 @@ class AgentTeamsBridge:
         checkpoint["ego_gate_status"] = terminal["gate_result"]["status"]
         checkpoint["ego_terminal_version"] = terminal.get("version")
         updated = run.model_copy(update={"checkpoint": checkpoint})
-        return self.store.update_run(updated, expected_version=run.version), terminal
+        return (
+            self.store.update_run(
+                updated,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            ),
+            terminal,
+        )
 
     def _recover_compensation(
-        self, run: BridgeRun, workflow: WorkflowResponse
+        self, run: BridgeRun, workflow: WorkflowResponse, lease_owner: str
     ) -> Tuple[BridgeRun, Dict[str, Any]]:
         retry = run.checkpoint.get("compensation_retry") or {}
         operation = retry.get("operation")
@@ -1529,7 +1854,8 @@ class AgentTeamsBridge:
                 EnvelopeKind.TASK_REQUEST,
                 self._task_request_body(run, workflow),
             )
-            matrix_event_id = self._send(run, envelope)
+            matrix_event_id, run = self._send(run, envelope, lease_owner)
+            run = self._renew_operation(run, lease_owner)
             self.agentteams.resume(run.agentteams_project_id, run.team)
             next_state = RunState.PRE_APPROVAL
         elif operation == "replan-notify":
@@ -1553,7 +1879,8 @@ class AgentTeamsBridge:
                 },
                 attempt=replacement.attempt if replacement else 1,
             )
-            matrix_event_id = self._send(run, envelope)
+            matrix_event_id, run = self._send(run, envelope, lease_owner)
+            run = self._renew_operation(run, lease_owner)
             self.agentteams.resume(run.agentteams_project_id, run.team)
             requested_state = str(retry.get("resume_state", RunState.PRE_APPROVAL.value))
             next_state = (
@@ -1573,7 +1900,7 @@ class AgentTeamsBridge:
                     "required_action": "Approve in EgoAgentOS; chat text is not a grant",
                 },
             )
-            matrix_event_id = self._send(run, envelope)
+            matrix_event_id, run = self._send(run, envelope, lease_owner)
             next_state = RunState.WAITING_R2
         else:
             envelope = self._envelope(
@@ -1591,7 +1918,7 @@ class AgentTeamsBridge:
                     "claim_boundary": "EgoAgentOS decision is bound to typed live evidence.",
                 },
             )
-            matrix_event_id = self._send(run, envelope)
+            matrix_event_id, run = self._send(run, envelope, lease_owner)
             next_state = RunState.COMPLETED
 
         checkpoint = dict(run.checkpoint)
@@ -1609,16 +1936,24 @@ class AgentTeamsBridge:
         }
 
     def reconcile(self, run_id: str) -> ReconcileResult:
-        run = self.store.get_run(run_id)
-        if run.mode != "live":
+        initial = self.store.get_run(run_id)
+        if initial.mode != "live":
             raise BridgeError(
                 "dry_run_not_reconcilable",
                 "A dry-run plan has no live AgentTeams workflow to reconcile",
                 status_code=409,
                 details={"truth": "DRY_RUN_ONLY"},
             )
-        if run.state in {RunState.BLOCKED, RunState.COMPLETED}:
-            return ReconcileResult(run=run, live=True, actions=[])
+        if initial.state in {RunState.BLOCKED, RunState.COMPLETED}:
+            return ReconcileResult(run=initial, live=True, actions=[])
+        run, lease_owner = self._claim_operation(run_id, "reconcile")
+        try:
+            result = self._reconcile_claimed(run, lease_owner)
+        finally:
+            self.store.release_operation(run_id, lease_owner)
+        return result.model_copy(update={"run": self.store.get_run(run_id)})
+
+    def _reconcile_claimed(self, run: BridgeRun, lease_owner: str) -> ReconcileResult:
         workflow, workflow_receipt = self.agentteams.workflow_with_receipt(
             run.agentteams_project_id, run.team
         )
@@ -1629,6 +1964,7 @@ class AgentTeamsBridge:
             source="agentteams",
             kind="official-workflow-snapshot",
             payload=workflow_receipt,
+            lease_owner=lease_owner,
         )
         if workflow.project_id != run.agentteams_project_id or workflow.team_id != run.team:
             raise BridgeError(
@@ -1640,29 +1976,41 @@ class AgentTeamsBridge:
                     "expected_team": run.team,
                     "actual_team": workflow.team_id,
                 },
-            )
+        )
         if run.state == RunState.COMPENSATION_REQUIRED:
-            run, action = self._recover_compensation(run, workflow)
-            run = self.store.update_run(run, expected_version=run.version)
+            run, action = self._recover_compensation(
+                run, workflow, lease_owner
+            )
+            run = self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
             return ReconcileResult(
                 run=run,
                 workflow_sha256=canonical_sha256(workflow.model_dump(mode="json")),
                 actions=[action],
                 live=True,
             )
-        run, actions = self._observe_statuses(run, workflow)
-        conflict = self._first_conflict(run, workflow)
+        run, actions = self._observe_statuses(run, workflow, lease_owner)
+        conflict = self._first_conflict(run, workflow, lease_owner)
         if conflict is not None:
             task, reason, suggested = conflict
             run, action = self._reassign(
-                run, workflow, task, reason=reason, suggested_worker=suggested
+                run,
+                workflow,
+                task,
+                reason=reason,
+                suggested_worker=suggested,
+                lease_owner=lease_owner,
             )
             actions.append(action)
         elif run.state == RunState.PRE_APPROVAL and self._all_stage_tasks_completed(
             run, workflow, PRE_APPROVAL_STAGES
         ):
-            run, ego_action = self._advance_ego_to_approval(run)
+            run, ego_action = self._advance_ego_to_approval(run, lease_owner)
             actions.append(ego_action)
+            run = self._renew_operation(run, lease_owner)
             paused = self.agentteams.pause(
                 run.agentteams_project_id,
                 run.team,
@@ -1685,9 +2033,10 @@ class AgentTeamsBridge:
                 },
             )
             try:
-                event_id = self._send(run, envelope)
+                event_id, run = self._send(run, envelope, lease_owner)
                 actions.append({"action": "r2_paused", "matrix_event_id": event_id})
             except Exception as error:
+                run = self._renew_operation(run, lease_owner)
                 checkpoint = dict(run.checkpoint)
                 checkpoint["compensation_reason"] = str(error)
                 checkpoint["compensation_retry"] = {
@@ -1713,6 +2062,7 @@ class AgentTeamsBridge:
                             "retry": "POST /api/v1/agentteams/runs/{run_id}/reconcile",
                         },
                     ),
+                    lease_owner=lease_owner,
                 )
                 actions.append(
                     {
@@ -1724,7 +2074,8 @@ class AgentTeamsBridge:
         elif run.state == RunState.POST_APPROVAL and self._all_stage_tasks_completed(
             run, workflow, POST_APPROVAL_STAGES
         ):
-            run, terminal_task = self._finalize_ego(run)
+            run, terminal_task = self._finalize_ego(run, lease_owner)
+            run = self._renew_operation(run, lease_owner)
             completed, complete_receipt = self.agentteams.complete_with_receipt(
                 run.agentteams_project_id, run.team
             )
@@ -1734,6 +2085,7 @@ class AgentTeamsBridge:
                 source="agentteams",
                 kind="official-response",
                 payload=complete_receipt,
+                lease_owner=lease_owner,
             )
             run = run.model_copy(update={"state": RunState.COMPLETED})
             envelope = self._envelope(
@@ -1752,9 +2104,10 @@ class AgentTeamsBridge:
                 },
             )
             try:
-                event_id = self._send(run, envelope)
+                event_id, run = self._send(run, envelope, lease_owner)
                 actions.append({"action": "agentteams_completed", "matrix_event_id": event_id})
             except Exception as error:
+                run = self._renew_operation(run, lease_owner)
                 checkpoint = dict(run.checkpoint)
                 checkpoint["compensation_reason"] = str(error)
                 checkpoint["compensation_retry"] = {
@@ -1780,6 +2133,7 @@ class AgentTeamsBridge:
                             "retry": "POST /api/v1/agentteams/runs/{run_id}/reconcile",
                         },
                     ),
+                    lease_owner=lease_owner,
                 )
                 actions.append(
                     {
@@ -1788,7 +2142,11 @@ class AgentTeamsBridge:
                         "reason": str(error),
                     }
                 )
-        run = self.store.update_run(run, expected_version=run.version)
+        run = self.store.update_run(
+            run,
+            expected_version=run.version,
+            lease_owner=lease_owner,
+        )
         return ReconcileResult(
             run=run,
             workflow_sha256=canonical_sha256(workflow.model_dump(mode="json")),
@@ -1824,15 +2182,25 @@ class AgentTeamsBridge:
         return pre + post
 
     def grant_r2(self, run_id: str, request: GrantRequest) -> BridgeRun:
-        run = self.store.get_run(run_id)
-        if run.mode != "live":
+        initial = self.store.get_run(run_id)
+        if initial.mode != "live":
             raise BridgeError("dry_run_grant_forbidden", "Cannot grant a dry-run plan")
-        if run.state not in {RunState.WAITING_R2, RunState.COMPENSATION_REQUIRED}:
+        if initial.state not in {RunState.WAITING_R2, RunState.COMPENSATION_REQUIRED}:
             raise BridgeError(
                 "run_not_waiting_for_r2",
                 "Bridge run is not at the R2 recovery gate",
-                details={"state": run.state.value},
+                details={"state": initial.state.value},
             )
+        run, lease_owner = self._claim_operation(run_id, "r2-grant")
+        try:
+            self._grant_r2_claimed(run, request, lease_owner)
+        finally:
+            self.store.release_operation(run_id, lease_owner)
+        return self.store.get_run(run_id)
+
+    def _grant_r2_claimed(
+        self, run: BridgeRun, request: GrantRequest, lease_owner: str
+    ) -> BridgeRun:
         checkpoint = dict(run.checkpoint)
         if run.state == RunState.COMPENSATION_REQUIRED:
             operation = (checkpoint.get("compensation_retry") or {}).get("operation")
@@ -1860,6 +2228,8 @@ class AgentTeamsBridge:
                     details={"stage": ego_task.get("stage")},
                 )
             pending_approval = ego_task.get("pending_approval") or {}
+            run = self._renew_operation(run, lease_owner)
+            checkpoint = dict(run.checkpoint)
             checkpoint["grant_id"] = pending_approval.get("id")
             checkpoint["grant_approver"] = pending_approval.get("approver")
             response = self.ego.consume_r2_grant(
@@ -1877,7 +2247,11 @@ class AgentTeamsBridge:
             ).hexdigest()
             # Persist immediately: the token is consumed, while the token itself is never stored.
             run = run.model_copy(update={"checkpoint": checkpoint})
-            run = self.store.update_run(run, expected_version=run.version)
+            run = self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
             if advanced_stage != "EXECUTE":
                 checkpoint = dict(run.checkpoint)
                 checkpoint["compensation_reason"] = (
@@ -1894,7 +2268,11 @@ class AgentTeamsBridge:
                         "checkpoint": checkpoint,
                     }
                 )
-                self.store.update_run(run, expected_version=run.version)
+                self.store.update_run(
+                    run,
+                    expected_version=run.version,
+                    lease_owner=lease_owner,
+                )
                 raise BridgeError(
                     "ego_grant_transition_unverified",
                     "R2 receipt was persisted but the EgoAgentOS EXECUTE transition was not verified",
@@ -1903,7 +2281,9 @@ class AgentTeamsBridge:
                 )
         graph = self._post_approval_graph(run)
         try:
+            run = self._renew_operation(run, lease_owner)
             self.agentteams.resume(run.agentteams_project_id, run.team)
+            run = self._renew_operation(run, lease_owner)
             self.agentteams.replan(
                 run.agentteams_project_id, run.team, self._controller_tasks(graph)
             )
@@ -1921,15 +2301,20 @@ class AgentTeamsBridge:
                     "resume_source": "EgoAgentOS scoped approval token",
                 },
             )
-            event_id = self._send(run, envelope)
+            event_id, run = self._send(run, envelope, lease_owner)
             checkpoint = dict(run.checkpoint)
             checkpoint["approval_granted_matrix_event_id"] = event_id
             checkpoint.pop("compensation_reason", None)
             checkpoint.pop("compensation_retry", None)
             run = run.model_copy(update={"checkpoint": checkpoint})
-            return self.store.update_run(run, expected_version=run.version)
+            return self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
         except Exception as error:
             try:
+                run = self._renew_operation(run, lease_owner)
                 self.agentteams.pause(
                     run.agentteams_project_id,
                     run.team,
@@ -1947,7 +2332,11 @@ class AgentTeamsBridge:
             run = run.model_copy(
                 update={"state": RunState.COMPENSATION_REQUIRED, "checkpoint": checkpoint}
             )
-            run = self.store.update_run(run, expected_version=run.version)
+            run = self.store.update_run(
+                run,
+                expected_version=run.version,
+                lease_owner=lease_owner,
+            )
             self.store.append_event(
                 run.id,
                 self._envelope(
@@ -1959,6 +2348,7 @@ class AgentTeamsBridge:
                         "retry": "repeat r2-grant with the same idempotency key; token is not reused",
                     },
                 ),
+                lease_owner=lease_owner,
             )
             raise
 

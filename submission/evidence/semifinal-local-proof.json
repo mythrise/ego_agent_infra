@@ -94,14 +94,14 @@
       "database_image_observed_in_committed_proof": "postgres:16-alpine",
       "engine": "PostgreSQL",
       "file": {
-        "bytes": 2188,
+        "bytes": 2337,
         "path": "docs/evidence/postgres-local-proof-2026-08-29.md",
-        "sha256": "23b54915543fdfdc88a3a4e2c165e152c78760e39e70aa0d23580cc59d2bf17c",
+        "sha256": "05d73dc209dc37baa83cda8b37f4bf7543970793743907b1e3cb43c81042169c",
         "tracked": true
       },
       "proof_reexecuted_by_builder": false,
       "status": "VERIFIED_FROM_COMMITTED_LOCAL_PROOF",
-      "tests_passed": 27,
+      "tests_passed": 32,
       "truth_boundary": "Index of a committed disposable local PostgreSQL proof; this builder does not re-run Docker, PolarDB, backup, failover, or PITR.",
       "version": "16.14"
     }

@@ -11,21 +11,21 @@ inferred from local tests.
 
 | Surface | Command | Verified result |
 |---|---|---|
-| FastAPI/control plane | `make test-api` | 56 passed |
+| FastAPI/control plane | `make test-api` | 69 passed |
 | RXP/1 protocol | `make test-rxp` | 26 passed; seven schemas current |
 | Skill runtime | `make test-skills` | 6 passed; 6 discovered / 3 executable |
-| Semifinal proof | `make test-proof` | 1 passed; Ruff PASS |
-| Strict benchmark | `make test-benchmark` | 28 passed; strict 2-repetition replay PASS |
+| Semifinal proof | `make test-proof` | 3 passed; Ruff PASS |
+| Strict benchmark | `make test-benchmark` | 29 passed; strict 2-repetition replay PASS |
 | Acceptance bundle | `make test-acceptance` | 16 passed; eight scenarios and negative origin/receipt/Matrix/Decision/recovery checks PASS |
-| AgentTeams bridge | `make test-agentteams check-agentteams` | 28 passed; Ruff/MyPy/official offline lock PASS |
+| AgentTeams bridge | `make test-agentteams check-agentteams` | 41 passed; Ruff/MyPy/official offline lock PASS |
 | Fashion-MNIST adapter | `make test-experiments` | 13 passed; CUDA/resource/artifact/verifier contracts PASS, no live run inferred |
 | MCP/integration | `make test-mcp` | 23 passed; Ruff PASS |
-| Web | `make test-web` | 12 passed; Vite production build PASS |
+| Web | `make test-web` | 16 passed; Vite production build PASS |
 | Submission policy | `make verify` | fail-closed deliverable, proof, boundary, and secret checks PASS |
 
-The full `make test` run covers 210 tests across these Python/TypeScript groups: API 56,
-RXP 26, Skills 6, Proof 2, Benchmark 28, Acceptance 16, AgentTeams 28, Experiments 13,
-MCP 23, and Web 12. Ruff
+The full `make test` run covers 242 tests across these Python/TypeScript groups: API 69,
+RXP 26, Skills 6, Proof 3, Benchmark 29, Acceptance 16, AgentTeams 41, Experiments 13,
+MCP 23, and Web 16. Ruff
 and MyPy pass for the API, RXP, Skill runtime, benchmark, and AgentTeams bridge. Counts
 are a dated snapshot, not a timeless project claim; CI and the evidence index are the
 authoritative replay path.
@@ -34,7 +34,7 @@ authoritative replay path.
 
 `make demo-proof` rebuilds the proof twice and requires byte freshness. The committed
 bundle is `submission/evidence/semifinal-local-proof.json`; its sidecar SHA-256 is
-`b8142cb5b3d3e2b8ca6e500bab0b3c982f80a5b5e58fdd3da06b70bef9e1a2ed`.
+`4697748cf82283b9db832f771f997efe85da4b992f82807b510dc6d64f7f7479`.
 
 - RXP fixture: `2 / 2 COMPLETE`, 23 append-only entries, structural/signature checks
   PASS, and two independently generated files are byte-identical.
@@ -71,7 +71,7 @@ semantic digest. Running the release gate with no live evidence returns non-zero
 - The AgentTeams bridge implements seven principals, project/task/workflow/artifact
   mapping, conflict→replan, timeout→reassign, R2 recovery, compensation, restart,
   PostgreSQL JSONB checkpoints/events/receipts, full event-chain verification, and
-  Skill/RXP trace references. Twenty-eight contract/fault tests pass and seven pinned
+  Skill/RXP trace references. Forty-one contract/fault tests pass and seven pinned
   official files were SHA-256 checked. No live Controller/Matrix endpoint or same-run
   target evidence was used, so live status remains `SKIP / UNVERIFIED`.
 - The Fashion-MNIST adapter defines a real one-CUDA-GPU TinyCNN FP32/AMP comparison with
@@ -79,7 +79,7 @@ semantic digest. Running the release gate with no live evidence returns non-zero
   memory telemetry, environment, approval, Matrix/AgentTeams receipts, independent
   review, and Decision. Its offline verifier intentionally reports
   `CONTRACT_PASS_ORIGIN_UNVERIFIED`; there is no live metric claim.
-- PostgreSQL 16.14 integration was run in a real temporary Docker container: 27/27 tests
+- PostgreSQL 16.14 integration was run in a real temporary Docker container: 32/32 tests
   passed for control-plane and bridge transactions, optimistic concurrency, tenant
   isolation, candidate-only memory curation, four least-privilege roles/RLS, append-only
   ledgers, migration checksums, restart/CAS/idempotency, durable event cursors, and

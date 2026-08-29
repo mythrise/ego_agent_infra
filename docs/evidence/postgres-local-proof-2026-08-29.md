@@ -29,11 +29,11 @@ EGO_TEST_POSTGRES_URL='postgresql://egoagentos_test:<redacted>@127.0.0.1:55439/e
 Observed result:
 
 ```text
-...........................                                              [100%]
-27 passed
+................................                                         [100%]
+32 passed
 ```
 
-The 27 tests cover both production PostgreSQL paths:
+The 32 tests cover both production PostgreSQL paths:
 
 - control-plane API persistence, cross-record rollback, row-lock/optimistic concurrency,
   tenant isolation, durable event cursors, commit-only `LISTEN/NOTIFY`, and migration
@@ -41,6 +41,8 @@ The 27 tests cover both production PostgreSQL paths:
 - database-enforced append-only evidence, memory-candidate, validated-memory, audit,
   bridge-event, and bridge-receipt ledgers;
 - runtime, auditor, evidence-writer, and memory-curator least-privilege roles plus RLS;
+- separate runtime LOGIN hardening, historical direct-GRANT cleanup, NOLOGIN capability
+  groups, and verify-only startup without owner credentials;
 - Memory Curator candidate-only writes and separate validator promotion;
 - AgentTeams JSONB checkpoints, CAS/advisory locking, restart recovery, serialized event
   chains, receipt idempotency/uniqueness, and concurrent migration initialization;

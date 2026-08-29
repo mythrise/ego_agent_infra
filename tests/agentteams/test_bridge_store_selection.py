@@ -27,3 +27,11 @@ def test_blank_database_url_uses_sqlite_development_fallback() -> None:
 def test_explicit_non_postgres_url_fails_instead_of_falling_back() -> None:
     with pytest.raises(ValueError, match="must use postgresql"):
         build_bridge_store(database_url="sqlite:///not-allowed.sqlite3", sqlite_path=":memory:")
+
+
+def test_invalid_bridge_migration_mode_fails_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EGO_AGENTTEAMS_MIGRATION_MODE", "invalid")
+    with pytest.raises(ValueError, match="must be apply or verify"):
+        build_bridge_store(database_url="postgresql://runtime:secret@127.0.0.1/unused")

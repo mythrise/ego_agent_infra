@@ -55,7 +55,7 @@ make package
   inside the ZIP.
 - [ ] Confirm PPTX/PDF/proof/package hashes match their sidecars/index.
 - [ ] If a PostgreSQL URL is available, rerun `make test-postgres` and preserve the
-  version plus 27/27 result separately; do not relabel it PolarDB evidence.
+  version plus 32/32 result separately; do not relabel it PolarDB evidence.
 - [ ] If live AgentTeams/GPU or PolarDB/PITR was not run, keep every external origin
   field `UNVERIFIED`/`NOT RUN` in the portal, deck, video, and spoken demo.
 - [ ] Open GitHub repository and static Demo URL in a signed-out/incognito browser.

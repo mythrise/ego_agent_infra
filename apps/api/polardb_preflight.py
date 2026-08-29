@@ -48,6 +48,10 @@ EXPECTED_TABLES = (
     "tasks",
 )
 PRIVILEGE_TABLES = EXPECTED_TABLES + ("schema_migrations",)
+EXPECTED_RUNTIME_UPDATE_COLUMNS = {
+    "approvals": ("expires_at", "record_json", "status", "token_hash"),
+    "tasks": ("created_at", "generation", "task_json", "updated_at", "version"),
+}
 EXPECTED_RLS_TABLES = EXPECTED_TABLES
 EXPECTED_POLICIES = tuple("%s_tenant_policy" % table for table in EXPECTED_RLS_TABLES)
 EXPECTED_TRIGGERS = (
@@ -364,9 +368,7 @@ class PostgresInspector:
             "session_forced_read_only_after_identity": True,
         }
 
-    def inspect_control_plane(
-        self, database_url: str, roles: Mapping[str, str]
-    ) -> Dict[str, Any]:
+    def inspect_control_plane(self, database_url: str, roles: Mapping[str, str]) -> Dict[str, Any]:
         connection = self._connect(database_url)
         try:
             connection.execute("SET default_transaction_read_only = on")
@@ -420,11 +422,11 @@ class PostgresInspector:
                 (list(roles.values()),),
             ).fetchall()
             existing_roles = {str(row["rolname"]) for row in role_rows}
-            privileges: Dict[str, Dict[str, Dict[str, bool]]] = {}
+            privileges: Dict[str, Dict[str, Dict[str, Any]]] = {}
             for role in roles.values():
                 if role not in existing_roles:
                     continue
-                role_privileges: Dict[str, Dict[str, bool]] = {}
+                role_privileges: Dict[str, Dict[str, Any]] = {}
                 for table in PRIVILEGE_TABLES:
                     row = connection.execute(
                         """
@@ -449,6 +451,21 @@ class PostgresInspector:
                         name: bool(row and row[name])
                         for name in ("select", "insert", "update", "delete")
                     }
+                    column_rows = connection.execute(
+                        """
+                        /* egoagentos_preflight:update_columns */
+                        SELECT column_name,
+                               has_column_privilege(%s, %s, column_name, 'UPDATE') AS update
+                          FROM information_schema.columns
+                         WHERE table_schema='public' AND table_name=%s
+                         ORDER BY ordinal_position
+                        """,
+                        (role, "public.%s" % table, table),
+                    ).fetchall()
+                    role_privileges[table]["update_columns"] = {
+                        str(column_row["column_name"]): bool(column_row["update"])
+                        for column_row in column_rows
+                    }
                 privileges[role] = role_privileges
         finally:
             connection.close()
@@ -461,15 +478,45 @@ class PostgresInspector:
             "privileges": privileges,
         }
 
-    def inspect_login(self, database_url: str) -> Dict[str, Any]:
+    def inspect_login(
+        self, database_url: str, expected_capability_group: str
+    ) -> Dict[str, Any]:
         connection = self._connect(database_url)
         try:
             connection.execute("SET default_transaction_read_only = on")
             row = connection.execute(
                 """
                 /* egoagentos_preflight:login */
-                SELECT current_user AS current_user, current_database() AS database_name
-                """
+                SELECT session_user AS login_identity,
+                       current_user AS current_user,
+                       current_database() AS database_name,
+                       COALESCE(
+                           (SELECT rolcanlogin FROM pg_roles WHERE rolname=session_user),
+                           false
+                       ) AS login_can_login,
+                       session_user <> %s AS dedicated_login,
+                       COALESCE(
+                           (
+                               SELECT NOT capability.rolcanlogin
+                                 FROM pg_roles capability
+                                WHERE capability.rolname=%s
+                           ),
+                           false
+                       ) AS capability_group_nologin,
+                       COALESCE(
+                           (
+                               SELECT pg_has_role(session_user, capability.oid, 'MEMBER')
+                                 FROM pg_roles capability
+                                WHERE capability.rolname=%s
+                           ),
+                           false
+                       ) AS capability_group_member
+                """,
+                (
+                    expected_capability_group,
+                    expected_capability_group,
+                    expected_capability_group,
+                ),
             ).fetchone()
             tls = connection.execute(
                 "SELECT COALESCE(ssl, false) AS ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
@@ -479,8 +526,14 @@ class PostgresInspector:
         if row is None:
             raise RuntimeError("login probe returned no row")
         return {
+            "login_identity": row["login_identity"],
             "current_user": row["current_user"],
             "database_name": row["database_name"],
+            "login_can_login": bool(row["login_can_login"]),
+            "dedicated_login": bool(row["dedicated_login"]),
+            "capability_group": expected_capability_group,
+            "capability_group_nologin": bool(row["capability_group_nologin"]),
+            "capability_group_member": bool(row["capability_group_member"]),
             "tls": bool(tls and tls["ssl"]),
         }
 
@@ -576,7 +629,7 @@ class PostgresInspector:
                 connection.execute("COMMIT")
         finally:
             connection.close()
-        PostgresStore(database_url)
+        PostgresStore(database_url, migration_mode="apply")
         verification = self._connect(database_url)
         try:
             migrations = verification.execute(
@@ -598,7 +651,7 @@ class PostgresInspector:
 
 
 def _role_matrix_ok(
-    privileges: Mapping[str, Mapping[str, Mapping[str, bool]]],
+    privileges: Mapping[str, Mapping[str, Mapping[str, Any]]],
     roles: Mapping[str, str],
 ) -> Dict[str, Any]:
     runtime_role = roles["runtime"]
@@ -611,8 +664,8 @@ def _role_matrix_ok(
     memory_curator = privileges.get(memory_curator_role, {})
     failures: List[str] = []
     runtime_write = {
-        "tasks": {"insert", "update"},
-        "approvals": {"insert", "update"},
+        "tasks": {"insert"},
+        "approvals": {"insert"},
         "evidence": {"insert"},
         "memory_candidates": {"insert"},
         "memories": {"insert"},
@@ -622,6 +675,14 @@ def _role_matrix_ok(
     }
     evidence_writer_read = {"tasks", "approvals", "evidence"}
     memory_curator_read = {"tasks", "evidence", "memory_candidates", "memories"}
+    observed_runtime_update_columns: Dict[str, List[str]] = {}
+
+    def update_columns(row: Mapping[str, Any]) -> set[str]:
+        raw = row.get("update_columns", {})
+        if not isinstance(raw, Mapping):
+            return set()
+        return {str(column) for column, granted in raw.items() if granted}
+
     for table in PRIVILEGE_TABLES:
         row = runtime.get(table, {})
         if not row.get("select"):
@@ -630,11 +691,26 @@ def _role_matrix_ok(
             expected = action in runtime_write[table]
             if bool(row.get(action)) != expected:
                 failures.append("%s %s on %s expected %s" % (runtime_role, action, table, expected))
+        observed_update = update_columns(row)
+        expected_update = set(EXPECTED_RUNTIME_UPDATE_COLUMNS.get(table, ()))
+        observed_runtime_update_columns[table] = sorted(observed_update)
+        if observed_update != expected_update:
+            failures.append(
+                "%s UPDATE columns on %s expected %s, observed %s"
+                % (
+                    runtime_role,
+                    table,
+                    sorted(expected_update),
+                    sorted(observed_update),
+                )
+            )
         auditor_row = auditor.get(table, {})
         if not auditor_row.get("select"):
             failures.append("%s lacks SELECT on %s" % (auditor_role, table))
         if any(auditor_row.get(action) for action in ("insert", "update", "delete")):
             failures.append("%s has mutation privilege on %s" % (auditor_role, table))
+        if update_columns(auditor_row):
+            failures.append("%s has column UPDATE privilege on %s" % (auditor_role, table))
         evidence_row = evidence_writer.get(table, {})
         if bool(evidence_row.get("select")) != (table in evidence_writer_read):
             failures.append(
@@ -645,9 +721,10 @@ def _role_matrix_ok(
             expected = action == "insert" and table == "evidence"
             if bool(evidence_row.get(action)) != expected:
                 failures.append(
-                    "%s %s on %s expected %s"
-                    % (evidence_writer_role, action, table, expected)
+                    "%s %s on %s expected %s" % (evidence_writer_role, action, table, expected)
                 )
+        if update_columns(evidence_row):
+            failures.append("%s has column UPDATE privilege on %s" % (evidence_writer_role, table))
         curator_row = memory_curator.get(table, {})
         if bool(curator_row.get("select")) != (table in memory_curator_read):
             failures.append(
@@ -658,10 +735,15 @@ def _role_matrix_ok(
             expected = action == "insert" and table == "memory_candidates"
             if bool(curator_row.get(action)) != expected:
                 failures.append(
-                    "%s %s on %s expected %s"
-                    % (memory_curator_role, action, table, expected)
+                    "%s %s on %s expected %s" % (memory_curator_role, action, table, expected)
                 )
-    return {"ok": not failures, "failures": failures}
+        if update_columns(curator_row):
+            failures.append("%s has column UPDATE privilege on %s" % (memory_curator_role, table))
+    return {
+        "ok": not failures,
+        "failures": failures,
+        "runtime_update_columns": observed_runtime_update_columns,
+    }
 
 
 def _endpoint_checks(
@@ -785,17 +867,11 @@ def run_preflight(
     role_urls = {
         "runtime": _database_url_from_env(target, "runtime_url_env", environ),
         "auditor": _database_url_from_env(target, "auditor_url_env", environ),
-        "evidence_writer": _database_url_from_env(
-            target, "evidence_writer_url_env", environ
-        ),
-        "memory_curator": _database_url_from_env(
-            target, "memory_curator_url_env", environ
-        ),
+        "evidence_writer": _database_url_from_env(target, "evidence_writer_url_env", environ),
+        "memory_curator": _database_url_from_env(target, "memory_curator_url_env", environ),
     }
     roles = {key: str(target["roles"][key]) for key in ROLE_KEYS}
-    secrets = tuple(
-        value for value in (writer_url, reader_url, *role_urls.values()) if value
-    )
+    secrets = tuple(value for value in (writer_url, reader_url, *role_urls.values()) if value)
     checks: Dict[str, Any] = {}
     endpoints: Dict[str, Mapping[str, Any]] = {}
     for label, url in (("writer", writer_url), ("reader", reader_url)):
@@ -922,7 +998,7 @@ def run_preflight(
                 ),
                 "role_privileges": _check(
                     "PASS" if role_result["ok"] else "FAIL",
-                    "runtime and auditor table privileges match the least-privilege matrix",
+                    "runtime and specialist table/column privileges match the least-privilege matrix",
                     required=True,
                     evidence=role_result,
                 ),
@@ -948,15 +1024,19 @@ def run_preflight(
             )
             continue
         try:
-            login = probe.inspect_login(url)
+            login = probe.inspect_login(url, expected_role)
             ok = (
-                login["current_user"] == expected_role
+                login["login_can_login"]
+                and login["dedicated_login"]
+                and login["capability_group"] == expected_role
+                and login["capability_group_nologin"]
+                and login["capability_group_member"]
                 and login["database_name"] == target["expected_database"]
                 and (login["tls"] or not bool(target.get("require_tls", True)))
             )
             checks[label] = _check(
                 "PASS" if ok else "FAIL",
-                "dedicated role login, database, and TLS state must match the manifest",
+                "dedicated LOGIN must be a member of the manifest NOLOGIN capability group and match database/TLS requirements",
                 required=bool(target.get("require_role_logins", False)),
                 evidence={"expected_role": expected_role, **login},
             )

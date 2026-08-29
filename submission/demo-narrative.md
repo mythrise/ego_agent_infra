@@ -53,7 +53,7 @@ Curator can append `memory_candidates` but cannot insert validated memory; an in
 `memory-validator` performs promotion after the Evidence Gate. Database triggers reject
 update/delete/truncate on evidence and memory ledgers. `LISTEN/NOTIFY` wakes consumers after
 commit, while durable cursors preserve replay. Cite the local PostgreSQL 16.14 result,
-27/27, and immediately separate it from unrun PolarDB backup/PITR claims.
+32/32, and immediately separate it from unrun PolarDB backup/PITR claims.
 
 ## 6:25 — Recovery and Decision are one replayable object
 
@@ -73,8 +73,8 @@ slide.”
 
 ## Claim boundary to say aloud
 
-The default suite has 210 passing local/contract tests. A separate disposable PostgreSQL
-16.14 suite has 27 passing integration tests. The hosted browser replay is synthetic. The
+The default suite has 242 passing local/contract tests. A separate disposable PostgreSQL
+16.14 suite has 32 passing integration tests. The hosted browser replay is synthetic. The
 official AgentTeams Controller/Team/Matrix run, trusted GPU origin, PolarDB deployment, managed
 backup/PITR restore, measured RPO/RTO, Higress, Nacos, and Aliyun services remain unverified or
 not run in this submission.

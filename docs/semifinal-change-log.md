@@ -11,7 +11,7 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 真实 Fashion-MNIST GPU adapter + content-addressed 一键验收包。
 
 最大剩余缺口没有被文档掩盖：当前没有官方 AgentTeams live stack、真实 Worker/Matrix
-事件、逐场景任务绑定、GPU receipt 和 PolarDB/PITR 演练，所以外部 origin 只达到
+事件、逐场景 fault/replay harness、GPU receipt 和 PolarDB/PITR 演练，所以外部 origin 只达到
 `CONTRACT_PASS_ORIGIN_UNVERIFIED`，canonical target benchmark 为 `SKIP`，不能申报
 “已接通”“动态多 Agent 已跑通”或“真实 GPU 实验已完成”。
 
@@ -20,7 +20,7 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 | 领域 | 初版 | 复赛新增/修改 | 可复核证据 | 尚未证明 |
 |---|---|---|---|---|
 | 实验确定性 | approval token、RunManifest、七类 EvidenceGate；一个任务内的控制语义 | RXP/1 将完整实验矩阵拆成 per-cell Intent → Grant → Receipt → Evidence → Decision，并记录 missing decisions | `protocols/rxp/`、committed schemas、canonical/Merkle vectors、protocol tests | 随机模型结果的科学正确性、任意 GPU 的字节确定性 |
-| Benchmark | 静态 judge replay 与普通单元测试 | 14 个版本化场景、负对照、deterministic core、AgentTeams target、独立 oracle、置信区间、persistent evidence bundle、release replay | `benchmarks/`、committed raw JSON/Markdown/hash、benchmark tests | 当前 AgentTeams target 真实通过；committed target 是 70/70 `SKIP` |
+| Benchmark | 静态 judge replay 与普通单元测试 | 14 个版本化场景、负对照、deterministic core、AgentTeams target、独立 oracle、置信区间、persistent evidence bundle、release replay | `benchmarks/`、committed raw JSON/Markdown/hash、benchmark tests | AgentTeams target 尚未真实通过；逐场景 harness 未实现，committed target 是 70/70 `SKIP` |
 | AgentTeams | CRD/resource template 与 message envelope；没有 runtime bridge | 官方 commit 契约锁；Project/TeamHarness/Matrix bridge；动态 replan；timeout reassign；restart/resume；compensation；R2 恢复；artifact digest 验收 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook | 官方服务、真实 Matrix room、3+ Worker 真实协作与场景 fault injection |
 | Trace 真值 | 可读 audit/event 模型 | `egoagentos.agentteams-trace/v1` schema；project/task/correlation/context 绑定；3+ Worker、Skill、HITL、review、Decision、RXP 五链与 official response 校验 | benchmark-owned schema/verifier；adapter 自报值不作为真值 | 外部系统实际产生的合格 trace |
 | Skill 工程化 | 6 个 `SKILL.md` 合同 | 文件系统 discovery、package digest/version pin、typed invocation、idempotent correlation、failure trace、canary/retire/rollback、FastAPI endpoints | `skill_runtime/`、`apps/api/skill_runtime_api.py`、`tests/skills/` | 真实 AgentTeams Worker 已安装并成功调用这些 Skill |
@@ -54,7 +54,8 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 - bridge checkpoint、event 与 receipt 可落 PostgreSQL JSONB；CAS、per-run advisory lock、
   append-only trigger 与 receipt uniqueness 防止并发重试伪造第二次 effect；
 - verifier 重算完整 event hash chain、head、v2 envelope identity、生命周期顺序与 Decision；
-- benchmark adapter 未配置 live 服务或 per-scenario binding 时返回小写 `skip`，不制造事件。
+- benchmark adapter 在逐场景 fault/replay harness 未实现前始终返回小写 `skip`；live opt-in
+  明确标记 `UNIMPLEMENTED`，不启动 generic run、不制造事件。
 
 ### 仍需 live 验收
 
@@ -78,12 +79,12 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 
 | 命令 | 结果 | 结论边界 |
 |---|---|---|
-| `make test` | 210 tests passed：API 56、RXP 26、Skills 6、Proof 2、Benchmark 28、Acceptance 16、AgentTeams 28、Experiments 13、MCP 23、Web 12 | 证明当前仓库默认本地/contract 行为；不证明外部 origin |
-| `make test-agentteams check-agentteams` | 28 tests passed；Ruff、mypy 通过；official lock shape 通过离线检查 | 证明 bridge/fixture contract、PostgreSQL adapter contract 与静态 pin 形状；**没有**验证 upstream bytes 或 live 服务 |
+| `make test` | 242 tests passed：API 69、RXP 26、Skills 6、Proof 3、Benchmark 29、Acceptance 16、AgentTeams 41、Experiments 13、MCP 23、Web 16 | 证明当前仓库默认本地/contract 行为；不证明外部 origin |
+| `make test-agentteams check-agentteams` | 41 tests passed；Ruff、mypy 通过；official lock shape 通过离线检查 | 证明 bridge/fixture contract、PostgreSQL adapter contract 与静态 pin 形状；**没有**验证 upstream bytes 或 live 服务 |
 | `make test-rxp test-skills` | RXP 26 tests、Skill 6 tests passed；schema drift check 通过 | 证明 reference/local runtime 行为，不是分布式部署或 Worker live invocation |
-| `make test-benchmark` | benchmark 28 tests passed；Ruff、mypy 与 strict local replay 通过 | local strict 允许 target capability gap 为 `SKIP`；它不是 AgentTeams release gate |
+| `make test-benchmark` | benchmark 29 tests passed；Ruff、mypy 与 strict local replay 通过 | local strict 允许 target capability gap 为 `SKIP`；它不是 AgentTeams release gate |
 | acceptance / experiment suites | Acceptance 16、Experiments 13 passed | 证明 bundle 与真实 workload adapter 会 fail closed；**没有**证明外部执行发生 |
-| disposable PostgreSQL 16.14 | 27 tests passed | 证明本地 PostgreSQL 控制面/bridge/权限/preflight contract；不证明 PolarDB、PITR 或云 IAM |
+| disposable PostgreSQL 16.14 | 32 tests passed | 证明本地 PostgreSQL 控制面/bridge/权限/preflight contract；不证明 PolarDB、PITR 或云 IAM |
 | `python3 scripts/verify_submission.py` | `PASS` | 证明提交包静态约束；不证明外部系统在线 |
 | 1-repetition `--release-gate agentteams-rxp-target` | exit 1；0 pass、0 fail、0 error、14 skip | 正确阻止 release；缺 live 配置时没有 synthetic PASS |
 

@@ -51,18 +51,32 @@ jobs:
       - name: Test Skill runtime
         run: uv run --python 3.9 --extra dev --locked pytest tests/skills
 
+      - name: Test semifinal proof builders
+        run: uv run --python 3.9 --extra dev --locked pytest tests/proofs
+
+      - name: Test acceptance bundle and replay
+        run: uv run --python 3.9 --extra dev --locked pytest tests/acceptance
+
+      - name: Test bounded GPU experiment contracts
+        run: uv run --python 3.9 --extra dev --locked pytest tests/experiments
+
       - name: Lint API, RXP, AgentTeams, and Skills
         run: >-
           uv run --python 3.9 --extra dev --locked
           ruff check apps/api protocols/rxp apps/agentteams_bridge
           integrations/agentteams/benchmark_adapter.py skill_runtime
+          semifinal_acceptance experiments
+          scripts/build_semifinal_proof.py scripts/verify_submission.py
           tests/api tests/protocols tests/agentteams tests/skills
+          tests/proofs tests/acceptance tests/experiments
 
       - name: Type-check API, RXP, AgentTeams, and Skills
         run: >-
           uv run --python 3.9 --extra dev --locked mypy
           apps/api protocols/rxp apps/agentteams_bridge
           integrations/agentteams/benchmark_adapter.py skill_runtime
+          semifinal_acceptance experiments/fashion_mnist_amp/contract.py
+          experiments/fashion_mnist_amp/verify.py
 
       - name: Validate pinned AgentTeams contract lock
         run: python integrations/agentteams/scripts/verify_official_contract.py --offline
@@ -226,6 +240,12 @@ jobs:
 
       - name: Build web
         run: npm run build
+
+      - name: Build GitHub Pages static demo
+        run: npm run build
+        env:
+          VITE_BASE_PATH: /ego_agent_infra/
+          VITE_STATIC_DEMO: "true"
 
   submission:
     name: Verify submission deliverables

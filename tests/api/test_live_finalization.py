@@ -6,7 +6,9 @@ from typing import Any, Dict, List
 from fastapi.testclient import TestClient
 
 from apps.api.evaluator import evaluate_paired_metric
+from apps.api.main import APPROVAL_TOKEN_HEADER
 from apps.api.provenance import canonical_sha256
+from tests.api.operator_auth_helpers import TEST_OPERATOR_ID
 
 
 TASK_ID = "live-agentteams-001"
@@ -90,15 +92,33 @@ def _create_and_execute(client: TestClient) -> Dict[str, Any]:
         "/api/v1/approvals/%s/decision" % approval["id"],
         json={
             "decision": "approved",
-            "approver": "human-reviewer",
+            "approver": TEST_OPERATOR_ID,
             "expected_digest": approval["action_digest"],
         },
         headers={"Idempotency-Key": "approve-live-task-001"},
     )
     assert decided.status_code == 200, decided.text
+    assert decided.json()["approval_token"] is None
+    assert decided.headers["cache-control"] == "no-store"
+    approval_token = decided.headers[APPROVAL_TOKEN_HEADER]
+    assert approval_token.startswith("egoap_")
+    assert approval_token not in decided.text
+    replayed_decision = client.post(
+        "/api/v1/approvals/%s/decision" % approval["id"],
+        json={
+            "decision": "approved",
+            "approver": TEST_OPERATOR_ID,
+            "expected_digest": approval["action_digest"],
+        },
+        headers={"Idempotency-Key": "approve-live-task-001"},
+    )
+    assert replayed_decision.status_code == 200
+    assert replayed_decision.json()["approval_token"] is None
+    assert replayed_decision.json()["idempotent_replay"] is True
+    assert APPROVAL_TOKEN_HEADER not in replayed_decision.headers
     executed = client.post(
         "/api/v1/tasks/%s/advance" % TASK_ID,
-        json={"target": "EXECUTE", "approval_token": decided.json()["approval_token"]},
+        json={"target": "EXECUTE", "approval_token": approval_token},
         headers={"Idempotency-Key": "execute-live-task-001"},
     )
     assert executed.status_code == 200, executed.text

@@ -12,8 +12,8 @@ does not require a GPU, AgentTeams, Nacos, Higress, PolarDB, or other cloud cred
 | Acceptance bundle | eight-scenario content-addressed Matrix/receipt/metric/gate/recovery/Trace/Decision checks, covered by 16 tests | live origin promotion or the full 14-scenario release gate |
 | RXP API | schema catalog, synthetic fixture, structural ledger verification | RXP persistence in the task store or issuer trust |
 | Skill API | six packages discovered, three deterministic handlers, digest-bound traces | durable rollout state or Nacos publication |
-| PostgreSQL | real PostgreSQL 16 store/role/ledger contract, 27/27 integration tests | PolarDB cloud deployment or PITR |
-| AgentTeams | executable bridge/finalization contracts and honest target `SKIP` without live bindings | official live Matrix collaboration |
+| PostgreSQL | real PostgreSQL 16 store/role/ledger contract, 32/32 integration tests | PolarDB cloud deployment or PITR |
+| AgentTeams | executable bridge/finalization contracts and honest `UNIMPLEMENTED/SKIP` target | per-scenario live fault/replay harness or official Matrix collaboration |
 
 ## 1. Start the local stack
 
@@ -21,8 +21,12 @@ The intended one-command judge path is:
 
 ```bash
 cp .env.example .env
-openssl rand -hex 32
-# Paste the generated value into .env as EGO_POSTGRES_PASSWORD, then run:
+# Run `openssl rand -hex 32` five times and paste distinct outputs into
+# EGO_POSTGRES_PASSWORD, EGO_RUNTIME_PASSWORD,
+# EGO_AGENTTEAMS_RUNTIME_PASSWORD, EGO_OPERATOR_KEY, and
+# EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY.
+# Set EGO_ALLOW_UNAUTHENTICATED_DEMO=true only for this labelled browser
+# synthetic replay. Then run:
 docker compose up --build
 ```
 
@@ -45,6 +49,11 @@ above remains the intended replay path. The native fallback avoids image pulls:
 
 ```bash
 uv sync --python 3.9 --extra dev
+set -a
+. ./.env
+set +a
+export EGO_OPERATOR_ID=local.judge
+export EGO_ALLOW_UNAUTHENTICATED_DEMO=true
 EGO_DB_PATH=/tmp/egoagentos-judge.sqlite3 \
   uv run --python 3.9 --extra dev uvicorn apps.api.main:app \
   --host 127.0.0.1 --port 8000
@@ -104,6 +113,11 @@ written into the ResearchOps task store.
 Fetch the catalog and build a digest-pinned request from the returned descriptor:
 
 ```bash
+# Load the same ignored operator key used by the API without printing it.
+set -a
+. ./.env
+set +a
+
 curl --silent --show-error --fail \
   http://127.0.0.1:8000/api/v1/skills > /tmp/ego-skills.json
 jq '{total, executable, items: [.items[] | {name, version, package_digest, executable}]}' \
@@ -131,6 +145,7 @@ jq -n --arg version "$skill_version" --arg digest "$skill_digest" '{
 
 curl --silent --show-error --fail \
   -X POST http://127.0.0.1:8000/api/v1/skills/dataset-manifest/invoke \
+  -H "Authorization: Bearer $EGO_OPERATOR_KEY" \
   -H 'Content-Type: application/json' \
   --data-binary @/tmp/ego-skill-request.json \
   | tee /tmp/ego-skill-invocation.json | jq
@@ -156,11 +171,12 @@ make benchmark
 Its semantic result digest is
 `05cab481a525210026d07377bb841ca0cd73f27790e9856b3c29211320b6b996`.
 The deterministic core recorded 50 PASS and 20 capability SKIP trials. The scripted
-negative control recorded 70 deliberate FAIL trials. With no live AgentTeams target
-configured, all 70 target trials are `SKIP`, never PASS.
+negative control recorded 70 deliberate FAIL trials. The AgentTeams per-scenario harness
+is unimplemented, so all 70 target trials are `SKIP`, never PASS; live opt-in does not
+upgrade them.
 
-The dated default-suite snapshot is 210 tests: API 56, RXP 26, Skills 6, semifinal proof 2,
-Benchmark 28, Acceptance 16, AgentTeams 28, Experiments 13, MCP 23, and Web 12. Re-run
+The dated default-suite snapshot is 242 tests: API 69, RXP 26, Skills 6, semifinal proof 3,
+Benchmark 29, Acceptance 16, AgentTeams 41, Experiments 13, MCP 23, and Web 16. Re-run
 instead of treating that number as permanent:
 
 ```bash
@@ -175,8 +191,8 @@ EGO_TEST_POSTGRES_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/TEST_DB' \
 ```
 
 The suite recreates the `public` schema of that named test database. The verified
-2026-08-29 result was 27/27 PASS on PostgreSQL 16.14. PolarDB and PITR were NOT RUN.
-Those 27 tests cover control-plane and AgentTeams-bridge persistence, roles/RLS,
+2026-08-29 result was 32/32 PASS on PostgreSQL 16.14. PolarDB and PITR were NOT RUN.
+Those 32 tests cover control-plane and AgentTeams-bridge persistence, roles/RLS,
 candidate-only memory curation, database-enforced append-only ledgers, durable cursors,
 restart/CAS/idempotency, migration checksums, preflight contracts, and `LISTEN/NOTIFY`.
 
@@ -187,6 +203,7 @@ reports metadata as `not_configured` or `configured_unverified`; it performs no
 handshake. The MCP servers support stdio and an explicit loopback Streamable HTTP
 smoke. Neither result makes AgentTeams, Higress, Nacos, cloud, or a GPU scheduler live.
 
-Without a version-matched Controller, ready Team/Workers, Matrix credentials, and a
-non-synthetic task, the AgentTeams benchmark target must remain `SKIP`. A future PASS
-requires replayable scenario-specific trace bundles, not a generic completion flag.
+The AgentTeams benchmark target remains `UNIMPLEMENTED/SKIP` until a version-matched
+Controller, ready Team/Workers, Matrix credentials, a non-synthetic task, and the actual
+per-scenario fault/replay harness all exist. A future PASS requires replayable
+scenario-specific trace bundles, not a generic completion flag.

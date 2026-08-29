@@ -11,8 +11,9 @@ Controller/Matrix bridge、PostgreSQL checkpoint/receipt/event backend、动态 
 改派、恢复与补偿、R2 HITL 恢复链、结构化 correlation envelope、Skill 证据分级、
 Fashion-MNIST 单 GPU adapter、离线验收包和 fail-closed benchmark adapter；这些行为已有
 本地 contract/fixture 测试。当前主机没有可用的官方 AgentTeams 服务、真实 Team/Worker、
-Matrix 凭据、GPU receipt 与逐场景 live binding，因此不能产生官方运行证据。已提交 benchmark 中
-`agentteams-rxp-target` 为 70/70 `SKIP`，不是 `PASS`。
+Matrix 凭据、GPU receipt 与逐场景 fault/replay harness，因此不能产生官方运行证据。已提交
+benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确返回
+`UNIMPLEMENTED/SKIP`，不是 `PASS`。
 
 证据必须按以下三层表述：
 
@@ -35,7 +36,7 @@ Matrix 凭据、GPU receipt 与逐场景 live binding，因此不能产生官方
 | 核心 Skill 可发现、调用、追踪 | Worker 声明、spawn 授权和官方成功 `tool_result`；版本及 package digest 与任务 trace 关联 | 本地 registry/API 可运行；AgentTeams `TOOL_INVOKED` 未 live 验证 | **部分满足** |
 | 高风险动作有人类授权 | R2 先 pause，单次 scope-bound Grant 被 EgoAgentOS 消费，再 resume/replan；重放被拒 | bridge 与本地 approval/RXP 测试完成；无 live receipt | **部分满足** |
 | Demo 可运行且证据真实 | 干净环境启动、失败分支、恢复、原始 trace、artifact digest 和 replay 命令 | 本地 synthetic Demo 和离线 acceptance bundle 可运行；官方 live Demo 缺失 | **未满足 live 证明** |
-| 不伪造数据、trace 或结果 | adapter 的 `PASS` 由 benchmark 自己校验持久化 trace；缺服务/绑定必须 `SKIP` | 已 fail-closed；当前 target 全部 `SKIP` | **防伪门已满足，业务门未满足** |
+| 不伪造数据、trace 或结果 | adapter 的 `PASS` 由 benchmark 自己校验持久化 trace；harness 未实现或缺 live 证据必须 `SKIP` | 已 fail-closed；当前 target 全部 `UNIMPLEMENTED/SKIP` | **防伪门已满足，业务门未满足** |
 
 固定脚本、模拟 AgentTeams 事件、空 trace、自报指标、预填 Worker 状态或截图均不能消除上述
 缺口。`scripted-negative-control-v1` 只能作为反例；`SKIP` 降低覆盖率且在 release gate 中按

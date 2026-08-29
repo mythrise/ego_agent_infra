@@ -548,6 +548,8 @@ def _build_verified_trace(
 
 
 def run_scenario(scenario: Any, seed: int, workspace: str | Path) -> Dict[str, Any]:
+    """Public benchmark capability, fail-closed until the fault harness exists."""
+
     scenario_id = str(_value(scenario, "id", _value(scenario, "name", "unknown")))
     if os.getenv("AGENTTEAMS_BENCHMARK_LIVE") != "1":
         return {
@@ -560,6 +562,36 @@ def run_scenario(scenario: Any, seed: int, workspace: str | Path) -> Dict[str, A
                 "seed": seed,
             },
         }
+    # The bridge client and trace verifier are target scaffolding, but a real
+    # fault-injection + fresh-replay implementation does not yet exist for each
+    # canonical scenario. A generic terminal run is not release evidence.
+    return {
+        "status": "skip",
+        "score": None,
+        "details": {
+            "execution_mode": "agentteams-live-target-unimplemented",
+            "capability_status": "UNIMPLEMENTED",
+            "reason": (
+                "real per-scenario fault injection and fresh replay harness is "
+                "not implemented; live benchmark remains fail-closed"
+            ),
+            "scenario_id": scenario_id,
+            "synthetic": False,
+            "seed": seed,
+            "truth_boundary": (
+                "bridge clients and trace schemas are target scaffolding only; "
+                "no live run, token consumption, or release evidence was attempted"
+            ),
+        },
+    }
+
+
+def _run_scenario_target_scaffold(
+    scenario: Any, seed: int, workspace: str | Path
+) -> Dict[str, Any]:
+    """Draft live path retained for integration work; not a benchmark capability."""
+
+    scenario_id = str(_value(scenario, "id", _value(scenario, "name", "unknown")))
     binding = _live_binding(scenario, scenario_id)
     task_id = str(binding.get("ego_task_id") or "")
     objective = str(binding.get("objective") or "")

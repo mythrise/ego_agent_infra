@@ -11,6 +11,13 @@ verified handshake.
 
 ## External live task and finalization contract
 
+All live mutations and executable Skill invocations require
+`Authorization: Bearer $EGO_OPERATOR_KEY`. The key must contain at least 32 UTF-8 bytes;
+an empty key disables those writes with a fail-closed `503`. `EGO_OPERATOR_ID` is the
+deployment-owned audit identity. A request may omit the legacy `approver` field; if it
+supplies a different identity, the decision is rejected rather than trusting the caller.
+Health, dashboards, task/event reads, and the side-effect-free RXP verifier remain public.
+
 `POST /api/v1/tasks` is separate from the demo reset path. Its strict request requires
 `synthetic: false`, an immutable AgentTeams `live_source` binding, a frozen `ResearchGoal`, and
 an exact R2/R3 `execution_contract`. Omitting `synthetic`, sending `true`, reusing a task id, or
@@ -42,6 +49,10 @@ From the repository root:
 python3.9 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
+export EGO_OPERATOR_KEY="$(openssl rand -hex 32)"
+export EGO_OPERATOR_ID=local.operator
+# Only when using the labelled browser synthetic replay:
+export EGO_ALLOW_UNAUTHENTICATED_DEMO=true
 EGO_DB_PATH=/tmp/egoagentos.sqlite3 uvicorn apps.api.main:app --reload
 ```
 
@@ -55,8 +66,26 @@ curl http://127.0.0.1:8000/api/v1/dashboard
 The happy-path demo is deliberately two-part:
 
 1. `POST /api/v1/demo/reset`, then `POST /api/v1/tasks/ego-lite-001/autorun` pauses at R2 approval.
-2. Approve `pending_approval.id` with its exact `action_digest`. The response returns a
-   scope-bound one-time token. Send that token as `approval_token` to `autorun` to complete.
+2. Approve `pending_approval.id` with its exact `action_digest`. For a live task, the response
+   JSON always omits the raw secret and the first successful response delivers the scope-bound
+   token only in `X-Ego-Approval-Token`, with `Cache-Control: no-store`. Send that token as
+   `approval_token` to enter `EXECUTE`; an idempotent replay never returns it again.
+
+Send the operator credential on every mutation, for example:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $EGO_OPERATOR_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:8000/api/v1/demo/reset \
+  -d '{}'
+```
+
+For the browser-only, clearly labelled synthetic replay, a developer may explicitly set
+`EGO_ALLOW_UNAUTHENTICATED_DEMO=true`. That exception is restricted to the synthetic reset,
+advance/autorun, and approval paths, uses the fixed `demo.operator` audit identity, and cannot
+create or mutate a live task or invoke a Skill. Synthetic approval retains its JSON token only
+for this local demo compatibility path.
 
 To demonstrate an evidence failure, reset with
 `{"scenario":"insufficient_evidence"}`. That run deliberately omits trace evidence and pauses
@@ -79,6 +108,14 @@ migration checksum map without attempting DDL. The four least-privilege roles ar
 auditor, evidence writer, and memory curator. See the
 [database runbook](../../docs/postgres-recovery-runbook.md) for migration, RLS, test, backup,
 and recovery procedures.
+
+Docker Compose never gives the owner DSN to the long-lived API. It runs the checksummed
+`api-migrate` and role/login hardening jobs first, then starts `backend` with a distinct
+non-owner LOGIN, `EGO_DATABASE_MIGRATION_MODE=verify`, forced tenant RLS, and no schema-create
+privilege. Native deployments must preserve the same process and credential boundary.
+The `egoagentos.tenant_id` RLS GUC is trusted-application namespace filtering, not
+adversarial isolation after a runtime database credential leak; hostile trust domains need
+separate credentials/databases or an authenticated proxy that owns tenant binding.
 
 `apps/api/polardb_preflight.py` provides a fail-closed live acceptance command for a writer,
 read-only node, roles, RLS, append-only triggers, JSONB/pgvector capability, migration state,

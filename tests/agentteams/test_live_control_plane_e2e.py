@@ -11,7 +11,12 @@ from apps.agentteams_bridge.models import GrantRequest, RunState, StartRunReques
 from apps.agentteams_bridge.service import AgentTeamsBridge
 from apps.agentteams_bridge.store import BridgeStore
 from apps.agentteams_bridge.transport import HTTPResponse
-from apps.api.main import create_app
+from apps.api.main import APPROVAL_TOKEN_HEADER, create_app
+from tests.api.operator_auth_helpers import (
+    TEST_AUTHORIZATION_HEADERS,
+    TEST_OPERATOR_ID,
+    TEST_OPERATOR_KEY,
+)
 from tests.agentteams.conftest import (
     LIVE_CORRELATION_ID,
     LIVE_OBJECTIVE,
@@ -113,7 +118,14 @@ def test_fake_agentteams_transport_drives_real_control_plane_finalization(
 ) -> None:
     """Contract-only: real API/storage logic, injected AgentTeams/Matrix transport, no live claim."""
 
-    with TestClient(create_app(str(tmp_path / "ego.sqlite3"))) as ego_api:
+    with TestClient(
+        create_app(
+            str(tmp_path / "ego.sqlite3"),
+            operator_key=TEST_OPERATOR_KEY,
+            operator_id=TEST_OPERATOR_ID,
+        )
+    ) as ego_api:
+        ego_api.headers.update(TEST_AUTHORIZATION_HEADERS)
         created = ego_api.post(
             "/api/v1/tasks",
             json=_live_task_request(),
@@ -133,7 +145,11 @@ def test_fake_agentteams_transport_drives_real_control_plane_finalization(
                 access_token="matrix-token",
                 transport=routed,
             ),
-            EgoClient("http://ego.real.invalid", transport=routed),
+            EgoClient(
+                "http://ego.real.invalid",
+                operator_key=TEST_OPERATOR_KEY,
+                transport=routed,
+            ),
             clock=MutableClock(),
         )
         run = bridge.start_run(
@@ -154,16 +170,18 @@ def test_fake_agentteams_transport_drives_real_control_plane_finalization(
             "/api/v1/approvals/%s/decision" % approval["id"],
             json={
                 "decision": "approved",
-                "approver": "contract-human",
+                "approver": TEST_OPERATOR_ID,
                 "expected_digest": approval["action_digest"],
             },
             headers={"Idempotency-Key": "e2e-approve-live-task"},
         )
         assert decision.status_code == 200, decision.text
+        approval_token = decision.headers[APPROVAL_TOKEN_HEADER]
+        assert decision.json()["approval_token"] is None
         run = bridge.grant_r2(
             run.id,
             GrantRequest(
-                approval_token=decision.json()["approval_token"],
+                approval_token=approval_token,
                 idempotency_key="e2e-consume-live-grant",
             ),
         )

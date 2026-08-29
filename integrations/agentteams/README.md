@@ -198,17 +198,20 @@ The smoke stops with status `WAITING_R2` unless a real scoped token is supplied.
 It never manufactures one and never converts fixture success into a live PASS.
 
 The benchmark adapter is `integrations.agentteams.benchmark_adapter.run_scenario`.
-Without `AGENTTEAMS_BENCHMARK_LIVE=1` it returns lowercase `skip`. Canonical
-scenarios also require a real per-scenario task/objective/token entry in the
-uncommitted file selected by `AGENTTEAMS_BENCHMARK_BINDINGS_FILE`; no binding
-means `skip`, not a synthetic result.
+It is currently a target scaffold, not an implemented live benchmark capability.
+Without `AGENTTEAMS_BENCHMARK_LIVE=1` it returns lowercase `skip`; with the live
+opt-in it still returns lowercase `skip` with `capability_status=UNIMPLEMENTED`.
+It does not call the bridge or consume a token. A future implementation needs a real
+per-scenario fault-injection and fresh-replay harness before a binding file can enable
+execution.
 
-A `pass` requires a completed AgentTeams workflow, at least three actual
+A future `pass` requires a completed AgentTeams workflow, at least three actual
 Workers, a valid bridge event chain, official Skill/tool evidence, R2 receipt
 correlation, an independent review PASS, a final EgoAgentOS evidence-gated
 decision, and the scenario-specific fault/replay proof. It writes
 `egoagentos.agentteams-trace/v1` and returns its relative path plus SHA-256.
 The canonical happy path additionally requires a blocked unsafe action, one
-committed effect, and two same-digest replay observations; therefore a generic
-terminal trace is deliberately returned as `error` rather than being reused as
-proof for all 14 scenarios. See `docs/agentteams-live-runbook.md`.
+committed effect, and two same-digest replay observations. Until that scenario harness
+exists, the adapter returns `UNIMPLEMENTED/SKIP` before any generic terminal run rather
+than manufacturing an `ERROR` or reusing it as proof for all 14 scenarios. See
+`docs/agentteams-live-runbook.md`.

@@ -38,7 +38,7 @@ def _manifest(postgres_url: str, *, destructive: bool = False) -> dict:
             "require_polardb_marker": False,
             "require_read_endpoint": False,
             "require_rls": True,
-            "require_force_rls": False,
+            "require_force_rls": True,
             "require_role_logins": False,
             "disposable_database_prefix": "egoagentos_",
             "disposable_database_marker": DISPOSABLE_MARKER,
@@ -97,19 +97,35 @@ def test_real_postgres_preflight_checks_catalog_policies_notify_and_topology(
     assert report["checks"]["writer"]["polardb_identity"]["status"] == "WARN"
     assert report["checks"]["control_plane"]["schema"]["status"] == "PASS"
     assert report["checks"]["control_plane"]["rls"]["status"] == "PASS"
+    assert report["checks"]["control_plane"]["force_rls"]["status"] == "PASS"
     assert report["checks"]["control_plane"]["audit_triggers"]["status"] == "PASS"
     assert report["checks"]["control_plane"]["role_privileges"]["status"] == "PASS"
+    assert report["checks"]["control_plane"]["role_privileges"]["evidence"][
+        "runtime_update_columns"
+    ] == {
+        "approvals": ["expires_at", "record_json", "status", "token_hash"],
+        "audit_events": [],
+        "evidence": [],
+        "idempotency": [],
+        "memory_candidates": [],
+        "memories": [],
+        "schema_migrations": [],
+        "tasks": ["created_at", "generation", "task_json", "updated_at", "version"],
+    }
     assert report["checks"]["active_notify"]["status"] == "PASS"
     assert report["checks"]["active_topology"]["writer"]["status"] == "PASS"
     assert report["truth_boundary"]["pitr_restore"] == "NOT_RUN"
 
 
 def test_real_postgres_fresh_schema_replay_requires_and_preserves_all_gates(
-    postgres_url: str,
+    postgres_url: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     PostgresStore(postgres_url)
     _mark_disposable(postgres_url)
     database_name = _database_name(postgres_url)
+    # Fresh replay must explicitly re-apply migrations even when a deployment's
+    # normal startup policy is verify-only.
+    monkeypatch.setenv("EGO_DATABASE_MIGRATION_MODE", "verify")
 
     report = run_fresh_schema_replay(
         _manifest(postgres_url, destructive=True),

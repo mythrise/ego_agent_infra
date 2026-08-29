@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -18,7 +19,15 @@ from psycopg.types.json import Jsonb
 
 from .errors import BridgeError
 from .models import BridgeRun, CollaborationEnvelope, RunState, canonical_json, utc_now
-from .store import ZERO_HASH, _utc_iso
+from .store import (
+    OPERATION_LEASE_KEY,
+    ZERO_HASH,
+    _assert_update_lease,
+    _lease_payload,
+    _operation_lease,
+    _raise_if_lease_held,
+    _utc_iso,
+)
 
 
 class PostgresBridgeStore:
@@ -26,7 +35,13 @@ class PostgresBridgeStore:
 
     engine = "postgresql"
 
-    def __init__(self, database_url: str, *, migration_database_url: str = "") -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        migration_database_url: str = "",
+        migration_mode: Optional[str] = None,
+    ) -> None:
         if not database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("AgentTeams bridge PostgreSQL URL must use postgresql://")
         if migration_database_url and not migration_database_url.startswith(
@@ -35,6 +50,11 @@ class PostgresBridgeStore:
             raise ValueError("AgentTeams bridge migration URL must use postgresql://")
         self.database_url = database_url
         self.migration_database_url = migration_database_url or database_url
+        self.migration_mode = (
+            migration_mode or os.getenv("EGO_AGENTTEAMS_MIGRATION_MODE", "apply") or "apply"
+        ).strip()
+        if self.migration_mode not in {"apply", "verify"}:
+            raise ValueError("EGO_AGENTTEAMS_MIGRATION_MODE must be apply or verify")
         self.initialize()
 
     def _connect(self, database_url: Optional[str] = None) -> Connection[Dict[str, Any]]:
@@ -109,6 +129,23 @@ class PostgresBridgeStore:
             (entry for entry in migration_root.iterdir() if entry.name.endswith(".sql")),
             key=lambda entry: entry.name,
         )
+        packaged = {
+            migration.name: hashlib.sha256(
+                migration.read_text(encoding="utf-8").encode("utf-8")
+            ).hexdigest()
+            for migration in migration_files
+        }
+        if self.migration_mode == "verify":
+            with self._transaction(self.migration_database_url) as connection:
+                rows = connection.execute(
+                    "SELECT version, sha256 FROM bridge_schema_migrations ORDER BY version"
+                ).fetchall()
+            observed = {str(row["version"]): str(row["sha256"]) for row in rows}
+            if observed != packaged:
+                raise RuntimeError(
+                    "AgentTeams bridge migrations do not exactly match packaged SQL in verify mode"
+                )
+            return
         with self._transaction(self.migration_database_url) as connection:
             connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended('egoagentos:bridge:migrations', 0))"
@@ -128,7 +165,7 @@ class PostgresBridgeStore:
             applied = {str(row["version"]): str(row["sha256"]) for row in rows}
             for migration in migration_files:
                 migration_sql = migration.read_text(encoding="utf-8")
-                digest = hashlib.sha256(migration_sql.encode("utf-8")).hexdigest()
+                digest = packaged[migration.name]
                 if migration.name in applied:
                     if applied[migration.name] != digest:
                         raise RuntimeError(
@@ -211,9 +248,147 @@ class PostgresBridgeStore:
             )
         return self._row_to_run(row)
 
-    def update_run(self, run: BridgeRun, *, expected_version: int) -> BridgeRun:
+    def claim_operation(
+        self,
+        run_id: str,
+        operation: str,
+        owner_id: str,
+        *,
+        timeout_seconds: int,
+    ) -> BridgeRun:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT *, clock_timestamp() AS lease_now FROM bridge_runs WHERE id=%s FOR UPDATE",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise BridgeError(
+                    "run_not_found",
+                    "Bridge run was not found",
+                    status_code=404,
+                    details={"id": run_id},
+                )
+            checkpoint = self._json(row["checkpoint"])
+            acquired_at = row["lease_now"]
+            _raise_if_lease_held(checkpoint, run_id=run_id, acquired_at=acquired_at)
+            checkpoint[OPERATION_LEASE_KEY] = _lease_payload(
+                operation, owner_id, acquired_at, timeout_seconds
+            )
+            claimed = connection.execute(
+                "UPDATE bridge_runs SET checkpoint=%s WHERE id=%s RETURNING *",
+                (Jsonb(checkpoint), run_id),
+            ).fetchone()
+            if claimed is None:
+                raise BridgeError(
+                    "operation_claim_failed",
+                    "Bridge operation lease could not be persisted",
+                    retryable=True,
+                    details={"run_id": run_id},
+                )
+        return self._row_to_run(claimed)
+
+    def release_operation(self, run_id: str, owner_id: str) -> None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT checkpoint FROM bridge_runs WHERE id=%s FOR UPDATE", (run_id,)
+            ).fetchone()
+            if row is None:
+                return
+            checkpoint = self._json(row["checkpoint"])
+            lease = _operation_lease(checkpoint)
+            if lease is None or lease.get("owner_id") != owner_id:
+                return
+            checkpoint.pop(OPERATION_LEASE_KEY, None)
+            connection.execute(
+                "UPDATE bridge_runs SET checkpoint=%s WHERE id=%s",
+                (Jsonb(checkpoint), run_id),
+            )
+
+    def renew_operation(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        timeout_seconds: int,
+    ) -> BridgeRun:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT *, clock_timestamp() AS lease_now FROM bridge_runs WHERE id=%s FOR UPDATE",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise BridgeError(
+                    "run_not_found",
+                    "Bridge run was not found",
+                    status_code=404,
+                    details={"id": run_id},
+                )
+            checkpoint = self._json(row["checkpoint"])
+            lease = _operation_lease(checkpoint)
+            _assert_update_lease(
+                checkpoint,
+                checkpoint,
+                run_id=run_id,
+                lease_owner=owner_id,
+                checked_at=row["lease_now"],
+            )
+            assert lease is not None
+            checkpoint[OPERATION_LEASE_KEY] = _lease_payload(
+                str(lease["operation"]),
+                owner_id,
+                row["lease_now"],
+                timeout_seconds,
+            )
+            renewed = connection.execute(
+                "UPDATE bridge_runs SET checkpoint=%s WHERE id=%s RETURNING *",
+                (Jsonb(checkpoint), run_id),
+            ).fetchone()
+            if renewed is None:
+                raise BridgeError(
+                    "operation_renew_failed",
+                    "Bridge operation lease could not be renewed",
+                    retryable=True,
+                    details={"run_id": run_id},
+                )
+        return self._row_to_run(renewed)
+
+    def update_run(
+        self,
+        run: BridgeRun,
+        *,
+        expected_version: int,
+        lease_owner: Optional[str] = None,
+    ) -> BridgeRun:
         updated = run.model_copy(update={"version": expected_version + 1, "updated_at": utc_now()})
         with self._transaction() as connection:
+            current = connection.execute(
+                """
+                SELECT version, checkpoint, clock_timestamp() AS lease_now
+                FROM bridge_runs WHERE id=%s FOR UPDATE
+                """,
+                (run.id,),
+            ).fetchone()
+            if current is None:
+                raise BridgeError(
+                    "run_not_found",
+                    "Bridge run was not found",
+                    status_code=404,
+                    details={"id": run.id},
+                )
+            if int(current["version"]) != expected_version:
+                raise BridgeError(
+                    "run_version_conflict",
+                    "Bridge run was concurrently modified; reload before retrying",
+                    retryable=True,
+                    details={"run_id": run.id, "expected_version": expected_version},
+                )
+            _assert_update_lease(
+                self._json(current["checkpoint"]),
+                updated.checkpoint,
+                run_id=run.id,
+                lease_owner=lease_owner,
+                checked_at=current["lease_now"],
+            )
             cursor = connection.execute(
                 """
                 UPDATE bridge_runs SET
@@ -246,11 +421,39 @@ class PostgresBridgeStore:
             ("egoagentos:bridge:%s:%s" % (stream, run_id),),
         )
 
-    def append_event(self, run_id: str, envelope: CollaborationEnvelope) -> Dict[str, Any]:
+    def append_event(
+        self,
+        run_id: str,
+        envelope: CollaborationEnvelope,
+        *,
+        lease_owner: Optional[str] = None,
+    ) -> Dict[str, Any]:
         envelope_payload = envelope.model_dump(mode="json", by_alias=True)
         created_at = _utc_iso(envelope.created_at)
         event_id = "evt_%s" % uuid.uuid4().hex
         with self._transaction() as connection:
+            run_row = connection.execute(
+                """
+                SELECT checkpoint, clock_timestamp() AS lease_now
+                FROM bridge_runs WHERE id=%s FOR UPDATE
+                """,
+                (run_id,),
+            ).fetchone()
+            if run_row is None:
+                raise BridgeError(
+                    "run_not_found",
+                    "Bridge run was not found",
+                    status_code=404,
+                    details={"id": run_id},
+                )
+            checkpoint = self._json(run_row["checkpoint"])
+            _assert_update_lease(
+                checkpoint,
+                checkpoint,
+                run_id=run_id,
+                lease_owner=lease_owner,
+                checked_at=run_row["lease_now"],
+            )
             self._advisory_lock(connection, stream="event", run_id=run_id)
             row = connection.execute(
                 """
@@ -370,11 +573,33 @@ class PostgresBridgeStore:
         source: str,
         kind: str,
         payload: Dict[str, Any],
+        lease_owner: Optional[str] = None,
     ) -> Dict[str, Any]:
-        self.get_run(run_id)
         payload_json = canonical_json(payload)
         payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         with self._transaction() as connection:
+            run_row = connection.execute(
+                """
+                SELECT checkpoint, clock_timestamp() AS lease_now
+                FROM bridge_runs WHERE id=%s FOR UPDATE
+                """,
+                (run_id,),
+            ).fetchone()
+            if run_row is None:
+                raise BridgeError(
+                    "run_not_found",
+                    "Bridge run was not found",
+                    status_code=404,
+                    details={"id": run_id},
+                )
+            checkpoint = self._json(run_row["checkpoint"])
+            _assert_update_lease(
+                checkpoint,
+                checkpoint,
+                run_id=run_id,
+                lease_owner=lease_owner,
+                checked_at=run_row["lease_now"],
+            )
             self._advisory_lock(connection, stream="receipt", run_id=run_id)
             existing = connection.execute(
                 """

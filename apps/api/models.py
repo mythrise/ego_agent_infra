@@ -576,7 +576,18 @@ class AutorunRequest(StrictModel):
 
 class ApprovalDecisionRequest(StrictModel):
     decision: ApprovalDecision
-    approver: str = Field(min_length=2, max_length=120)
+    # Compatibility-only assertion. The API derives the effective approver from the
+    # authenticated deployment identity and rejects a conflicting caller assertion.
+    approver: Optional[str] = Field(
+        default=None,
+        min_length=2,
+        max_length=120,
+        json_schema_extra={"deprecated": True},
+        description=(
+            "Compatibility assertion only; the server derives the effective approver "
+            "from the authenticated operator identity"
+        ),
+    )
     expected_digest: str
 
     @field_validator("expected_digest")

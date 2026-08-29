@@ -27,7 +27,13 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { researchApi, taskEventStreamUrl } from "./api";
+import {
+  clearOperatorSession,
+  connectOperatorSession,
+  operatorSessionConnected,
+  researchApi,
+  taskEventStreamUrl,
+} from "./api";
 import { syntheticDashboard } from "./demoData";
 import { syntheticRXP } from "./rxpDemoData";
 import { STAGES } from "./types";
@@ -122,6 +128,7 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [approvalGrant, setApprovalGrant] = useState<SessionApprovalGrant>(null);
+  const [operatorConnected, setOperatorConnected] = useState(operatorSessionConnected);
   const [navOpen, setNavOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const prefersReducedMotion = useReducedMotion();
@@ -236,7 +243,6 @@ function App() {
     try {
       const result = await researchApi.decide(gate.id, {
         decision: decision === "approve" ? "approved" : "denied",
-        approver: "demo.operator",
         expected_digest: gate.expectedDigest,
       });
       if (result.approval_token && activeTask) {
@@ -298,6 +304,28 @@ function App() {
           onRefresh={() => void load(true)}
           runtimeMode={dashboard.runtimeMode}
         />
+        {dashboard.runtimeMode === "local_api" && (
+          <OperatorSessionBar
+            connected={operatorConnected}
+            onConnect={(key) => {
+              try {
+                connectOperatorSession(key);
+                setOperatorConnected(true);
+                showNotice("Operator session connected in memory only.");
+                return true;
+              } catch (sessionError) {
+                showNotice(sessionError instanceof Error ? sessionError.message : "Operator session rejected.");
+                return false;
+              }
+            }}
+            onClear={() => {
+              clearOperatorSession();
+              setOperatorConnected(false);
+              setApprovalGrant(null);
+              showNotice("Operator session cleared from memory.");
+            }}
+          />
+        )}
 
         <div className="workspace-grid">
           <div className="primary-column">
@@ -315,6 +343,7 @@ function App() {
               <ApprovalPanel
                 gate={activeTask.pendingApproval}
                 busy={busy}
+                operatorReady={dashboard.runtimeMode === "static_replay" || operatorConnected}
                 onDecision={(decision) => void decide(activeTask.pendingApproval!, decision)}
               />
             )}
@@ -380,6 +409,7 @@ function App() {
           )
         }
         runtimeMode={dashboard.runtimeMode}
+        operatorConnected={operatorConnected}
       />
 
       <AnimatePresence>
@@ -397,6 +427,54 @@ function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export function OperatorSessionBar({
+  connected,
+  onConnect,
+  onClear,
+}: {
+  connected: boolean;
+  onConnect: (key: string) => boolean;
+  onClear: () => void;
+}) {
+  const [key, setKey] = useState("");
+
+  return (
+    <section className="operator-strip" aria-label="Operator session">
+      <div className={`operator-state ${connected ? "connected" : "locked"}`}>
+        <KeyRound size={13} aria-hidden="true" />
+        <span>{connected ? "OPERATOR CONNECTED" : "MUTATIONS LOCKED"}</span>
+        <small>{connected ? "MEMORY ONLY · CLEAR ON TAB RELOAD" : "BEARER KEY REQUIRED"}</small>
+      </div>
+      {connected ? (
+        <button className="operator-clear" type="button" onClick={onClear}>
+          Clear session
+        </button>
+      ) : (
+        <form
+          className="operator-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (onConnect(key)) setKey("");
+          }}
+        >
+          <label htmlFor="operator-session-key">Session operator key</label>
+          <input
+            id="operator-session-key"
+            aria-label="Operator session key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={key}
+            onChange={(event) => setKey(event.target.value)}
+            placeholder="Paste deployment key"
+          />
+          <button type="submit" disabled={!key}>Connect session</button>
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -950,10 +1028,12 @@ function ResourceTrace({ resources, trace }: { resources: ResourceSnapshot[]; tr
 function ApprovalPanel({
   gate,
   busy,
+  operatorReady,
   onDecision,
 }: {
   gate: ApprovalGate;
   busy: BusyAction;
+  operatorReady: boolean;
   onDecision: (decision: "approve" | "reject") => void;
 }) {
   return (
@@ -974,14 +1054,14 @@ function ApprovalPanel({
         <button
           className="button secondary"
           onClick={() => onDecision("reject")}
-          disabled={Boolean(busy) || !gate.expectedDigest}
+          disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
           {busy === "reject" ? "Recording…" : "Reject"}
         </button>
         <button
           className="button primary"
           onClick={() => onDecision("approve")}
-          disabled={Boolean(busy) || !gate.expectedDigest}
+          disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
           {busy === "approve" ? "Recording…" : "Approve digest"}
           {busy !== "approve" && <ArrowRight size={14} />}
@@ -1253,6 +1333,7 @@ function ActionDock({
   onAdvance,
   onAutorun,
   runtimeMode,
+  operatorConnected,
 }: {
   task: ResearchTask;
   busy: BusyAction;
@@ -1261,8 +1342,10 @@ function ActionDock({
   onAdvance: () => void;
   onAutorun: () => void;
   runtimeMode: DashboardData["runtimeMode"];
+  operatorConnected: boolean;
 }) {
   const approvalBlocked = task.stage === "APPROVAL" && !approvalToken;
+  const operatorLocked = runtimeMode === "local_api" && !operatorConnected;
   const terminal = task.stage === "COMPLETED";
   return (
     <div className="action-dock" aria-label="Task controls">
@@ -1271,19 +1354,21 @@ function ActionDock({
         <div><small>{runtimeMode === "static_replay" ? "BROWSER REPLAY" : "CONTROL PLANE"}</small><strong>{task.stage.replaceAll("_", " ")}</strong></div>
       </div>
       <div className="dock-actions">
-        <button className="button ghost" onClick={onReset} disabled={Boolean(busy)}>
+        <button className="button ghost" onClick={onReset} disabled={Boolean(busy) || operatorLocked}>
           <RotateCcw size={13} />{busy === "reset" ? "Resetting…" : "Reset demo"}
         </button>
-        <button className="button secondary" onClick={onAdvance} disabled={Boolean(busy) || approvalBlocked || terminal}>
+        <button className="button secondary" onClick={onAdvance} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
           {busy === "advance" ? "Advancing…" : "Advance once"}
         </button>
-        <button className="button primary" onClick={onAutorun} disabled={Boolean(busy) || approvalBlocked || terminal}>
+        <button className="button primary" onClick={onAutorun} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
           <Play size={13} fill="currentColor" />{busy === "autorun" ? "Running…" : "Run to next gate"}
         </button>
       </div>
-      {approvalBlocked && (
+      {(operatorLocked || approvalBlocked) && (
         <span className="dock-hint">
-          {runtimeMode === "static_replay" ? "Synthetic browser grant required" : "Approval token required"}
+          {operatorLocked
+            ? "Connect operator session to mutate"
+            : runtimeMode === "static_replay" ? "Synthetic browser grant required" : "Approval token required"}
         </span>
       )}
     </div>

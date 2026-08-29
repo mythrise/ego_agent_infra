@@ -3,13 +3,17 @@ from pathlib import Path
 
 import pytest
 
+import apps.api.polardb_preflight as preflight_module
+
 from apps.api.polardb_preflight import (
     DISPOSABLE_MARKER,
+    EXPECTED_RUNTIME_UPDATE_COLUMNS,
     EXPECTED_TRIGGER_FUNCTIONS,
     EXPECTED_TABLES,
     EXPECTED_TRIGGERS,
     PRIVILEGE_TABLES,
     ManifestError,
+    PostgresInspector,
     SafetyGateError,
     _packaged_migrations,
     load_manifest,
@@ -105,8 +109,11 @@ def privileges() -> dict:
                 result[role][table] = {
                     "select": True,
                     "insert": table not in {"schema_migrations"},
-                    "update": table in {"tasks", "approvals"},
+                    "update": False,
                     "delete": False,
+                    "update_columns": {
+                        column: True for column in EXPECTED_RUNTIME_UPDATE_COLUMNS.get(table, ())
+                    },
                 }
             elif role == "egoagentos_auditor":
                 result[role][table] = {
@@ -114,6 +121,7 @@ def privileges() -> dict:
                     "insert": False,
                     "update": False,
                     "delete": False,
+                    "update_columns": {},
                 }
             elif role == "egoagentos_evidence_writer":
                 result[role][table] = {
@@ -121,6 +129,7 @@ def privileges() -> dict:
                     "insert": table == "evidence",
                     "update": False,
                     "delete": False,
+                    "update_columns": {},
                 }
             else:
                 result[role][table] = {
@@ -128,6 +137,7 @@ def privileges() -> dict:
                     "insert": table == "memory_candidates",
                     "update": False,
                     "delete": False,
+                    "update_columns": {},
                 }
     return result
 
@@ -139,11 +149,15 @@ class FakeInspector:
         polar: bool = True,
         migration_matches: bool = True,
         login_database: str = "egoagentos_acceptance_ci",
+        login_is_member: bool = True,
+        capability_group_nologin: bool = True,
         triggers_enabled: bool = True,
     ) -> None:
         self.polar = polar
         self.migration_matches = migration_matches
         self.login_database = login_database
+        self.login_is_member = login_is_member
+        self.capability_group_nologin = capability_group_nologin
         self.triggers_enabled = triggers_enabled
         self.notify_calls = 0
         self.topology_calls = []
@@ -186,9 +200,7 @@ class FakeInspector:
             "migrations": [
                 {
                     "version": version,
-                    "sha256": digest
-                    if self.migration_matches
-                    else "a" * 64,
+                    "sha256": digest if self.migration_matches else "a" * 64,
                 }
                 for version, digest in _packaged_migrations().items()
             ],
@@ -196,9 +208,19 @@ class FakeInspector:
             "privileges": privileges(),
         }
 
-    def inspect_login(self, url: str) -> dict:
-        role = "egoagentos_runtime" if "runtime" in url else "egoagentos_auditor"
-        return {"current_user": role, "database_name": self.login_database, "tls": True}
+    def inspect_login(self, url: str, expected_capability_group: str) -> dict:
+        login_identity = "%s_login" % expected_capability_group
+        return {
+            "login_identity": login_identity,
+            "current_user": login_identity,
+            "database_name": self.login_database,
+            "login_can_login": True,
+            "dedicated_login": True,
+            "capability_group": expected_capability_group,
+            "capability_group_nologin": self.capability_group_nologin,
+            "capability_group_member": self.login_is_member,
+            "tls": True,
+        }
 
     def active_notify(self, _url: str) -> dict:
         self.notify_calls += 1
@@ -274,12 +296,31 @@ def test_default_preflight_is_read_only_redacted_and_machine_readable() -> None:
     assert report["checks"]["writer"]["tls"]["status"] == "PASS"
     assert report["checks"]["reader"]["endpoint_role"]["status"] == "PASS"
     assert report["checks"]["control_plane"]["role_privileges"]["status"] == "PASS"
+    assert report["checks"]["control_plane"]["role_privileges"]["evidence"][
+        "runtime_update_columns"
+    ]["tasks"] == sorted(EXPECTED_RUNTIME_UPDATE_COLUMNS["tasks"])
     assert report["checks"]["active_notify"]["status"] == "SKIP"
     assert report["checks"]["active_topology"]["status"] == "SKIP"
     assert inspector.notify_calls == 0
     assert inspector.topology_calls == []
     assert "super-secret" not in encoded
     assert "other-secret" not in encoded
+
+
+def test_runtime_column_update_overgrant_is_a_required_failure() -> None:
+    class OvergrantInspector(FakeInspector):
+        def inspect_control_plane(self, url: str, roles: dict[str, str]) -> dict:
+            catalog = super().inspect_control_plane(url, roles)
+            catalog["privileges"]["egoagentos_runtime"]["tasks"]["update_columns"]["tenant_id"] = (
+                True
+            )
+            return catalog
+
+    report = run_preflight(manifest(), environment(), inspector=OvergrantInspector())
+    role_check = report["checks"]["control_plane"]["role_privileges"]
+    assert role_check["status"] == "FAIL"
+    assert any("tenant_id" in failure for failure in role_check["evidence"]["failures"])
+    assert report["summary"]["status"] == "FAIL"
 
 
 def test_required_polardb_marker_fails_on_generic_postgres() -> None:
@@ -330,6 +371,55 @@ def test_dedicated_role_login_must_target_the_expected_database() -> None:
     assert report["checks"]["runtime_login"]["status"] == "FAIL"
     assert report["checks"]["auditor_login"]["status"] == "FAIL"
     assert report["summary"]["status"] == "FAIL"
+
+
+def test_dedicated_login_must_be_member_of_nologin_capability_group() -> None:
+    value = manifest()
+    value["target"].update(
+        {
+            "runtime_url_env": "TEST_POLARDB_RUNTIME_URL",
+            "require_role_logins": True,
+        }
+    )
+    urls = {
+        **environment(),
+        "TEST_POLARDB_RUNTIME_URL": "postgresql://runtime-login:secret@writer.example/db",
+    }
+
+    report = run_preflight(
+        value,
+        urls,
+        inspector=FakeInspector(login_is_member=False),
+    )
+
+    login = report["checks"]["runtime_login"]
+    assert login["status"] == "FAIL"
+    assert login["evidence"]["login_identity"] == "egoagentos_runtime_login"
+    assert login["evidence"]["expected_role"] == "egoagentos_runtime"
+    assert login["evidence"]["capability_group_member"] is False
+    assert report["summary"]["status"] == "FAIL"
+
+
+def test_dedicated_login_accepts_distinct_member_of_nologin_capability_group() -> None:
+    value = manifest()
+    value["target"].update(
+        {
+            "runtime_url_env": "TEST_POLARDB_RUNTIME_URL",
+            "require_role_logins": True,
+        }
+    )
+    urls = {
+        **environment(),
+        "TEST_POLARDB_RUNTIME_URL": "postgresql://runtime-login:secret@writer.example/db",
+    }
+
+    report = run_preflight(value, urls, inspector=FakeInspector())
+
+    login = report["checks"]["runtime_login"]
+    assert login["status"] == "PASS"
+    assert login["evidence"]["login_identity"] != login["evidence"]["expected_role"]
+    assert login["evidence"]["capability_group_nologin"] is True
+    assert login["evidence"]["capability_group_member"] is True
 
 
 def test_active_notify_and_topology_require_flags() -> None:
@@ -456,6 +546,72 @@ def test_fresh_schema_replay_reads_marker_twice_before_execution() -> None:
     assert inspector.target_reads == 2
     assert inspector.fresh_calls == 1
     assert report["result"]["target_reverified_in_destructive_transaction"] is True
+
+
+def test_fresh_schema_replay_explicitly_applies_migrations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def __init__(self, *, one=None, all_rows=None) -> None:
+            self.one = one
+            self.all_rows = all_rows or []
+
+        def fetchone(self):
+            return self.one
+
+        def fetchall(self):
+            return self.all_rows
+
+    class Connection:
+        def __init__(self, verification: bool = False) -> None:
+            self.verification = verification
+
+        def execute(self, statement, _parameters=None):
+            text = str(statement)
+            if "FROM pg_database" in text:
+                return Result(
+                    one={
+                        "database_name": "egoagentos_acceptance_ci",
+                        "database_comment": DISPOSABLE_MARKER,
+                        "tls": True,
+                    }
+                )
+            if "FROM schema_migrations" in text:
+                return Result(
+                    all_rows=[{"version": "001_control_plane.sql", "sha256": "a" * 64}]
+                )
+            if "FROM pg_tables" in text:
+                return Result(all_rows=[{"tablename": "tasks"}])
+            return Result()
+
+        def close(self) -> None:
+            return None
+
+    connections = [Connection(), Connection(verification=True)]
+    inspector = PostgresInspector()
+    monkeypatch.setattr(inspector, "_connect", lambda _url: connections.pop(0))
+    store_calls = []
+
+    def fake_store(database_url: str, *, migration_mode: str):
+        store_calls.append((database_url, migration_mode))
+        return object()
+
+    monkeypatch.setattr(preflight_module, "PostgresStore", fake_store)
+
+    result = inspector.fresh_schema_replay(
+        "postgresql://owner:redacted@writer.example/egoagentos_acceptance_ci",
+        expected_database="egoagentos_acceptance_ci",
+        expected_marker=DISPOSABLE_MARKER,
+        require_tls=True,
+    )
+
+    assert store_calls == [
+        (
+            "postgresql://owner:redacted@writer.example/egoagentos_acceptance_ci",
+            "apply",
+        )
+    ]
+    assert result["tables"] == ["tasks"]
 
 
 def test_cli_missing_secret_emits_json_without_connecting(tmp_path: Path) -> None:

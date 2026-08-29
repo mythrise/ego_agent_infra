@@ -96,12 +96,7 @@ def is_excluded(relative: Path) -> bool:
 
 
 def git_tracked_paths() -> Set[Path]:
-    """Return the repository paths recorded in the Git index.
-
-    Packaging reads bytes from the working tree after this membership check, so
-    reviewed-but-dirty edits to tracked files are included while ignored and
-    untracked local artifacts fail closed.
-    """
+    """Return the repository paths recorded in the Git index."""
 
     completed = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -120,7 +115,34 @@ def git_tracked_paths() -> Set[Path]:
     }
 
 
+def assert_tracked_worktree_clean() -> None:
+    """Fail closed unless every packaged tracked byte matches the reviewed commit.
+
+    Ignored and untracked output files are intentionally allowed because the ZIP
+    and its checksum live below ``submission/dist``. Staged or unstaged changes to
+    tracked files would make the same Git revision produce different artifacts.
+    """
+
+    completed = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode:
+        diagnostic = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError("cannot verify Git worktree state: %s" % diagnostic)
+    dirty = completed.stdout.decode("utf-8", errors="replace").strip()
+    if dirty:
+        raise RuntimeError(
+            "refusing to package tracked working-tree changes; commit or restore them first: %s"
+            % dirty.replace("\n", ", ")
+        )
+
+
 def included_files() -> Iterable[Path]:
+    assert_tracked_worktree_clean()
     tracked = git_tracked_paths()
     for name in DEFAULT_FILES:
         relative = Path(name)

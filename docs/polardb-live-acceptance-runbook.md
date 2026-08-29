@@ -36,8 +36,10 @@ The operator or DBA must provide:
 
 - a dedicated, disposable database whose name begins with `egoagentos_acceptance_`;
 - TLS writer endpoint and, for topology acceptance, a reader endpoint;
-- separate migration-owner, `egoagentos_runtime`, `egoagentos_auditor`,
-  `egoagentos_evidence_writer`, and `egoagentos_memory_curator` logins;
+- a separate migration owner plus four dedicated LOGIN identities, each granted membership
+  in exactly one of the NOLOGIN capability groups `egoagentos_runtime`,
+  `egoagentos_auditor`, `egoagentos_evidence_writer`, or
+  `egoagentos_memory_curator`;
 - network allowlisting from the acceptance runner;
 - a cost ceiling, recovery window, and teardown owner before any managed restore.
 
@@ -80,8 +82,8 @@ The report checks:
 - an exact match between live migration versions/checksums and packaged SQL;
 - the expected per-table tenant policy and both `USING`/`WITH CHECK` predicates;
 - append-only and stage notification triggers;
-- runtime/auditor/evidence-writer/memory-curator table privileges and optional real role
-  logins;
+- runtime/auditor/evidence-writer/memory-curator table privileges and optional real LOGIN
+  identities, including proof that each LOGIN is a member of the expected NOLOGIN group;
 - writer/reader topology without attempting a durable write.
 
 `polardb_identity=PASS` requires an advertised PolarDB or `pg_settings` marker when
@@ -115,10 +117,15 @@ consumer, reconnect replay, or frontend delivery.
 
 `deploy/postgres/security_roles.sql` is intentionally separate from automatic schema
 migrations. It creates four NOLOGIN group roles, revokes `PUBLIC` schema access, grants
-the least-privilege matrix, and enables tenant RLS. In particular, the evidence writer
+the least-privilege matrix, and enables and forces tenant RLS. In particular, the evidence writer
 can mutate only `evidence`, while Memory Curator can mutate only `memory_candidates`;
 neither can update or delete a ledger row. A DBA must review and apply it as the database
 owner, then create LOGIN identities through the platform secret manager.
+
+The manifest `target.roles.*` values name those NOLOGIN capability groups. The
+corresponding `*_url_env` value must authenticate a distinct, `LOGIN`-enabled identity
+that is a `MEMBER` of the expected group. Preflight records `session_user` as the login
+identity and verifies membership; it does not require the LOGIN and group to share a name.
 
 ```bash
 psql "$EGO_POLARDB_WRITER_URL" \
@@ -129,8 +136,15 @@ psql "$EGO_POLARDB_WRITER_URL" \
 
 Re-run read-only preflight with runtime and auditor URL variables. Catalog grants are
 not equivalent to a successful dedicated-role login; supply all four role URLs when
-`require_role_logins=true`. `FORCE RLS` remains a separate reported control because table
-owners otherwise bypass ordinary RLS.
+`require_role_logins=true`. Preflight requires both `relrowsecurity` and
+`relforcerowsecurity`; a table owner otherwise bypasses ordinary RLS.
+
+The tenant RLS policy reads the application-set `egoagentos.tenant_id` GUC. This is
+trusted-application namespace filtering and a fail-closed guard when the application omits
+the setting. It is not hostile tenant isolation after a database credential leak: a holder
+of a runtime database credential can choose that session GUC. Use separate credentials or
+databases per adversarial trust domain, or bind tenant identity at an external authenticated
+database proxy.
 
 The migration owner should run migrations before starting restricted API replicas. Set
 `EGO_DATABASE_MIGRATION_MODE=verify` on those replicas: startup then compares the complete

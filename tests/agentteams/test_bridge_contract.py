@@ -119,3 +119,36 @@ def test_benchmark_without_live_opt_in_is_skip(monkeypatch, tmp_path) -> None:
     assert result["status"] == "skip"
     assert result["details"]["execution_mode"] != "real-agentteams"
     assert not list(tmp_path.iterdir())
+
+
+def test_benchmark_live_opt_in_is_unimplemented_skip_without_side_effects(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("AGENTTEAMS_BENCHMARK_LIVE", "1")
+
+    def unexpected_service_start():
+        raise AssertionError("unimplemented benchmark must not start the live bridge")
+
+    monkeypatch.setattr(
+        "integrations.agentteams.benchmark_adapter.build_service",
+        unexpected_service_start,
+    )
+    result = run_scenario(
+        {
+            "id": "worker_timeout_reassign",
+            "ego_task_id": "real-task",
+            "objective": "inject a timeout",
+            "approval_token": "must-not-be-consumed",
+        },
+        11,
+        tmp_path,
+    )
+
+    assert result["status"] == "skip"
+    assert result["details"]["capability_status"] == "UNIMPLEMENTED"
+    assert result["details"]["execution_mode"] == (
+        "agentteams-live-target-unimplemented"
+    )
+    assert result["details"]["scenario_id"] == "worker_timeout_reassign"
+    assert "fresh replay harness" in result["details"]["reason"]
+    assert not list(tmp_path.iterdir())

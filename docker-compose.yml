@@ -5,7 +5,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${EGO_POSTGRES_DB:-egoagentos}
-      POSTGRES_USER: ${EGO_POSTGRES_USER:-egoagentos}
+      POSTGRES_USER: ${EGO_POSTGRES_USER:-egoagentos_owner}
       POSTGRES_PASSWORD: ${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}
     volumes:
       - egoagentos-postgres:/var/lib/postgresql/data
@@ -20,21 +20,70 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  api-migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command:
+      - python
+      - -c
+      - >-
+        import os; from apps.api.postgres_store import PostgresStore;
+        PostgresStore(os.environ["EGO_DATABASE_URL"], migration_mode="apply")
+    environment:
+      EGO_DATABASE_URL: postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_TENANT_ID: ${EGO_TENANT_ID:-local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  api-security:
+    image: postgres:16-alpine
+    command: ["/bin/sh", "/opt/egoagentos-postgres/configure_runtime_login.sh"]
+    environment:
+      PGHOST: postgres
+      POSTGRES_DB: ${EGO_POSTGRES_DB:-egoagentos}
+      POSTGRES_USER: ${EGO_POSTGRES_USER:-egoagentos_owner}
+      POSTGRES_PASSWORD: ${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}
+      EGO_RUNTIME_USER: ${EGO_RUNTIME_USER:-egoagentos_api_runtime}
+      EGO_RUNTIME_PASSWORD: ${EGO_RUNTIME_PASSWORD:?Set EGO_RUNTIME_PASSWORD in .env}
+      EGO_RUNTIME_GROUP: egoagentos_runtime
+      EGO_SECURITY_SQL: /opt/egoagentos-postgres/security_roles.sql
+      EGO_PEER_RUNTIME_USER: ${EGO_AGENTTEAMS_RUNTIME_USER:-egoagentos_bridge_runtime_login}
+      EGO_PEER_RUNTIME_PASSWORD: ${EGO_AGENTTEAMS_RUNTIME_PASSWORD:?Set EGO_AGENTTEAMS_RUNTIME_PASSWORD in .env}
+    volumes:
+      - ./deploy/postgres:/opt/egoagentos-postgres:ro
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
   backend:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
-      EGO_DATABASE_URL: ${EGO_DATABASE_URL:-postgresql://${EGO_POSTGRES_USER:-egoagentos}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
+      EGO_DATABASE_URL: postgresql://${EGO_RUNTIME_USER:-egoagentos_api_runtime}:${EGO_RUNTIME_PASSWORD:?Set EGO_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_DATABASE_MIGRATION_MODE: verify
       EGO_TENANT_ID: ${EGO_TENANT_ID:-local}
       EGO_CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
       EGO_MCP_APPROVAL_HMAC_SECRET: ${EGO_MCP_APPROVAL_HMAC_SECRET:-}
+      EGO_OPERATOR_KEY: ${EGO_OPERATOR_KEY:?Set EGO_OPERATOR_KEY in .env}
+      EGO_OPERATOR_ID: ${EGO_OPERATOR_ID:-operator}
+      EGO_ALLOW_UNAUTHENTICATED_DEMO: ${EGO_ALLOW_UNAUTHENTICATED_DEMO:-false}
       EGO_HICLAW_URL: ${EGO_HICLAW_URL:-}
       EGO_NACOS_URL: ${EGO_NACOS_URL:-}
       EGO_HIGRESS_URL: ${EGO_HIGRESS_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
+      api-security:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -54,6 +103,50 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  agentteams-bridge-migrate:
+    profiles: ["agentteams"]
+    build:
+      context: .
+      dockerfile: apps/agentteams_bridge/Dockerfile
+    command:
+      - python
+      - -c
+      - >-
+        import os; from apps.agentteams_bridge.postgres_store import PostgresBridgeStore;
+        PostgresBridgeStore(os.environ["EGO_AGENTTEAMS_DATABASE_URL"], migration_mode="apply")
+    environment:
+      EGO_AGENTTEAMS_DATABASE_URL: postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+    depends_on:
+      api-security:
+        condition: service_completed_successfully
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  agentteams-bridge-security:
+    profiles: ["agentteams"]
+    image: postgres:16-alpine
+    command: ["/bin/sh", "/opt/egoagentos-postgres/configure_runtime_login.sh"]
+    environment:
+      PGHOST: postgres
+      POSTGRES_DB: ${EGO_POSTGRES_DB:-egoagentos}
+      POSTGRES_USER: ${EGO_POSTGRES_USER:-egoagentos_owner}
+      POSTGRES_PASSWORD: ${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}
+      EGO_RUNTIME_USER: ${EGO_AGENTTEAMS_RUNTIME_USER:-egoagentos_bridge_runtime_login}
+      EGO_RUNTIME_PASSWORD: ${EGO_AGENTTEAMS_RUNTIME_PASSWORD:?Set EGO_AGENTTEAMS_RUNTIME_PASSWORD in .env}
+      EGO_RUNTIME_GROUP: egoagentos_bridge_runtime
+      EGO_SECURITY_SQL: /opt/egoagentos-postgres/agentteams_bridge_security.sql
+      EGO_PEER_RUNTIME_USER: ${EGO_RUNTIME_USER:-egoagentos_api_runtime}
+      EGO_PEER_RUNTIME_PASSWORD: ${EGO_RUNTIME_PASSWORD:?Set EGO_RUNTIME_PASSWORD in .env}
+    volumes:
+      - ./deploy/postgres:/opt/egoagentos-postgres:ro
+    depends_on:
+      agentteams-bridge-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
   agentteams-bridge:
     profiles: ["agentteams"]
     build:
@@ -62,12 +155,14 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      agentteams-bridge-security:
+        condition: service_completed_successfully
     environment:
       EGO_API_URL: http://backend:8000
-      EGO_AGENTTEAMS_DATABASE_URL: ${EGO_AGENTTEAMS_DATABASE_URL:-postgresql://${EGO_POSTGRES_USER:-egoagentos}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
-      EGO_AGENTTEAMS_MIGRATION_DATABASE_URL: ${EGO_AGENTTEAMS_MIGRATION_DATABASE_URL:-postgresql://${EGO_POSTGRES_USER:-egoagentos}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
+      EGO_AGENTTEAMS_DATABASE_URL: postgresql://${EGO_AGENTTEAMS_RUNTIME_USER:-egoagentos_bridge_runtime_login}:${EGO_AGENTTEAMS_RUNTIME_PASSWORD:?Set EGO_AGENTTEAMS_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_AGENTTEAMS_MIGRATION_MODE: verify
+      EGO_OPERATOR_KEY: ${EGO_OPERATOR_KEY:?Set EGO_OPERATOR_KEY in .env}
+      EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY: ${EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY:?Set EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY in .env}
       AGENTTEAMS_CONTROLLER_URL: ${AGENTTEAMS_CONTROLLER_URL:-http://host.docker.internal:18080}
       AGENTTEAMS_AUTH_TOKEN: ${AGENTTEAMS_AUTH_TOKEN:-}
       AGENTTEAMS_MATRIX_URL: ${AGENTTEAMS_MATRIX_URL:-http://host.docker.internal:18080}

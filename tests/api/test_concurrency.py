@@ -12,6 +12,11 @@ from apps.api.main import create_app
 from apps.api.models import EvidenceKind, Stage
 from apps.api.service import ResearchOpsService
 from apps.api.store import SQLiteStore
+from tests.api.operator_auth_helpers import (
+    TEST_AUTHORIZATION_HEADERS,
+    TEST_OPERATOR_ID,
+    TEST_OPERATOR_KEY,
+)
 
 
 TASK_ID = "ego-lite-001"
@@ -68,8 +73,12 @@ def test_two_services_serialize_transition_and_keep_audit_chain_linear(tmp_path:
 
 def test_two_testclients_execute_same_idempotency_key_only_once(tmp_path: Path) -> None:
     database = tmp_path / "two-clients.sqlite3"
-    first_app = create_app(str(database))
-    second_app = create_app(str(database))
+    first_app = create_app(
+        str(database), operator_key=TEST_OPERATOR_KEY, operator_id=TEST_OPERATOR_ID
+    )
+    second_app = create_app(
+        str(database), operator_key=TEST_OPERATOR_KEY, operator_id=TEST_OPERATOR_ID
+    )
     original_first = first_app.state.service.reset_demo
     original_second = second_app.state.service.reset_demo
 
@@ -86,6 +95,8 @@ def test_two_testclients_execute_same_idempotency_key_only_once(tmp_path: Path) 
     barrier, executor = _start_together()
 
     with TestClient(first_app) as first_client, TestClient(second_app) as second_client:
+        first_client.headers.update(TEST_AUTHORIZATION_HEADERS)
+        second_client.headers.update(TEST_AUTHORIZATION_HEADERS)
 
         def reset(client: TestClient) -> dict[str, Any]:
             barrier.wait()

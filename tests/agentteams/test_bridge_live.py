@@ -1,13 +1,22 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
 
 from apps.agentteams_bridge.errors import BridgeError, UpstreamError
-from apps.agentteams_bridge.models import GrantRequest, RunState, StartRunRequest
+from apps.agentteams_bridge.models import (
+    EnvelopeKind,
+    GrantRequest,
+    RunState,
+    StartRunRequest,
+)
+from apps.agentteams_bridge.service import AgentTeamsBridge
+from apps.agentteams_bridge.store import BridgeStore
 from apps.agentteams_bridge.transport import TransportFailure
 from apps.api.models import FinalizeTaskRequest
 from benchmarks.trace_verifier import _verify_bridge_event_chain
@@ -36,6 +45,331 @@ def _start(bridge):
             execution_timeout_seconds=30,
         )
     )
+
+
+def _shared_store_bridge(bridge, path, clock) -> AgentTeamsBridge:
+    return AgentTeamsBridge(
+        BridgeStore(str(path)),
+        bridge.agentteams,
+        bridge.matrix,
+        bridge.ego,
+        clock=clock,
+    )
+
+
+def test_live_start_reserves_before_create_and_recovers_uncertain_create(
+    bridge, fake_transport, monkeypatch
+) -> None:
+    original_create = bridge.agentteams.create_project_with_receipt
+
+    def create_then_crash(**kwargs):
+        original_create(**kwargs)
+        reservations = bridge.store.active_runs()
+        assert len(reservations) == 1
+        assert reservations[0].agentteams_project_id == kwargs["project_id"]
+        raise RuntimeError("simulated crash after remote create")
+
+    monkeypatch.setattr(bridge.agentteams, "create_project_with_receipt", create_then_crash)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        _start(bridge)
+
+    reservation = bridge.store.active_runs()[0]
+    assert reservation.state == RunState.PROVISIONING
+
+    def already_created(**_kwargs):
+        raise UpstreamError(
+            "agentteams",
+            "create-project",
+            409,
+            "project already exists",
+        )
+
+    monkeypatch.setattr(bridge.agentteams, "create_project_with_receipt", already_created)
+    recovered = _start(bridge)
+    assert recovered.id == reservation.id
+    assert recovered.state == RunState.PRE_APPROVAL
+    assert recovered.checkpoint["project_create_confirmation"] == (
+        "RECOVERED_FROM_OFFICIAL_WORKFLOW"
+    )
+
+
+def test_live_start_recovers_persisted_receipt_after_confirmation_write_crash(
+    bridge, fake_transport, monkeypatch
+) -> None:
+    original_update = bridge.store.update_run
+    interrupted = False
+
+    def crash_before_confirmation(run, *, expected_version, lease_owner=None):
+        nonlocal interrupted
+        if run.checkpoint.get("project_create_committed") and not interrupted:
+            interrupted = True
+            raise RuntimeError("simulated crash before project confirmation write")
+        return original_update(
+            run,
+            expected_version=expected_version,
+            lease_owner=lease_owner,
+        )
+
+    monkeypatch.setattr(bridge.store, "update_run", crash_before_confirmation)
+    with pytest.raises(RuntimeError, match="before project confirmation write"):
+        _start(bridge)
+    create_calls = [
+        call
+        for call in fake_transport.calls
+        if call["method"] == "POST" and call["path"] == "/api/v1/projects"
+    ]
+    assert len(create_calls) == 1
+
+    monkeypatch.setattr(bridge.store, "update_run", original_update)
+    recovered = _start(bridge)
+    assert recovered.checkpoint["project_create_confirmation"] == (
+        "RECOVERED_FROM_PERSISTED_RECEIPT"
+    )
+    receipt = bridge.store.receipts(recovered.id)["items"][0]
+    assert recovered.checkpoint["project_create_response_sha256"] == (
+        receipt["payload"]["response_sha256"]
+    )
+    create_calls = [
+        call
+        for call in fake_transport.calls
+        if call["method"] == "POST" and call["path"] == "/api/v1/projects"
+    ]
+    assert len(create_calls) == 1
+
+
+def test_live_start_lease_blocks_second_process_before_project_create(
+    bridge, fake_transport, clock, tmp_path, monkeypatch
+) -> None:
+    database = tmp_path / "bridge-start.sqlite3"
+    first = _shared_store_bridge(bridge, database, clock)
+    second = _shared_store_bridge(bridge, database, clock)
+    original_create = bridge.agentteams.create_project_with_receipt
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def blocked_create(**kwargs):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            call_number = calls
+        if call_number == 1:
+            entered.set()
+            assert release.wait(timeout=5)
+        return original_create(**kwargs)
+
+    monkeypatch.setattr(bridge.agentteams, "create_project_with_receipt", blocked_create)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(_start, first)
+        assert entered.wait(timeout=5)
+        try:
+            with pytest.raises(BridgeError) as busy:
+                _start(second)
+            assert busy.value.code == "operation_in_progress"
+            assert busy.value.retryable is True
+            assert calls == 1
+        finally:
+            release.set()
+        assert pending.result(timeout=5).state == RunState.PRE_APPROVAL
+
+
+def test_reconcile_lease_blocks_cross_connection_duplicate_observation(
+    bridge, fake_transport, clock, tmp_path, monkeypatch
+) -> None:
+    database = tmp_path / "bridge-reconcile.sqlite3"
+    first = _shared_store_bridge(bridge, database, clock)
+    run = _start(first)
+    second = _shared_store_bridge(bridge, database, clock)
+    original_workflow = bridge.agentteams.workflow_with_receipt
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def blocked_workflow(*args, **kwargs):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            call_number = calls
+        if call_number == 1:
+            entered.set()
+            assert release.wait(timeout=5)
+        return original_workflow(*args, **kwargs)
+
+    monkeypatch.setattr(bridge.agentteams, "workflow_with_receipt", blocked_workflow)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(first.reconcile, run.id)
+        assert entered.wait(timeout=5)
+        try:
+            with pytest.raises(BridgeError) as busy:
+                second.reconcile(run.id)
+            assert busy.value.code == "operation_in_progress"
+            assert busy.value.retryable is True
+            assert calls == 1
+        finally:
+            release.set()
+        assert pending.result(timeout=5).run.state == RunState.PRE_APPROVAL
+
+
+def test_sqlite_operation_lease_timeout_and_owner_fencing(
+    bridge, fake_transport, clock, tmp_path, monkeypatch
+) -> None:
+    database = tmp_path / "bridge-lease-fencing.sqlite3"
+    first = _shared_store_bridge(bridge, database, clock)
+    run = _start(first)
+    second = _shared_store_bridge(bridge, database, clock)
+    monkeypatch.setattr("apps.agentteams_bridge.store.utc_now", clock)
+
+    claimed = first.store.claim_operation(
+        run.id,
+        "lease-test",
+        "owner-a",
+        timeout_seconds=30,
+    )
+    lease = claimed.checkpoint["_operation_lease"]
+    assert lease["timeout_seconds"] == 30
+    assert lease["expires_at"] == (clock.value + timedelta(seconds=30)).isoformat()
+
+    with pytest.raises(BridgeError) as busy:
+        second.store.claim_operation(
+            run.id,
+            "lease-test",
+            "owner-b",
+            timeout_seconds=30,
+        )
+    assert busy.value.code == "operation_in_progress"
+    assert busy.value.details["timeout_seconds"] == 30
+
+    with pytest.raises(BridgeError) as wrong_owner:
+        second.store.update_run(
+            second.store.get_run(run.id),
+            expected_version=run.version,
+            lease_owner="owner-b",
+        )
+    assert wrong_owner.value.code == "operation_lease_lost"
+
+    checkpoint_without_lease = dict(claimed.checkpoint)
+    checkpoint_without_lease.pop("_operation_lease")
+    with pytest.raises(BridgeError) as lease_mutation:
+        first.store.update_run(
+            claimed.model_copy(update={"checkpoint": checkpoint_without_lease}),
+            expected_version=run.version,
+            lease_owner="owner-a",
+        )
+    assert lease_mutation.value.code == "operation_lease_mutation"
+
+    clock.value += timedelta(seconds=31)
+    with pytest.raises(BridgeError) as expired:
+        first.store.update_run(
+            claimed,
+            expected_version=run.version,
+            lease_owner="owner-a",
+        )
+    assert expired.value.code == "operation_lease_lost"
+    assert expired.value.details["reason"] == "expired"
+
+    reclaimed = second.store.claim_operation(
+        run.id,
+        "lease-test-recovery",
+        "owner-b",
+        timeout_seconds=30,
+    )
+    first.store.release_operation(run.id, "owner-a")
+    assert second.store.get_run(run.id).checkpoint["_operation_lease"] == (
+        reclaimed.checkpoint["_operation_lease"]
+    )
+
+    stale_envelope = first._envelope(
+        claimed,
+        EnvelopeKind.TASK_UPDATE,
+        {"stale_owner": "owner-a", "takeover_owner": "owner-b"},
+    )
+    event_total = first.store.events(run.id)["total"]
+    receipt_total = first.store.receipts(run.id)["total"]
+    with pytest.raises(BridgeError) as stale_event:
+        first.store.append_event(
+            run.id,
+            stale_envelope,
+            lease_owner="owner-a",
+        )
+    assert stale_event.value.code == "operation_lease_lost"
+    with pytest.raises(BridgeError) as stale_receipt:
+        first.store.archive_receipt(
+            run.id,
+            receipt_key="stale-owner:receipt",
+            source="test",
+            kind="takeover-regression",
+            payload={"owner": "owner-a"},
+            lease_owner="owner-a",
+        )
+    assert stale_receipt.value.code == "operation_lease_lost"
+    assert first.store.events(run.id)["total"] == event_total
+    assert first.store.receipts(run.id)["total"] == receipt_total
+
+    matrix_calls = len(
+        [
+            call
+            for call in fake_transport.calls
+            if "/send/m.room.message/" in call["path"]
+        ]
+    )
+    with pytest.raises(BridgeError) as stale_matrix:
+        first._send(claimed, stale_envelope, "owner-a")
+    assert stale_matrix.value.code == "operation_lease_lost"
+    assert (
+        len(
+            [
+                call
+                for call in fake_transport.calls
+                if "/send/m.room.message/" in call["path"]
+            ]
+        )
+        == matrix_calls
+    )
+
+    stale_waiting = claimed.model_copy(
+        update={
+            "state": RunState.WAITING_R2,
+            "checkpoint": {
+                **claimed.checkpoint,
+                "ego_grant_committed": True,
+            },
+        }
+    )
+    controller_mutations = len(
+        [
+            call
+            for call in fake_transport.calls
+            if call["method"] == "POST"
+            and (call["path"].endswith("/resume") or call["path"].endswith("/replan"))
+        ]
+    )
+    with pytest.raises(BridgeError) as stale_controller:
+        first._grant_r2_claimed(
+            stale_waiting,
+            GrantRequest(
+                approval_token="stale-owner-approval-token",
+                idempotency_key="stale-owner-grant",
+            ),
+            "owner-a",
+        )
+    assert stale_controller.value.code == "operation_lease_lost"
+    assert (
+        len(
+            [
+                call
+                for call in fake_transport.calls
+                if call["method"] == "POST"
+                and (
+                    call["path"].endswith("/resume")
+                    or call["path"].endswith("/replan")
+                )
+            ]
+        )
+        == controller_mutations
+    )
+    second.store.release_operation(run.id, "owner-b")
 
 
 def test_live_start_uses_controller_team_workers_project_and_matrix(bridge, fake_transport) -> None:

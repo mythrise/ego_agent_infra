@@ -51,6 +51,7 @@
     }
   },
   "truth_boundary": {
+    "role_model": "roles.* are expected NOLOGIN capability groups; each *_url_env authenticates a distinct LOGIN member",
     "local_postgresql_proof": "docs/evidence/postgres-local-proof-2026-08-29.md",
     "polardb_proof": "NOT_RUN until a redacted live report is committed",
     "pitr_proof": "NOT_RUN until a restore job and restored-chain report exist"
