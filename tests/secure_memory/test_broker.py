@@ -373,6 +373,38 @@ def test_shared_capability_authority_freezes_every_broker_after_background_call(
             broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
 
 
+def test_capability_expiry_after_activation_freezes_all_brokers_before_paid_work():
+    current = {"value": 1}
+    authority = CampaignCapabilityAuthority(
+        _capability(expires_at_sequence=1),
+        signature_verifier=lambda _value: True,
+        current_sequence=lambda: current["value"],
+        expected_campaign_id="campaign",
+        expected_project_id="official-calibration-project",
+        expected_issuer_id="capability-control",
+        expected_key_id="capability-key",
+    )
+    ledger_one, lease_one = _ledger()
+    ledger_two, lease_two = _ledger()
+    transport_one = FakeTransport()
+    transport_two = FakeTransport()
+    brokers = (
+        (ProviderBroker(ledger=ledger_one, capability_authority=authority,
+                        transport=transport_one, signature_verifier=lambda _value: True,
+                        secret_handoff=None), ledger_one, lease_one),
+        (ProviderBroker(ledger=ledger_two, capability_authority=authority,
+                        transport=transport_two, signature_verifier=lambda _value: True,
+                        secret_handoff=None), ledger_two, lease_two),
+    )
+    current["value"] = 2
+    for broker, ledger, lease in brokers:
+        with pytest.raises(BrokerDenied, match="capability_expired"):
+            broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+        assert ledger.events == ()
+    assert transport_one.calls == []
+    assert transport_two.calls == []
+
+
 def test_optional_field_contract_rejects_non_none_value_when_omitted():
     ledger, lease = _ledger()
     broker = ProviderBroker(

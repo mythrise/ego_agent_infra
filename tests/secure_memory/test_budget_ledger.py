@@ -22,6 +22,7 @@ from benchmarks.secure_memory.substrate.budget import (
     BudgetTrustContext,
     RawUsage,
     ReservationState,
+    SettledUsage,
 )
 
 
@@ -116,7 +117,9 @@ def _rehashed_events(events, mutate):
     return tuple(changed_events)
 
 
-def _settled_ledger(*, calibrated_positive_error=0, tokenizer_estimate=1, visible=b""):
+def _settled_ledger(
+    *, calibrated_positive_error=0, tokenizer_estimate=1, visible=b"", raw_usage=None
+):
     ledger, lease = _ledger(calibrated_positive_error=calibrated_positive_error)
     ledger.reserve(
         "ticket-1",
@@ -127,7 +130,10 @@ def _settled_ledger(*, calibrated_positive_error=0, tokenizer_estimate=1, visibl
         serialized_model_visible_bytes=visible,
     )
     ledger.mark_dispatched("ticket-1")
-    ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
+    ledger.settle(
+        "ticket-1",
+        raw_usage or RawUsage(input_tokens=1, output_tokens=1),
+    )
     return ledger
 
 
@@ -287,7 +293,8 @@ def test_events_are_hash_chained_and_replayable():
     assert len(ledger.events) == 3
     assert ledger.events[-1].event_sha256
     replayed = BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
-                                   trust_context=_trust(), events=ledger.events)
+                                   trust_context=_trust(), events=ledger.events,
+                                   expected_state_digest=ledger.state_digest)
     assert replayed.totals == ledger.totals
 
 
@@ -305,6 +312,7 @@ def test_replay_rejects_rehashed_but_underreserved_event_chain():
             manifest_sha256=SHA,
             trust_context=_trust(),
             events=tampered,
+            expected_state_digest=ledger.state_digest,
         )
 
 
@@ -325,6 +333,7 @@ def test_replay_rejects_rehashed_calibration_and_reservation_tamper():
             manifest_sha256=SHA,
             trust_context=_trust(calibrated_positive_error=20),
             events=tampered,
+            expected_state_digest=ledger.state_digest,
         )
 
 
@@ -341,6 +350,7 @@ def test_replay_rejects_rehashed_lower_output_reservation():
             manifest_sha256=SHA,
             trust_context=_trust(),
             events=tampered,
+            expected_state_digest=ledger.state_digest,
         )
 
 
@@ -359,6 +369,7 @@ def test_replay_rejects_rehashed_basis_drift_between_transitions():
             manifest_sha256=SHA,
             trust_context=_trust(),
             events=tampered,
+            expected_state_digest=ledger.state_digest,
         )
 
 
@@ -375,6 +386,98 @@ def test_replay_rejects_rehashed_negative_reservation_basis():
             manifest_sha256=SHA,
             trust_context=_trust(),
             events=tampered,
+            expected_state_digest=ledger.state_digest,
+        )
+
+
+def test_replay_anchor_rejects_rehashed_lower_basis_and_matching_reservation():
+    ledger = _settled_ledger(calibrated_positive_error=20, tokenizer_estimate=600)
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(
+            event,
+            tokenizer_estimate=0,
+            reserved_input=1_024,
+        ),
+    )
+    with pytest.raises(BudgetDenied, match="state_anchor"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(calibrated_positive_error=20),
+            events=tampered,
+            expected_state_digest=ledger.state_digest,
+        )
+
+
+def test_replay_anchor_rejects_rehashed_lower_byte_basis_and_matching_reservation():
+    ledger = _settled_ledger(visible=b"x" * 700)
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(
+            event,
+            model_visible_byte_length=0,
+            reserved_input=1_024,
+        ),
+    )
+    with pytest.raises(BudgetDenied, match="state_anchor"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+            expected_state_digest=ledger.state_digest,
+        )
+
+
+def test_replay_anchor_rejects_rehashed_lower_terminal_usage():
+    ledger = _settled_ledger(raw_usage=RawUsage(input_tokens=100, output_tokens=100))
+    forged_usage = SettledUsage(
+        raw_usage=RawUsage(input_tokens=1, output_tokens=1),
+        budget_input=1,
+        budget_output=1,
+        comparable_input=1,
+        comparable_output=1,
+    )
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda index, event: replace(event, settled_usage=forged_usage)
+        if index == 2
+        else event,
+    )
+    with pytest.raises(BudgetDenied, match="state_anchor"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+            expected_state_digest=ledger.state_digest,
+        )
+
+
+def test_replay_requires_well_formed_matching_external_state_anchor():
+    ledger = _settled_ledger()
+    for invalid in ("", "A" * 64, "0" * 63):
+        with pytest.raises(BudgetDenied, match="state_anchor_invalid"):
+            BudgetLedger.replay(
+                templates=(_template(),),
+                tickets=(_ticket(),),
+                manifest_sha256=SHA,
+                trust_context=_trust(),
+                events=ledger.events,
+                expected_state_digest=invalid,
+            )
+    with pytest.raises(BudgetDenied, match="state_anchor_mismatch"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=ledger.events,
+            expected_state_digest="0" * 64,
         )
 
 
@@ -386,7 +489,8 @@ def test_replay_rejects_event_hash_tamper():
     bad[0] = replace(bad[0], event_sha256="0" * 64)
     with pytest.raises(BudgetDenied, match="event_hash"):
         BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
-                            trust_context=_trust(), events=bad)
+                            trust_context=_trust(), events=bad,
+                            expected_state_digest=ledger.state_digest)
 
 
 def test_replay_two_ticket_settled_and_retained_round_trip():
@@ -404,7 +508,7 @@ def test_replay_two_ticket_settled_and_retained_round_trip():
         ledger.mark_dispatched(ticket_id)
     ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
     ledger.retain("ticket-2", "timeout")
-    replay = BudgetLedger.replay(templates=(first, second), tickets=(one, two), manifest_sha256=SHA, trust_context=trust, events=ledger.events)
+    replay = BudgetLedger.replay(templates=(first, second), tickets=(one, two), manifest_sha256=SHA, trust_context=trust, events=ledger.events, expected_state_digest=ledger.state_digest)
     assert replay.events == ledger.events and replay.totals == ledger.totals and replay.state_digest == ledger.state_digest
     assert replay.reservation_for("ticket-1") == ledger.reservation_for("ticket-1")
     assert replay.reservation_for("ticket-2") == ledger.reservation_for("ticket-2")

@@ -109,15 +109,32 @@ class CampaignCapabilityAuthority:
         ):
             raise BrokerDenied("capability_signature")
         self._record = record
+        self._current_sequence = current_sequence
         self._lock = threading.RLock()
 
     def record(self) -> ProviderCapabilityRecord:
         with self._lock:
+            try:
+                sequence = self._current_sequence()
+            except Exception:
+                self._freeze_unlocked()
+                raise BrokerDenied("capability_sequence") from None
+            if self._record.issue_sequence > sequence:
+                self._freeze_unlocked()
+                raise BrokerDenied("capability_not_yet_valid")
+            if sequence > self._record.expires_at_sequence:
+                self._freeze_unlocked()
+                raise BrokerDenied("capability_expired")
             return self._record
 
     def freeze(self) -> None:
         with self._lock:
-            self._record = ProviderCapabilityRecord(**{**self._record.__dict__, "state": BrokerState.FROZEN})
+            self._freeze_unlocked()
+
+    def _freeze_unlocked(self) -> None:
+        self._record = ProviderCapabilityRecord(
+            **{**self._record.__dict__, "state": BrokerState.FROZEN}
+        )
 
     def observe_unattributed_call(self) -> None:
         self.freeze()

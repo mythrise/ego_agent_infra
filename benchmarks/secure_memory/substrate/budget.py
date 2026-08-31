@@ -13,7 +13,7 @@ from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from pydantic import Field, model_validator
 
-from ..canonical import canonical_sha256
+from ..canonical import canonical_sha256, validate_sha256_digest
 from ..models import IssuedBudgetTicket, RequestClass, SignedTaskLease, StrictModel, TicketTemplate
 
 
@@ -272,7 +272,19 @@ class BudgetLedger:
         manifest_sha256: str,
         trust_context: BudgetTrustContext,
         events: Iterable[BudgetEvent],
+        expected_state_digest: str,
     ) -> "BudgetLedger":
+        """Replay events against an externally trusted checkpoint or journal root.
+
+        The event hash chain detects accidental corruption but is not
+        self-authenticating: an attacker can rewrite content and recompute every
+        link.  Callers must supply the state digest from a separately authenticated
+        checkpoint or journal receipt.
+        """
+        try:
+            validate_sha256_digest(expected_state_digest)
+        except (TypeError, ValueError):
+            raise BudgetDenied("state_anchor_invalid") from None
         ledger = cls(
             templates=templates,
             tickets=tickets,
@@ -392,6 +404,8 @@ class BudgetLedger:
             )
             ledger._events = ledger._events + (event,)
             ledger._reservations[event.ticket_id] = reservation
+        if ledger.state_digest != expected_state_digest:
+            raise BudgetDenied("state_anchor_mismatch")
         return ledger
 
     def _append(self, reservation: Reservation) -> Reservation:
