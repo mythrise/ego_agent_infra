@@ -226,3 +226,23 @@ def test_replay_rejects_event_hash_tamper():
     with pytest.raises(BudgetDenied, match="event_hash"):
         BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
                             trust_context=_trust(), events=bad)
+
+
+def test_replay_two_ticket_settled_and_retained_round_trip():
+    first = _template()
+    second = _template(template_id="template-2", slot_id="slot-2")
+    one = _ticket()
+    two = _ticket(template_id="template-2", ticket_id="ticket-2", issue_sequence=2)
+    trust = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 2,
+                               signature_verifier=lambda _value: True)
+    ledger = BudgetLedger(templates=(first, second), tickets=(one, two), manifest_sha256=SHA, trust_context=trust)
+    lease = _lease("ticket-1", issued_ticket_ids=("ticket-1", "ticket-2"))
+    for ticket_id in ("ticket-1", "ticket-2"):
+        ledger.reserve(ticket_id, lease, requester_role="Worker", tokenizer_estimate=1, calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+        ledger.mark_dispatched(ticket_id)
+    ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
+    ledger.retain("ticket-2", "timeout")
+    replay = BudgetLedger.replay(templates=(first, second), tickets=(one, two), manifest_sha256=SHA, trust_context=trust, events=ledger.events)
+    assert replay.events == ledger.events and replay.totals == ledger.totals and replay.state_digest == ledger.state_digest
+    assert replay.reservation_for("ticket-1") == ledger.reservation_for("ticket-1")
+    assert replay.reservation_for("ticket-2") == ledger.reservation_for("ticket-2")
