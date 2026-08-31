@@ -14,6 +14,7 @@ from benchmarks.secure_memory.substrate.broker import (
     ProviderReply,
     ProviderRequestShape,
     ProviderBroker,
+    ProviderTransportFailure,
     CampaignCapabilityAuthority,
     provision_secret_descriptor,
     read_authorized_secret_fd,
@@ -201,3 +202,15 @@ def test_request_token_ceilings_must_equal_trusted_ticket_before_transport():
     with pytest.raises(BrokerDenied, match="qualified_request"):
         broker.dispatch(_request(lease=lease, max_input_tokens=9999), lease=lease, requester_role="Worker")
     assert not transport.calls
+
+
+def test_transient_failure_is_sanitized_and_retains_original_without_untrusted_retry():
+    ledger, lease = _ledger()
+    class Transient(FakeTransport):
+        def send(self, **kwargs):
+            raise ProviderTransportFailure.timeout()
+    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=Transient(),
+                            signature_verifier=lambda _value: True, secret_fd=None)
+    with pytest.raises(BrokerDenied, match="provider_failure"):
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+    assert ledger.reservation_for("ticket-1").state.value == "RETAINED"

@@ -249,7 +249,6 @@ class BudgetLedger:
             if ticket.template_id in self._used_templates or ticket_id in self._reservations:
                 raise BudgetDenied("ticket_consumed")
             core = lease.core
-            current = self._trust_context.current_sequence()
             if (
                 not self._trust_context.signature_verifier(lease)
                 or core.issuer_id != self._trust_context.issuer_id or core.key_id != self._trust_context.key_id

@@ -19,6 +19,23 @@ class BrokerDenied(ValueError):
     pass
 
 
+class ProviderTransportFailure(Exception):
+    """Typed, message-free transport classification used for retry policy."""
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        super().__init__(kind)
+
+    @classmethod
+    def timeout(cls) -> "ProviderTransportFailure":
+        return cls("timeout")
+
+    @classmethod
+    def status(cls, code: int) -> "ProviderTransportFailure":
+        if code == 429 or 500 <= code <= 599 or 400 <= code <= 499:
+            return cls("429" if code == 429 else ("5xx" if code >= 500 else "4xx"))
+        raise ValueError("unsupported provider status")
+
+
 class BrokerState(str, Enum):
     LOCKED = "LOCKED"
     QUALIFIED = "QUALIFIED"
@@ -241,6 +258,10 @@ class ProviderBroker:
             "model": request.provider_model, "messages": list(request.messages), "max_tokens": request.max_output_tokens,
             "temperature": request.temperature, "top_p": request.top_p, "stream": request.stream, "tools": list(request.tools),
         }
+        if not capability.temperature_present:
+            body.pop("temperature")
+        if not capability.top_p_present:
+            body.pop("top_p")
         if capability.temperature_present != (request.temperature is not None):
             raise BrokerDenied("qualified_request")
         if capability.top_p_present != (request.top_p is not None):
