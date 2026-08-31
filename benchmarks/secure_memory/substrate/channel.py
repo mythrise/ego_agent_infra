@@ -152,15 +152,15 @@ class InMemoryReceiptStore:
         self._condition = threading.Condition(self._lock)
 
     @staticmethod
-    def valid_record(record: InstalledReceipt, identity: Tuple[object, ...], digest: str) -> bool:
+    def valid_record(record: InstalledReceipt, identity: Tuple[object, ...]) -> bool:
         if (
             not isinstance(record, InstalledReceipt)
             or record.identity != identity
-            or record.request_frame_sha256 != digest
+            or not record.request_frame_sha256
         ):
             return False
         expected = hashlib.sha256(
-            b"receipt/v1\0" + canonical_bytes(identity) + digest.encode()
+            b"receipt/v1\0" + canonical_bytes(identity) + record.request_frame_sha256.encode()
         ).hexdigest()
         if record.durable_receipt_id != expected or not record.receipt_frame:
             return False
@@ -188,7 +188,7 @@ class InMemoryReceiptStore:
                 if sequence <= head[0]:
                     historical = self._records.get(window + (sequence,))
                     if historical is None or not self.valid_record(
-                        historical, window + (sequence,), digest
+                        historical, window + (sequence,)
                     ):
                         return "inconsistent", None
                     return (
@@ -224,14 +224,17 @@ class InMemoryReceiptStore:
         with self._lock:
             current = self._records.get(identity)
             if current is not None:
-                if not self.valid_record(current, identity, digest):
+                if (
+                    not self.valid_record(current, identity)
+                    or current.request_frame_sha256 != digest
+                ):
                     raise ChannelRejected("receipt_store_mismatch")
                 return current
             receipt_id = hashlib.sha256(
                 b"receipt/v1\0" + canonical_bytes(identity) + digest.encode()
             ).hexdigest()
             result = InstalledReceipt(digest, receipt_id, frame, identity)
-            if not self.valid_record(result, identity, digest):
+            if not self.valid_record(result, identity) or result.request_frame_sha256 != digest:
                 raise ChannelRejected("invalid_durable_receipt")
             self._records[identity] = result
             return result
@@ -345,7 +348,10 @@ class ChannelCodec:
         try:
             pending = route(env)
             installed = self.store.install_or_get(identity, digest, pending)
-            if not self.store.valid_record(installed, identity, digest):
+            if (
+                not self.store.valid_record(installed, identity)
+                or installed.request_frame_sha256 != digest
+            ):
                 raise ChannelRejected("invalid_durable_receipt")
         except Exception:
             self.store.abort(key, env.sequence, digest)

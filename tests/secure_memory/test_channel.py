@@ -211,3 +211,19 @@ def test_store_owned_installation_reconciles_and_rejects_scalar_pending_payload(
         codec.receive(frame, route=lambda _e: PendingReceipt(receipt_payload={"ok": True}))
         == b'{"ok":true}'
     )
+
+
+def test_historical_valid_digest_conflict_is_not_store_corruption() -> None:
+    store = InMemoryReceiptStore()
+    codec = _codec(receipt_store=store)
+    one = _frame(codec, sequence=1, idempotency_key="one")
+    two = _frame(codec, sequence=2, idempotency_key="two")
+    codec.receive(one, route=lambda _e: PendingReceipt(receipt_payload={"seq": 1}))
+    codec.receive(two, route=lambda _e: PendingReceipt(receipt_payload={"seq": 2}))
+    changed = _frame(
+        codec, sequence=1, idempotency_key="changed", payload={"proposal_id": "changed"}
+    )
+    with pytest.raises(ChannelRejected, match="sequence_reuse_with_different_bytes"):
+        _codec(receipt_store=store).receive(
+            changed, route=lambda _e: (_ for _ in ()).throw(AssertionError("routed"))
+        )
