@@ -276,6 +276,12 @@ class BudgetLedger:
             if prior is None:
                 if event.previous_state is not None or event.state is not ReservationState.RESERVED:
                     raise BudgetDenied("event_transition")
+                if event.template_id in ledger._used_templates:
+                    raise BudgetDenied("event_template")
+                next_total = ledger.totals.add(requests=1, input=event.reserved_input, output=event.reserved_output)
+                if (next_total.requests > CAMPAIGN_RESERVATION.requests or next_total.input > CAMPAIGN_RESERVATION.input
+                        or next_total.output > CAMPAIGN_RESERVATION.output or not ledger.absolute_allows(next_total)):
+                    raise BudgetDenied("event_cap")
                 ledger._used_templates.add(event.template_id)
             else:
                 if (
@@ -311,6 +317,9 @@ class BudgetLedger:
                 raise BudgetDenied("event_hash")
             if event.reserved_input <= 0 or event.reserved_output <= 0:
                 raise BudgetDenied("event_reservation")
+            limit = REQUEST_LIMITS[ticket.effective_request_class]
+            if event.reserved_input > ticket.max_input_tokens or event.reserved_output > ticket.max_output_tokens or event.reserved_input > limit.max_input or event.reserved_output > limit.max_output:
+                raise BudgetDenied("event_ceiling")
             if event.state in {ReservationState.RESERVED, ReservationState.DISPATCHED} and (
                 event.settled_usage is not None or event.retained_reason is not None
             ):
@@ -319,6 +328,13 @@ class BudgetLedger:
                 event.settled_usage is None or event.retained_reason is not None
             ):
                 raise BudgetDenied("event_terminal")
+            if event.state is ReservationState.SETTLED:
+                usage = event.settled_usage
+                assert usage is not None
+                if (usage.raw_usage.input_tokens > event.reserved_input or usage.raw_usage.output_tokens > event.reserved_output
+                        or usage.budget_input != usage.raw_usage.input_tokens or usage.budget_output != usage.raw_usage.output_tokens
+                        or usage.comparable_input != usage.raw_usage.input_tokens or usage.comparable_output != usage.raw_usage.output_tokens):
+                    raise BudgetDenied("event_usage")
             if event.state is ReservationState.RETAINED and (
                 event.settled_usage is not None
                 or event.retained_reason not in ALLOWED_RETAIN_REASONS
