@@ -50,6 +50,7 @@ namespaces = true
 "apps.api" = ["fixtures/*.yaml", "migrations/postgres/*.sql"]
 "apps.agentteams_bridge" = ["migrations/postgres/*.sql"]
 "benchmarks" = ["corpus/v1/*.json", "schemas/*.json"]
+"benchmarks.secure_memory" = ["schemas/*.schema.json", "corpus/public/*.json"]
 "integrations.agentteams" = ["*.json", "*.yaml", "*.tmpl", "scripts/*.py"]
 "protocols.rxp" = ["schemas/*.json"]
 "semifinal_acceptance" = ["schemas/*.json", "README.md"]
@@ -57,7 +58,7 @@ namespaces = true
 
 [tool.pytest.ini_options]
 addopts = "-q"
-testpaths = ["tests/api", "tests/agentteams", "tests/acceptance", "tests/benchmarks", "tests/experiments", "tests/protocols", "tests/skills"]
+testpaths = ["tests/api", "tests/agentteams", "tests/acceptance", "tests/benchmarks", "tests/experiments", "tests/memory", "tests/protocols", "tests/secure_memory", "tests/skills"]
 pythonpath = ["."]
 
 [tool.ruff]
