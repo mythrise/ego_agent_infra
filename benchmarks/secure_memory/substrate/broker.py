@@ -233,7 +233,9 @@ class ProviderBroker:
         self._tokenizer = tokenizer or (lambda body: len(body) // 4)
         self._scanner = scanner or (lambda body: True)
 
-    def dispatch(self, request: ModelRequest, *, lease: SignedTaskLease, requester_role: str) -> BrokerResponse:
+    def dispatch(self, request: ModelRequest, *, lease: SignedTaskLease, requester_role: str,
+                 retry_ticket_id: Optional[str] = None,
+                 backoff_observer: Callable[[str], None] = lambda _kind: None) -> BrokerResponse:
         capability = self._capability_authority.record()
         if capability.state is BrokerState.FROZEN:
             raise BrokerDenied("capability_frozen")
@@ -281,6 +283,34 @@ class ProviderBroker:
             reply = self._transport.send(base_url=request.provider_base_url, method=capability.method,
                                          endpoint=capability.endpoint, body=body,
                                          api_key=self._api_key, allow_redirects=False, tls_verified=True)
+        except ProviderTransportFailure as failure:
+            self._ledger.retain(request.ticket_id, "provider_failure")
+            if retry_ticket_id is not None and failure.kind in {"429", "5xx", "timeout"}:
+                backoff_observer(failure.kind)
+                self._ledger.reserve_retry(retry_ticket_id, request.ticket_id, lease,
+                                           requester_role=requester_role, tokenizer_estimate=self._tokenizer(visible),
+                                           calibrated_positive_error=capability.calibrated_positive_error,
+                                           serialized_model_visible_bytes=visible)
+                self._ledger.mark_dispatched(retry_ticket_id)
+                try:
+                    reply = self._transport.send(base_url=request.provider_base_url, method=capability.method,
+                                                 endpoint=capability.endpoint, body=body, api_key=self._api_key,
+                                                 allow_redirects=False, tls_verified=True)
+                except Exception:
+                    self._ledger.retain(retry_ticket_id, "provider_failure")
+                    raise BrokerDenied("provider_failure") from None
+                if reply.raw_usage is None:
+                    self._ledger.retain(retry_ticket_id, "unknown_usage")
+                    self._capability_authority.freeze()
+                    raise BrokerDenied("authoritative_usage_missing")
+                try:
+                    usage = self._ledger.settle(retry_ticket_id, RawUsage(**reply.raw_usage))
+                except (BudgetDenied, ValueError):
+                    self._ledger.retain(retry_ticket_id, "contradictory_usage")
+                    self._capability_authority.freeze()
+                    raise BrokerDenied("authoritative_usage_invalid") from None
+                return BrokerResponse(reply.output_text, usage, reply.first_stream_ns, reply.first_content_ns)
+            raise BrokerDenied("provider_failure") from None
         except Exception:
             self._ledger.retain(request.ticket_id, "provider_failure")
             raise BrokerDenied("provider_failure") from None

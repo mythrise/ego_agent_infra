@@ -302,6 +302,32 @@ class BudgetLedger:
             value = self._require(ticket_id, ReservationState.RESERVED)
             return self._append(Reservation(**{**value.__dict__, "state": ReservationState.DISPATCHED}))
 
+    def reserve_retry(self, retry_ticket_id: str, original_ticket_id: str, lease: SignedTaskLease, *,
+                      requester_role: str, tokenizer_estimate: int, calibrated_positive_error: int,
+                      serialized_model_visible_bytes: bytes) -> Reservation:
+        """Consume one preloaded, owner-bound retry ticket after a retained transient original."""
+        with self._lock:
+            original = self._reservations.get(original_ticket_id)
+            retry_ticket = self._tickets.get(retry_ticket_id)
+            if original is None or original.state is not ReservationState.RETAINED:
+                raise BudgetDenied("retry_original")
+            if retry_ticket is None or retry_ticket_id not in lease.core.issued_ticket_ids:
+                raise BudgetDenied("retry_ticket")
+            template = self._templates[retry_ticket.template_id]
+            original_ticket = self._tickets[original_ticket_id]
+            if (
+                template.retry_owner != original_ticket.execution_phase_owner
+                or retry_ticket.effective_request_class != original_ticket.effective_request_class
+                or retry_ticket.usage_phase != original_ticket.usage_phase
+                or retry_ticket.max_input_tokens != original_ticket.max_input_tokens
+                or retry_ticket.max_output_tokens != original_ticket.max_output_tokens
+            ):
+                raise BudgetDenied("retry_binding")
+            return self.reserve(retry_ticket_id, lease, requester_role=requester_role,
+                                tokenizer_estimate=tokenizer_estimate,
+                                calibrated_positive_error=calibrated_positive_error,
+                                serialized_model_visible_bytes=serialized_model_visible_bytes)
+
     def retain(self, ticket_id: str, reason: str) -> Reservation:
         with self._lock:
             value = self._require(ticket_id, ReservationState.DISPATCHED)
