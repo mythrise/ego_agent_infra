@@ -169,7 +169,15 @@ worker_distribution.py
 """.split()
 )
 
-KNOWN_PRIVATE_SOURCE_FILES: FrozenSet[str] = frozenset({"apps/api/evaluator.py"})
+KNOWN_PRIVATE_SOURCE_FILES: FrozenSet[str] = frozenset(
+    {
+        "apps/api/evaluator.py",
+        # Host-only: these modules can hold trusted reservations and an already-open secret FD.
+        "benchmarks/secure_memory/substrate/broker.py",
+        "benchmarks/secure_memory/substrate/budget.py",
+        "benchmarks/secure_memory/substrate/clock.py",
+    }
+)
 PUBLIC_SOURCE_ROOTS = (
     "apps/api",
     "apps/agentteams_bridge",
