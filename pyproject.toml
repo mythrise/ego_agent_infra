@@ -82,6 +82,7 @@ namespaces = true
   "migrations/postgres/001_control_plane.sql",
   "migrations/postgres/002_ledger_boundaries.sql",
   "migrations/postgres/003_trusted_memory_core.sql",
+  "migrations/postgres/004_decision_closure_bytes.sql",
 ]
 "apps.agentteams_bridge" = [
   "migrations/postgres/001_bridge_control_plane.sql",

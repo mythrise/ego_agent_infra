@@ -12,6 +12,10 @@ from apps.api.postgres_store import PostgresStore
 MIGRATION = (
     Path(__file__).resolve().parents[2] / "apps/api/migrations/postgres/003_trusted_memory_core.sql"
 )
+CLOSURE_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "apps/api/migrations/postgres/004_decision_closure_bytes.sql"
+)
 TRUSTED_TABLES = (
     "trusted_memory_streams",
     "trusted_memory_history",
@@ -78,6 +82,8 @@ def test_trusted_memory_migration_is_tenant_scoped_immutable_and_least_privilege
 
 def test_postgres_store_exposes_the_complete_trusted_memory_surface() -> None:
     for method in (
+        "append_decision_closure",
+        "get_decision_closure",
         "append_trusted_memory_record",
         "get_trusted_memory_event",
         "list_trusted_memory_history",
@@ -87,3 +93,21 @@ def test_postgres_store_exposes_the_complete_trusted_memory_surface() -> None:
         "list_legacy_memory_views",
     ):
         assert callable(getattr(PostgresStore, method, None)), method
+
+
+def test_exact_decision_closure_migration_is_immutable_rls_and_least_privilege() -> None:
+    normalized = " ".join(CLOSURE_MIGRATION.read_text(encoding="utf-8").casefold().split())
+
+    assert "create table if not exists trusted_memory_decision_closures" in normalized
+    assert "primary key(tenant_id, project_id, closure_digest)" in normalized
+    assert "unique(tenant_id, project_id, idempotency_key)" in normalized
+    assert "encode(sha256(closure_bytes), 'hex') = closure_bytes_sha256" in normalized
+    assert "before update or delete on trusted_memory_decision_closures" in normalized
+    assert "before truncate on trusted_memory_decision_closures" in normalized
+    assert "enable row level security" in normalized
+    assert "force row level security" in normalized
+    assert "current_setting('egoagentos.tenant_id', true)" in normalized
+    assert "grant select on trusted_memory_decision_closures" in normalized
+    assert "grant select, insert on trusted_memory_decision_closures" in normalized
+    assert "grant update" not in normalized
+    assert "grant delete" not in normalized

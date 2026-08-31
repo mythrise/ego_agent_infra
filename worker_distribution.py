@@ -80,8 +80,13 @@ apps/api/fixtures/egolite-mcp-launch.yaml
 apps/api/migrations/postgres/001_control_plane.sql
 apps/api/migrations/postgres/002_ledger_boundaries.sql
 apps/api/migrations/postgres/003_trusted_memory_core.sql
+apps/api/migrations/postgres/004_decision_closure_bytes.sql
 apps/api/trusted_memory/__init__.py
+apps/api/trusted_memory/capsule.py
+apps/api/trusted_memory/lifecycle.py
 apps/api/trusted_memory/models.py
+apps/api/trusted_memory/retrieval.py
+apps/api/trusted_memory/service.py
 benchmarks/__init__.py
 benchmarks/adapter_worker.py
 benchmarks/evidence_bundle.py
@@ -189,6 +194,9 @@ worker_distribution.py
 KNOWN_PRIVATE_SOURCE_FILES: FrozenSet[str] = frozenset(
     {
         "apps/api/evaluator.py",
+        # Host-only: consumes verified evaluator/Control authority and persists closures.
+        "apps/api/internal_finalizer.py",
+        "apps/api/trusted_memory/closure.py",
         # Host-only: verifies evaluator identity/signatures and tracks replay state.
         "benchmarks/secure_memory/substrate/evaluator_channel.py",
         # Host-only: these modules can hold trusted reservations and an already-open secret FD.
@@ -241,12 +249,7 @@ _SDIST_BUILD_FILES: FrozenSet[str] = frozenset(
 
 
 def _canonical_member(name: str) -> str:
-    if (
-        not isinstance(name, str)
-        or not name
-        or name.endswith("/")
-        or "\\" in name
-    ):
+    if not isinstance(name, str) or not name or name.endswith("/") or "\\" in name:
         raise PublicArtifactError(f"non-canonical archive member: {name!r}")
     path = PurePosixPath(name)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
@@ -272,15 +275,12 @@ def _typed_members(members: Iterable[ArchiveMember]) -> List[ArchiveMember]:
     return normalized
 
 
-def _require_exact_members(
-    actual: Set[str], expected: FrozenSet[str], artifact_name: str
-) -> None:
+def _require_exact_members(actual: Set[str], expected: FrozenSet[str], artifact_name: str) -> None:
     missing = sorted(expected - actual)
     unexpected = sorted(actual - expected)
     if missing or unexpected:
         raise PublicArtifactError(
-            f"{artifact_name} violates public allowlist; "
-            f"missing={missing}; unexpected={unexpected}"
+            f"{artifact_name} violates public allowlist; missing={missing}; unexpected={unexpected}"
         )
 
 
@@ -312,8 +312,10 @@ def zip_archive_members(members: Iterable[zipfile.ZipInfo]) -> List[ArchiveMembe
     for member in members:
         mode = (member.external_attr >> 16) & 0xFFFF
         file_type = stat.S_IFMT(mode)
-        if member.is_dir() or file_type == stat.S_IFDIR or (
-            member.create_system == 0 and member.external_attr & 0x10
+        if (
+            member.is_dir()
+            or file_type == stat.S_IFDIR
+            or (member.create_system == 0 and member.external_attr & 0x10)
         ):
             kind = ArchiveMemberKind.DIRECTORY
         elif file_type == stat.S_IFLNK:
@@ -368,8 +370,7 @@ def _wheel_expected_members() -> Dict[str, ArchiveMemberKind]:
 
 def _sdist_expected_members() -> Dict[str, ArchiveMemberKind]:
     expected_files = {
-        f"{_SDIST_DIRECTORY}/{name}"
-        for name in PUBLIC_WHEEL_PAYLOAD | _SDIST_BUILD_FILES
+        f"{_SDIST_DIRECTORY}/{name}" for name in PUBLIC_WHEEL_PAYLOAD | _SDIST_BUILD_FILES
     }
     expected: Dict[str, ArchiveMemberKind] = {
         name: ArchiveMemberKind.REGULAR_FILE for name in expected_files

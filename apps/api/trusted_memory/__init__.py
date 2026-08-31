@@ -1,5 +1,6 @@
 """Public evidence-grounded trusted-memory contracts."""
 
+from .capsule import CapsuleItem, EvidenceCapsule, build_evidence_capsule
 from .models import (
     CandidateFact,
     CandidateProposal,
@@ -23,14 +24,17 @@ from .models import (
     TrustedFact,
     TrustedFactCore,
 )
+from .retrieval import RetrievalItem, RetrievalQuery, RetrievalResult, retrieve_exact
 
 __all__ = [
     "CandidateFact",
     "CandidateProposal",
+    "CapsuleItem",
     "ConflictGroup",
     "ConflictMember",
     "ConflictRecord",
     "DecisionOutcome",
+    "EvidenceCapsule",
     "FactProvenance",
     "FactScope",
     "LegacyMemoryView",
@@ -39,6 +43,9 @@ __all__ = [
     "MemoryOrigin",
     "MemoryScope",
     "MemoryState",
+    "RetrievalItem",
+    "RetrievalQuery",
+    "RetrievalResult",
     "RevocationRecord",
     "RevocationRecordCore",
     "SourceRef",
@@ -46,4 +53,6 @@ __all__ = [
     "SupersessionRecordCore",
     "TrustedFact",
     "TrustedFactCore",
+    "build_evidence_capsule",
+    "retrieve_exact",
 ]

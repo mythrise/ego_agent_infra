@@ -104,6 +104,16 @@ class TrustedMemoryCurrent:
     projection_event_hash: str
 
 
+@dataclass(frozen=True)
+class DecisionClosureRecord:
+    tenant_id: str
+    project_id: str
+    closure_digest: str
+    closure_bytes: bytes
+    closure_bytes_sha256: str
+    idempotency_key: str
+
+
 class ResearchStore(Protocol):
     """The complete synchronous store surface used by :class:`ResearchOpsService`."""
 
@@ -158,6 +168,20 @@ class ResearchStore(Protocol):
         idempotency_key: str,
         expected_current_event_hash: Optional[str] = None,
     ) -> TrustedMemoryEvent: ...
+
+    def append_decision_closure(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        closure_digest: str,
+        closure_bytes: bytes,
+        idempotency_key: str,
+    ) -> DecisionClosureRecord: ...
+
+    def get_decision_closure(
+        self, *, tenant_id: str, project_id: str, closure_digest: str
+    ) -> DecisionClosureRecord: ...
 
     def get_trusted_memory_event(
         self,

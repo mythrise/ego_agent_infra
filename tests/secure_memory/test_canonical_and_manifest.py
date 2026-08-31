@@ -599,9 +599,7 @@ def test_optimizer_requires_exact_authoritative_proposal_index() -> None:
         _validate_lease(optimizer, **context)
     with pytest.raises(ValueError):
         _validate_lease(optimizer, optimizer_proposal_index=3, **context)
-    assert (
-        _validate_lease(optimizer, optimizer_proposal_index=4, **context).generation == 4
-    )
+    assert _validate_lease(optimizer, optimizer_proposal_index=4, **context).generation == 4
 
 
 def model_request_data(request_class: str, max_input: int, max_output: int) -> Dict[str, Any]:
@@ -792,9 +790,7 @@ def test_schema_semantic_entry_point_rejects_cross_field_and_digest_bypasses() -
     with pytest.raises(ValueError):
         validator(
             "run-manifest-v2.schema.json",
-            canonical_bytes(
-                {"core": valid_core, "manifest_sha256": SHA["contract"]}
-            ),
+            canonical_bytes({"core": valid_core, "manifest_sha256": SHA["contract"]}),
         )
 
     with pytest.raises(ValueError):
@@ -1004,8 +1000,13 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
         "apps/agentteams_bridge/extensions/workspace_adapter.py",
         "apps/agentteams_bridge/migrations/postgres/002_campaign_safety_attention.sql",
         "apps/api/trusted_memory/__init__.py",
+        "apps/api/trusted_memory/capsule.py",
+        "apps/api/trusted_memory/lifecycle.py",
         "apps/api/trusted_memory/models.py",
+        "apps/api/trusted_memory/retrieval.py",
+        "apps/api/trusted_memory/service.py",
         "apps/api/migrations/postgres/003_trusted_memory_core.sql",
+        "apps/api/migrations/postgres/004_decision_closure_bytes.sql",
         "integrations/agentteams/attention-packet.schema.json",
         "integrations/agentteams/campaign-envelope.schema.json",
         "integrations/agentteams/guardian-decision.schema.json",
@@ -1013,6 +1014,8 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
         "integrations/agentteams/user-status-projection.schema.json",
     }
     assert required_d_authority_files <= set(names)
+    assert "apps/api/internal_finalizer.py" not in names
+    assert "apps/api/trusted_memory/closure.py" not in names
 
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(extracted)
@@ -1048,11 +1051,15 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
                     "from apps.api.postgres_store import PostgresStore",
                     "from apps.api.store import SQLiteStore",
                     "from apps.api.trusted_memory import TrustedFact",
+                    "from apps.api.trusted_memory.capsule import EvidenceCapsule",
+                    "from apps.api.trusted_memory.retrieval import RetrievalQuery",
+                    "from apps.api.trusted_memory.service import TrustedMemoryService",
                     "from apps.api.trusted_memory.models import LegacyMemoryView",
                     "from benchmarks.secure_memory.substrate import AdmissionGate, ContentScanner",
                     "assert CampaignBinding and EgoGuardian and SystemRiskClassifier",
                     "assert build_workspace_effect and BridgeStore and PostgresBridgeStore",
                     "assert TrustedFact and LegacyMemoryView and SQLiteStore and PostgresStore",
+                    "assert EvidenceCapsule and RetrievalQuery and TrustedMemoryService",
                     "assert AdmissionGate and ContentScanner",
                     "assert len(SCHEMA_MODELS) == 5",
                     "assert files('apps.agentteams_bridge').joinpath(",
@@ -1060,6 +1067,9 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
                     ").is_file()",
                     "assert files('apps.api').joinpath(",
                     "    'migrations/postgres/003_trusted_memory_core.sql'",
+                    ").is_file()",
+                    "assert files('apps.api').joinpath(",
+                    "    'migrations/postgres/004_decision_closure_bytes.sql'",
                     ").is_file()",
                     "schema_root = files('integrations.agentteams')",
                     "assert all(schema_root.joinpath(name).is_file() for name in (",
@@ -1302,9 +1312,7 @@ def _mutate_sdist_member(
     prefix = "egoagentos_researchops-0.1.0"
     required = f"{prefix}/benchmarks/secure_memory/models.py"
     replace_required = mutation_kind == "required-directory"
-    with tarfile.open(source_path, "r:gz") as source, tarfile.open(
-        destination, "w:gz"
-    ) as output:
+    with tarfile.open(source_path, "r:gz") as source, tarfile.open(destination, "w:gz") as output:
         for member in source.getmembers():
             if not (replace_required and member.name == required):
                 _copy_tar_member(source, output, member)
@@ -1345,9 +1353,7 @@ def _mutate_sdist_member(
             output.addfile(replacement, io.BytesIO(content))
             return
         else:
-            replacement = tarfile.TarInfo(
-                f"{prefix}/./benchmarks/secure_memory/alias-member.py"
-            )
+            replacement = tarfile.TarInfo(f"{prefix}/./benchmarks/secure_memory/alias-member.py")
             content = b"canonical alias\n"
             replacement.size = len(content)
             output.addfile(replacement, io.BytesIO(content))

@@ -24,6 +24,7 @@ from .models import (
 )
 from .provenance import canonical_sha256
 from .store_contract import (
+    DecisionClosureRecord,
     TrustedMemoryCurrent,
     TrustedMemoryEvent,
     TrustedMemoryRecord,
@@ -40,7 +41,12 @@ from .trusted_memory.models import (
     SupersessionRecord,
     TrustedFact,
 )
-from benchmarks.secure_memory.canonical import canonical_bytes
+from benchmarks.secure_memory.canonical import (
+    canonical_bytes,
+    canonical_sha256 as secure_memory_canonical_sha256,
+    parse_json_bytes,
+    validate_sha256_digest,
+)
 
 
 SCHEMA = """
@@ -255,6 +261,29 @@ CREATE TRIGGER IF NOT EXISTS trusted_memory_closures_no_delete
 BEFORE DELETE ON trusted_memory_closures
 BEGIN
     SELECT RAISE(ABORT, 'trusted memory closures are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS trusted_memory_decision_closures (
+    tenant_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    closure_digest TEXT NOT NULL CHECK(length(closure_digest) = 64),
+    closure_bytes BLOB NOT NULL,
+    closure_bytes_sha256 TEXT NOT NULL CHECK(length(closure_bytes_sha256) = 64),
+    idempotency_key TEXT NOT NULL,
+    PRIMARY KEY(tenant_id, project_id, closure_digest),
+    UNIQUE(tenant_id, project_id, idempotency_key)
+);
+
+CREATE TRIGGER IF NOT EXISTS trusted_memory_decision_closures_no_update
+BEFORE UPDATE ON trusted_memory_decision_closures
+BEGIN
+    SELECT RAISE(ABORT, 'trusted memory decision closures are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trusted_memory_decision_closures_no_delete
+BEFORE DELETE ON trusted_memory_decision_closures
+BEGIN
+    SELECT RAISE(ABORT, 'trusted memory decision closures are immutable');
 END;
 
 CREATE TABLE IF NOT EXISTS trusted_memory_outbox (
@@ -837,6 +866,132 @@ class SQLiteStore:
             previous_hash=str(row["previous_hash"]),
             event_hash=str(row["event_hash"]),
         )
+
+    @staticmethod
+    def _decision_closure_from_row(row: sqlite3.Row) -> DecisionClosureRecord:
+        return DecisionClosureRecord(
+            tenant_id=str(row["tenant_id"]),
+            project_id=str(row["project_id"]),
+            closure_digest=str(row["closure_digest"]),
+            closure_bytes=bytes(row["closure_bytes"]),
+            closure_bytes_sha256=str(row["closure_bytes_sha256"]),
+            idempotency_key=str(row["idempotency_key"]),
+        )
+
+    def append_decision_closure(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        closure_digest: str,
+        closure_bytes: bytes,
+        idempotency_key: str,
+    ) -> DecisionClosureRecord:
+        validate_sha256_digest(closure_digest)
+        if not tenant_id or not project_id or not idempotency_key:
+            raise ValueError("decision closure scope and idempotency key must be non-empty")
+        if not isinstance(closure_bytes, bytes) or not closure_bytes:
+            raise TypeError("decision closure bytes must be non-empty bytes")
+        try:
+            parsed = parse_json_bytes(closure_bytes)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("decision closure bytes must be canonical JSON") from exc
+        if canonical_bytes(parsed) != closure_bytes or not isinstance(parsed, dict):
+            raise ValueError("decision closure bytes must be one canonical JSON object")
+        if (
+            parsed.get("closure_digest") != closure_digest
+            or not isinstance(parsed.get("core"), dict)
+            or secure_memory_canonical_sha256("trusted-memory-decision-closure", parsed["core"])
+            != closure_digest
+        ):
+            raise ValueError("decision closure digest does not match canonical bytes")
+        bytes_sha256 = hashlib.sha256(closure_bytes).hexdigest()
+        with self.transaction():
+            with self._lock:
+                connection = self._connect()
+                existing_key = connection.execute(
+                    """
+                    SELECT * FROM trusted_memory_decision_closures
+                    WHERE tenant_id=? AND project_id=? AND idempotency_key=?
+                    """,
+                    (tenant_id, project_id, idempotency_key),
+                ).fetchone()
+                if existing_key is not None:
+                    if (
+                        str(existing_key["closure_digest"]) != closure_digest
+                        or bytes(existing_key["closure_bytes"]) != closure_bytes
+                    ):
+                        raise ConflictError(
+                            "decision_closure_idempotency_conflict",
+                            "Decision closure idempotency key has different canonical bytes",
+                            {"idempotency_key": idempotency_key},
+                        )
+                    return self._decision_closure_from_row(existing_key)
+                existing_digest = connection.execute(
+                    """
+                    SELECT * FROM trusted_memory_decision_closures
+                    WHERE tenant_id=? AND project_id=? AND closure_digest=?
+                    """,
+                    (tenant_id, project_id, closure_digest),
+                ).fetchone()
+                if existing_digest is not None:
+                    if bytes(existing_digest["closure_bytes"]) != closure_bytes:
+                        raise ConflictError(
+                            "decision_closure_bytes_conflict",
+                            "Decision closure digest has different canonical bytes",
+                            {"closure_digest": closure_digest},
+                        )
+                    return self._decision_closure_from_row(existing_digest)
+                connection.execute(
+                    """
+                    INSERT INTO trusted_memory_decision_closures(
+                        tenant_id, project_id, closure_digest, closure_bytes,
+                        closure_bytes_sha256, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        project_id,
+                        closure_digest,
+                        closure_bytes,
+                        bytes_sha256,
+                        idempotency_key,
+                    ),
+                )
+        return DecisionClosureRecord(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            closure_digest=closure_digest,
+            closure_bytes=closure_bytes,
+            closure_bytes_sha256=bytes_sha256,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_decision_closure(
+        self, *, tenant_id: str, project_id: str, closure_digest: str
+    ) -> DecisionClosureRecord:
+        validate_sha256_digest(closure_digest)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM trusted_memory_decision_closures
+                WHERE tenant_id=? AND project_id=? AND closure_digest=?
+                """,
+                (tenant_id, project_id, closure_digest),
+            ).fetchone()
+        finally:
+            if (
+                connection is not self._memory_connection
+                and connection is not self._active_transaction()
+            ):
+                connection.close()
+        if row is None:
+            raise NotFoundError("decision_closure", closure_digest)
+        record = self._decision_closure_from_row(row)
+        if hashlib.sha256(record.closure_bytes).hexdigest() != record.closure_bytes_sha256:
+            raise ValueError("stored decision closure bytes digest mismatch")
+        return record
 
     def append_trusted_memory_record(
         self,
