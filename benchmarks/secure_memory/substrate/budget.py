@@ -269,7 +269,8 @@ class BudgetLedger:
             )
             if any(left != right for left, right in bindings):
                 raise BudgetDenied("lease_binding")
-            if template.allowed_role != ticket.allowed_role or template.request_class != ticket.effective_request_class:
+            if (template.allowed_role != ticket.allowed_role
+                    or (template.retry_owner is None and template.request_class != ticket.effective_request_class)):
                 raise BudgetDenied("template_binding")
             if ((template.problem_id is not None and template.problem_id != core.problem_id)
                     or (template.turn is not None and template.turn != core.turn)):
@@ -311,12 +312,21 @@ class BudgetLedger:
             retry_ticket = self._tickets.get(retry_ticket_id)
             if original is None or original.state is not ReservationState.RETAINED:
                 raise BudgetDenied("retry_original")
+            if original.retained_reason not in {"429", "5xx", "timeout"}:
+                raise BudgetDenied("retry_reason")
             if retry_ticket is None or retry_ticket_id not in lease.core.issued_ticket_ids:
                 raise BudgetDenied("retry_ticket")
             template = self._templates[retry_ticket.template_id]
             original_ticket = self._tickets[original_ticket_id]
             if (
                 template.retry_owner != original_ticket.execution_phase_owner
+                or retry_ticket.campaign_id != original_ticket.campaign_id
+                or retry_ticket.configuration_id != original_ticket.configuration_id
+                or retry_ticket.project_id != original_ticket.project_id
+                or retry_ticket.task_id != original_ticket.task_id
+                or retry_ticket.worker != original_ticket.worker
+                or retry_ticket.matrix_user_id != original_ticket.matrix_user_id
+                or retry_ticket.allowed_role != original_ticket.allowed_role
                 or retry_ticket.effective_request_class != original_ticket.effective_request_class
                 or retry_ticket.usage_phase != original_ticket.usage_phase
                 or retry_ticket.max_input_tokens != original_ticket.max_input_tokens
@@ -332,7 +342,7 @@ class BudgetLedger:
         with self._lock:
             value = self._require(ticket_id, ReservationState.DISPATCHED)
             return self._append(Reservation(**{**value.__dict__, "state": ReservationState.RETAINED,
-                                                "retained_reason": "provider_failure"}))
+                                                "retained_reason": reason}))
 
     def settle(self, ticket_id: str, raw_usage: RawUsage) -> SettledUsage:
         with self._lock:

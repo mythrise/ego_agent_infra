@@ -284,7 +284,7 @@ class ProviderBroker:
                                          endpoint=capability.endpoint, body=body,
                                          api_key=self._api_key, allow_redirects=False, tls_verified=True)
         except ProviderTransportFailure as failure:
-            self._ledger.retain(request.ticket_id, "provider_failure")
+            self._ledger.retain(request.ticket_id, failure.kind)
             if retry_ticket_id is not None and failure.kind in {"429", "5xx", "timeout"}:
                 backoff_observer(failure.kind)
                 self._ledger.reserve_retry(retry_ticket_id, request.ticket_id, lease,
