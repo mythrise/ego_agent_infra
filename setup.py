@@ -25,6 +25,8 @@ validate_no_ambiguous_private_sources = _POLICY["validate_no_ambiguous_private_s
 validate_public_staging_subset = _POLICY["validate_public_staging_subset"]
 validate_public_worker_sdist = _POLICY["validate_public_worker_sdist"]
 validate_public_worker_wheel = _POLICY["validate_public_worker_wheel"]
+tar_archive_members = _POLICY["tar_archive_members"]
+zip_archive_members = _POLICY["zip_archive_members"]
 
 
 def _fail_closed(error: PublicArtifactError) -> None:
@@ -136,7 +138,7 @@ class PublicWorkerBdistWheel(bdist_wheel):
         wheel_path = next(iter(created))
         with zipfile.ZipFile(wheel_path) as archive:
             try:
-                validate_public_worker_wheel(archive.namelist())
+                validate_public_worker_wheel(zip_archive_members(archive.infolist()))
             except PublicArtifactError as exc:
                 _fail_closed(exc)
 
@@ -150,7 +152,7 @@ class PublicWorkerSdist(sdist):
         if len(self.archive_files) != 1:
             raise SetupError(f"expected one newly built Worker sdist, found {len(self.archive_files)}")
         with tarfile.open(self.archive_files[0], "r:gz") as archive:
-            members = [member.name for member in archive.getmembers() if member.isfile()]
+            members = tar_archive_members(archive.getmembers())
         try:
             validate_public_worker_sdist(members)
         except PublicArtifactError as exc:

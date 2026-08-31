@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
+import stat
+import tarfile
+import zipfile
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import FrozenSet, Iterable, List, Set
+from typing import Dict, FrozenSet, Iterable, List, Set
 
 
 class PublicArtifactError(ValueError):
     """Raised when an artifact crosses the explicit public Worker boundary."""
+
+
+class ArchiveMemberKind(str, Enum):
+    """Security-relevant archive member types understood by the public oracle."""
+
+    REGULAR_FILE = "regular-file"
+    DIRECTORY = "directory"
+    SYMLINK = "symlink"
+    HARD_LINK = "hard-link"
+    FIFO = "fifo"
+    CHARACTER_DEVICE = "character-device"
+    BLOCK_DEVICE = "block-device"
+    SOCKET = "socket"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class ArchiveMember:
+    """Canonical oracle input retaining both archive path and member type."""
+
+    name: str
+    kind: ArchiveMemberKind
 
 
 PUBLIC_WHEEL_PAYLOAD: FrozenSet[str] = frozenset(
@@ -183,20 +210,33 @@ _SDIST_BUILD_FILES: FrozenSet[str] = frozenset(
 
 
 def _canonical_member(name: str) -> str:
-    if not isinstance(name, str) or not name or "\\" in name:
+    if (
+        not isinstance(name, str)
+        or not name
+        or name.endswith("/")
+        or "\\" in name
+    ):
         raise PublicArtifactError(f"non-canonical archive member: {name!r}")
     path = PurePosixPath(name)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise PublicArtifactError(f"non-canonical archive member: {name!r}")
     canonical = path.as_posix()
-    if canonical != name.rstrip("/"):
+    if canonical != name:
         raise PublicArtifactError(f"non-canonical archive member: {name!r}")
     return canonical
 
 
-def _canonical_members(members: Iterable[str]) -> List[str]:
+def _canonical_names(members: Iterable[str]) -> List[str]:
     normalized = [_canonical_member(name) for name in members]
     if len(normalized) != len(set(normalized)):
+        raise PublicArtifactError("member list contains duplicate names")
+    return normalized
+
+
+def _typed_members(members: Iterable[ArchiveMember]) -> List[ArchiveMember]:
+    normalized = [ArchiveMember(_canonical_member(member.name), member.kind) for member in members]
+    names = [member.name for member in normalized]
+    if len(names) != len(set(names)):
         raise PublicArtifactError("archive contains duplicate member names")
     return normalized
 
@@ -213,33 +253,120 @@ def _require_exact_members(
         )
 
 
-def validate_public_worker_wheel(members: Iterable[str]) -> None:
-    """Require the exact public Worker payload and exact wheel metadata files."""
-
-    normalized = set(_canonical_members(members))
-    expected = frozenset(
-        PUBLIC_WHEEL_PAYLOAD
-        | {f"{_DIST_INFO_DIRECTORY}/{name}" for name in _WHEEL_METADATA_FILES}
+def _require_exact_typed_members(
+    members: Iterable[ArchiveMember],
+    expected: Dict[str, ArchiveMemberKind],
+    artifact_name: str,
+) -> None:
+    normalized = _typed_members(members)
+    actual = {member.name: member.kind for member in normalized}
+    missing = sorted(set(expected) - set(actual))
+    unexpected = sorted(set(actual) - set(expected))
+    wrong_type = sorted(
+        f"{name}: expected {expected[name].value}, got {actual[name].value}"
+        for name in set(expected).intersection(actual)
+        if actual[name] is not expected[name]
     )
-    _require_exact_members(normalized, expected, "Worker wheel")
+    if missing or unexpected or wrong_type:
+        raise PublicArtifactError(
+            f"{artifact_name} violates typed public allowlist; "
+            f"missing={missing}; unexpected={unexpected}; wrong_type={wrong_type}"
+        )
 
 
-def validate_public_worker_sdist(members: Iterable[str]) -> None:
-    """Require the exact public source distribution file set."""
+def zip_archive_members(members: Iterable[zipfile.ZipInfo]) -> List[ArchiveMember]:
+    """Convert every ZIP entry to the oracle's security-relevant typed record."""
 
-    normalized = _canonical_members(members)
-    prefix = _SDIST_DIRECTORY + "/"
-    if any(not name.startswith(prefix) for name in normalized):
-        raise PublicArtifactError("Worker sdist has an unexpected top-level directory")
-    relative = {name[len(prefix) :] for name in normalized}
-    expected = frozenset(PUBLIC_WHEEL_PAYLOAD | _SDIST_BUILD_FILES)
-    _require_exact_members(relative, expected, "Worker sdist")
+    result = []
+    for member in members:
+        mode = (member.external_attr >> 16) & 0xFFFF
+        file_type = stat.S_IFMT(mode)
+        if member.is_dir() or file_type == stat.S_IFDIR or (
+            member.create_system == 0 and member.external_attr & 0x10
+        ):
+            kind = ArchiveMemberKind.DIRECTORY
+        elif file_type == stat.S_IFLNK:
+            kind = ArchiveMemberKind.SYMLINK
+        elif file_type in (0, stat.S_IFREG):
+            kind = ArchiveMemberKind.REGULAR_FILE
+        elif file_type == stat.S_IFIFO:
+            kind = ArchiveMemberKind.FIFO
+        elif file_type == stat.S_IFCHR:
+            kind = ArchiveMemberKind.CHARACTER_DEVICE
+        elif file_type == stat.S_IFBLK:
+            kind = ArchiveMemberKind.BLOCK_DEVICE
+        elif file_type == stat.S_IFSOCK:
+            kind = ArchiveMemberKind.SOCKET
+        else:
+            kind = ArchiveMemberKind.OTHER
+        result.append(ArchiveMember(member.filename, kind))
+    return result
+
+
+def tar_archive_members(members: Iterable[tarfile.TarInfo]) -> List[ArchiveMember]:
+    """Convert every TAR entry to the oracle's security-relevant typed record."""
+
+    result = []
+    for member in members:
+        if member.isfile():
+            kind = ArchiveMemberKind.REGULAR_FILE
+        elif member.isdir():
+            kind = ArchiveMemberKind.DIRECTORY
+        elif member.issym():
+            kind = ArchiveMemberKind.SYMLINK
+        elif member.islnk():
+            kind = ArchiveMemberKind.HARD_LINK
+        elif member.isfifo():
+            kind = ArchiveMemberKind.FIFO
+        elif member.ischr():
+            kind = ArchiveMemberKind.CHARACTER_DEVICE
+        elif member.isblk():
+            kind = ArchiveMemberKind.BLOCK_DEVICE
+        else:
+            kind = ArchiveMemberKind.OTHER
+        result.append(ArchiveMember(member.name, kind))
+    return result
+
+
+def _wheel_expected_members() -> Dict[str, ArchiveMemberKind]:
+    expected_files = PUBLIC_WHEEL_PAYLOAD | {
+        f"{_DIST_INFO_DIRECTORY}/{name}" for name in _WHEEL_METADATA_FILES
+    }
+    return {name: ArchiveMemberKind.REGULAR_FILE for name in expected_files}
+
+
+def _sdist_expected_members() -> Dict[str, ArchiveMemberKind]:
+    expected_files = {
+        f"{_SDIST_DIRECTORY}/{name}"
+        for name in PUBLIC_WHEEL_PAYLOAD | _SDIST_BUILD_FILES
+    }
+    expected: Dict[str, ArchiveMemberKind] = {
+        name: ArchiveMemberKind.REGULAR_FILE for name in expected_files
+    }
+    for filename in expected_files:
+        parent = PurePosixPath(filename).parent
+        while parent.as_posix() != ".":
+            expected[parent.as_posix()] = ArchiveMemberKind.DIRECTORY
+            parent = parent.parent
+    return expected
+
+
+def validate_public_worker_wheel(members: Iterable[ArchiveMember]) -> None:
+    """Require every exact public wheel path once with its required file type."""
+
+    _require_exact_typed_members(members, _wheel_expected_members(), "Worker wheel")
+
+
+def validate_public_worker_sdist(members: Iterable[ArchiveMember]) -> None:
+    """Require every exact public sdist path once with its required member type."""
+
+    _require_exact_typed_members(members, _sdist_expected_members(), "Worker sdist")
 
 
 def validate_public_staging_subset(members: Iterable[str]) -> None:
     """Reject any pre-existing staged file outside the exact public payload."""
 
-    normalized = set(_canonical_members(members))
+    normalized = set(_canonical_names(members))
     unexpected = sorted(normalized - PUBLIC_WHEEL_PAYLOAD)
     if unexpected:
         raise PublicArtifactError(
@@ -250,7 +377,7 @@ def validate_public_staging_subset(members: Iterable[str]) -> None:
 def validate_complete_public_staging(members: Iterable[str]) -> None:
     """Require an exactly complete staged public payload before wheel assembly."""
 
-    normalized = set(_canonical_members(members))
+    normalized = set(_canonical_names(members))
     _require_exact_members(normalized, PUBLIC_WHEEL_PAYLOAD, "Worker staging tree")
 
 

@@ -42,5 +42,8 @@ validator. A real wheel build starts from an empty staging tree; unexpected
 stale staged files make the build fail before the tree is cleared. Python
 modules and package data are selected explicitly rather than by broad public
 globs, and new Evaluator-, sealed-, or hidden-looking source files fail closed.
-A future public file requires an explicit reviewed allowlist and package-data
-change rather than entering an artifact through discovery or stale staging.
+Archive validation retains every member's type: allowlisted files must occur
+exactly once as regular files, the sdist's canonical directories are exact,
+and links, devices, aliases, or other special entries reject. A future public
+file requires an explicit reviewed allowlist and package-data change rather
+than entering an artifact through discovery or stale staging.

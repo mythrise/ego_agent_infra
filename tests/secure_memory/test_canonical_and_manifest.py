@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -45,9 +47,13 @@ from benchmarks.secure_memory.models import (
     validate_task_lease_core,
 )
 from worker_distribution import (
+    ArchiveMember,
+    ArchiveMemberKind,
     PublicArtifactError,
+    tar_archive_members,
     validate_public_worker_sdist,
     validate_public_worker_wheel,
+    zip_archive_members,
 )
 
 
@@ -948,10 +954,17 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
-        validate_public_worker_wheel(names)
+        members = zip_archive_members(wheel.infolist())
+        validate_public_worker_wheel(members)
         with pytest.raises(PublicArtifactError):
             validate_public_worker_wheel(
-                [*names, "benchmarks/secure_memory/schemas/unreviewed-public-data.json"]
+                [
+                    *members,
+                    ArchiveMember(
+                        "benchmarks/secure_memory/schemas/unreviewed-public-data.json",
+                        ArchiveMemberKind.REGULAR_FILE,
+                    ),
+                ]
             )
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         entry_points_name = next(
@@ -1067,9 +1080,9 @@ def test_worker_wheel_fails_closed_on_stale_private_staging(tmp_path: Path) -> N
     if second.returncode == 0:
         wheel_path = next(second_output.glob("*.whl"))
         with zipfile.ZipFile(wheel_path) as wheel:
-            names = wheel.namelist()
+            members = zip_archive_members(wheel.infolist())
         with pytest.raises(PublicArtifactError) as rejected:
-            validate_public_worker_wheel(names)
+            validate_public_worker_wheel(members)
         pytest.fail(f"stale private staging was accepted: {rejected.value}")
     assert "stale public Worker staging" in second.stderr
 
@@ -1108,8 +1121,8 @@ def test_offline_worker_sdist_contains_only_public_build_inputs(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
     sdist = next(output.glob("*.tar.gz"))
     with tarfile.open(sdist, "r:gz") as archive:
-        names = [member.name for member in archive.getmembers() if member.isfile()]
-    validate_public_worker_sdist(names)
+        members = tar_archive_members(archive.getmembers())
+    validate_public_worker_sdist(members)
 
 
 def test_worker_wheel_rebuilt_from_sdist_preserves_public_boundary(tmp_path: Path) -> None:
@@ -1129,4 +1142,166 @@ def test_worker_wheel_rebuilt_from_sdist_preserves_public_boundary(tmp_path: Pat
     assert wheel_result.returncode == 0, wheel_result.stderr
     wheel = next(wheel_output.glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
-        validate_public_worker_wheel(archive.namelist())
+        validate_public_worker_wheel(zip_archive_members(archive.infolist()))
+
+
+@pytest.fixture(scope="module")
+def production_worker_archives(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, Path]:
+    root = tmp_path_factory.mktemp("typed-worker-archives")
+    source = _copy_worker_build_source(root)
+    output = root / "artifacts"
+    wheel_result = _build_worker_wheel(source, output)
+    assert wheel_result.returncode == 0, wheel_result.stderr
+    sdist_result = _build_worker_sdist(source, output)
+    assert sdist_result.returncode == 0, sdist_result.stderr
+    return next(output.glob("*.whl")), next(output.glob("*.tar.gz"))
+
+
+def _mutate_wheel_member(
+    source_path: Path,
+    destination: Path,
+    target: str,
+    replacement_kind: str,
+) -> None:
+    with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(destination, "w") as output:
+        for member in source.infolist():
+            if member.filename != target:
+                output.writestr(member, source.read(member))
+
+        replacement_name = target + "/" if replacement_kind == "directory" else target
+        replacement = zipfile.ZipInfo(replacement_name)
+        replacement.create_system = 3
+        if replacement_kind == "directory":
+            replacement.external_attr = (stat.S_IFDIR | 0o755) << 16
+            replacement.external_attr |= 0x10
+            content = b""
+        elif replacement_kind == "symlink":
+            replacement.external_attr = (stat.S_IFLNK | 0o777) << 16
+            content = b"models.py"
+        elif replacement_kind == "fifo":
+            replacement.external_attr = (stat.S_IFIFO | 0o600) << 16
+            content = b""
+        else:
+            replacement.external_attr = (stat.S_IFCHR | 0o600) << 16
+            content = b""
+        output.writestr(replacement, content)
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement_kind"),
+    [
+        ("benchmarks/secure_memory/models.py", "directory"),
+        ("egoagentos_researchops-0.1.0.dist-info/METADATA", "directory"),
+        ("benchmarks/secure_memory/models.py", "symlink"),
+        ("egoagentos_researchops-0.1.0.dist-info/METADATA", "symlink"),
+        ("benchmarks/secure_memory/models.py", "fifo"),
+        ("egoagentos_researchops-0.1.0.dist-info/METADATA", "character-device"),
+    ],
+)
+def test_worker_wheel_oracle_rejects_typed_member_substitution(
+    production_worker_archives: tuple[Path, Path],
+    tmp_path: Path,
+    target: str,
+    replacement_kind: str,
+) -> None:
+    wheel, _sdist = production_worker_archives
+    mutated = tmp_path / f"mutated-{replacement_kind}.whl"
+    _mutate_wheel_member(wheel, mutated, target, replacement_kind)
+    with zipfile.ZipFile(mutated) as archive, pytest.raises(PublicArtifactError):
+        validate_public_worker_wheel(zip_archive_members(archive.infolist()))
+
+
+def _copy_tar_member(
+    source: tarfile.TarFile, output: tarfile.TarFile, member: tarfile.TarInfo
+) -> None:
+    fileobj = source.extractfile(member) if member.isfile() else None
+    output.addfile(member, fileobj)
+
+
+def _mutate_sdist_member(
+    source_path: Path,
+    destination: Path,
+    mutation_kind: str,
+) -> None:
+    prefix = "egoagentos_researchops-0.1.0"
+    required = f"{prefix}/benchmarks/secure_memory/models.py"
+    replace_required = mutation_kind == "required-directory"
+    with tarfile.open(source_path, "r:gz") as source, tarfile.open(
+        destination, "w:gz"
+    ) as output:
+        for member in source.getmembers():
+            if not (replace_required and member.name == required):
+                _copy_tar_member(source, output, member)
+
+        if mutation_kind == "symlink":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/hidden-link")
+            replacement.type = tarfile.SYMTYPE
+            replacement.linkname = required
+        elif mutation_kind == "hardlink":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/hard-link")
+            replacement.type = tarfile.LNKTYPE
+            replacement.linkname = required
+        elif mutation_kind == "fifo":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/worker-fifo")
+            replacement.type = tarfile.FIFOTYPE
+        elif mutation_kind == "character-device":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/worker-char")
+            replacement.type = tarfile.CHRTYPE
+            replacement.devmajor = 1
+            replacement.devminor = 3
+        elif mutation_kind == "block-device":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/worker-block")
+            replacement.type = tarfile.BLKTYPE
+            replacement.devmajor = 1
+            replacement.devminor = 0
+        elif mutation_kind == "required-directory":
+            replacement = tarfile.TarInfo(required)
+            replacement.type = tarfile.DIRTYPE
+            replacement.mode = 0o755
+        elif mutation_kind == "unexpected-directory":
+            replacement = tarfile.TarInfo(f"{prefix}/benchmarks/secure_memory/unexpected")
+            replacement.type = tarfile.DIRTYPE
+            replacement.mode = 0o755
+        elif mutation_kind == "duplicate":
+            replacement = tarfile.TarInfo(required)
+            content = b"duplicate regular member\n"
+            replacement.size = len(content)
+            output.addfile(replacement, io.BytesIO(content))
+            return
+        else:
+            replacement = tarfile.TarInfo(
+                f"{prefix}/./benchmarks/secure_memory/alias-member.py"
+            )
+            content = b"canonical alias\n"
+            replacement.size = len(content)
+            output.addfile(replacement, io.BytesIO(content))
+            return
+        output.addfile(replacement)
+
+
+@pytest.mark.parametrize(
+    "mutation_kind",
+    [
+        "symlink",
+        "hardlink",
+        "fifo",
+        "character-device",
+        "block-device",
+        "required-directory",
+        "unexpected-directory",
+        "duplicate",
+        "canonical-alias",
+    ],
+)
+def test_worker_sdist_oracle_rejects_every_typed_member_violation(
+    production_worker_archives: tuple[Path, Path],
+    tmp_path: Path,
+    mutation_kind: str,
+) -> None:
+    _wheel, sdist = production_worker_archives
+    mutated = tmp_path / f"mutated-{mutation_kind}.tar.gz"
+    _mutate_sdist_member(sdist, mutated, mutation_kind)
+    with tarfile.open(mutated, "r:gz") as archive, pytest.raises(PublicArtifactError):
+        validate_public_worker_sdist(tar_archive_members(archive.getmembers()))
