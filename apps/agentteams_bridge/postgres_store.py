@@ -45,6 +45,7 @@ class PostgresBridgeStore:
         *,
         migration_database_url: str = "",
         migration_mode: Optional[str] = None,
+        tenant_id: str = "local-dev",
     ) -> None:
         if not database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("AgentTeams bridge PostgreSQL URL must use postgresql://")
@@ -52,6 +53,14 @@ class PostgresBridgeStore:
             ("postgresql://", "postgres://")
         ):
             raise ValueError("AgentTeams bridge migration URL must use postgresql://")
+        if (
+            not isinstance(tenant_id, str)
+            or not tenant_id.strip()
+            or tenant_id != tenant_id.strip()
+            or len(tenant_id) > 255
+            or any(ord(character) < 32 for character in tenant_id)
+        ):
+            raise ValueError("AgentTeams bridge tenant_id must be a non-empty safe identifier")
         self.database_url = database_url
         self.migration_database_url = migration_database_url or database_url
         self.migration_mode = (
@@ -59,6 +68,7 @@ class PostgresBridgeStore:
         ).strip()
         if self.migration_mode not in {"apply", "verify"}:
             raise ValueError("EGO_AGENTTEAMS_MIGRATION_MODE must be apply or verify")
+        self.tenant_id = tenant_id
         self.initialize()
 
     def _connect(self, database_url: Optional[str] = None) -> Connection[Dict[str, Any]]:
@@ -82,6 +92,10 @@ class PostgresBridgeStore:
         connection = self._connect(database_url)
         try:
             connection.execute("BEGIN")
+            connection.execute(
+                "SELECT set_config('egoagentos.tenant_id', %s, true)",
+                (self.tenant_id,),
+            )
             try:
                 yield connection
             except Exception:
@@ -425,6 +439,38 @@ class PostgresBridgeStore:
             ("egoagentos:bridge:%s:%s" % (stream, run_id),),
         )
 
+    def _scope_run(
+        self,
+        connection: Connection[Dict[str, Any]],
+        run_id: str,
+        *,
+        claimed_project_id: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        row = connection.execute(
+            "SELECT * FROM bridge_runs WHERE id=%s", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise BridgeError("run_not_found", "Bridge run was not found", status_code=404)
+        project_id = str(row["agentteams_project_id"])
+        stored_tenant_id = row.get("tenant_id")
+        if stored_tenant_id is not None and str(stored_tenant_id) != self.tenant_id:
+            raise BridgeError(
+                "campaign_binding_not_found",
+                "Bridge run is outside the configured tenant scope",
+                status_code=404,
+            )
+        if claimed_project_id is not None and claimed_project_id != project_id:
+            raise BridgeError(
+                "campaign_binding_not_found",
+                "Bridge run does not match the requested project scope",
+                status_code=404,
+            )
+        connection.execute(
+            "SELECT set_config('egoagentos.project_id', %s, true)",
+            (project_id,),
+        )
+        return row
+
     def append_event(
         self,
         run_id: str,
@@ -722,11 +768,7 @@ class PostgresBridgeStore:
         payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         with self._transaction() as connection:
             self._advisory_lock(connection, stream="extension", run_id=run_id)
-            row = connection.execute(
-                "SELECT * FROM bridge_runs WHERE id=%s", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise BridgeError("run_not_found", "Bridge run was not found", status_code=404)
+            row = self._scope_run(connection, run_id)
             if row["campaign_binding"] is not None:
                 if canonical_json(self._json(row["campaign_binding"])) != payload_json:
                     raise BridgeError(
@@ -737,7 +779,7 @@ class PostgresBridgeStore:
             stored = connection.execute(
                 """
                 UPDATE bridge_runs SET
-                    tenant_id=NULLIF(current_setting('egoagentos.tenant_id', true), ''),
+                    tenant_id=%s,
                     campaign_binding=%s, campaign_binding_sha256=%s,
                     campaign_id=%s, configuration_id=%s, execution_phase_owner=%s,
                     problem_id=%s, campaign_turn=%s, campaign_generation=%s,
@@ -748,6 +790,7 @@ class PostgresBridgeStore:
                 RETURNING *
                 """,
                 (
+                    self.tenant_id,
                     Jsonb(payload),
                     payload_sha256,
                     binding.campaign_id,
@@ -776,8 +819,10 @@ class PostgresBridgeStore:
         project_id: str,
         configuration_id: Optional[str],
     ) -> Dict[str, Any]:
-        connection = self._connect()
-        try:
+        with self._transaction() as connection:
+            self._scope_run(
+                connection, run_id, claimed_project_id=project_id
+            )
             row = connection.execute(
                 """
                 SELECT * FROM bridge_runs
@@ -787,8 +832,6 @@ class PostgresBridgeStore:
                 """,
                 (run_id, project_id, configuration_id),
             ).fetchone()
-        finally:
-            connection.close()
         if row is None:
             raise BridgeError(
                 "campaign_binding_not_found",
@@ -852,11 +895,7 @@ class PostgresBridgeStore:
         memory_watermark: int,
     ) -> Dict[str, Any]:
         self._advisory_lock(connection, stream="extension", run_id=run_id)
-        run = connection.execute(
-            "SELECT * FROM bridge_runs WHERE id=%s", (run_id,)
-        ).fetchone()
-        if run is None:
-            raise BridgeError("run_not_found", "Bridge run was not found", status_code=404)
+        run = self._scope_run(connection, run_id)
         if run["campaign_binding"] is None:
             raise BridgeError("campaign_binding_required", "Campaign binding is required")
         if memory_watermark > int(run["memory_watermark"]):
@@ -1075,14 +1114,14 @@ class PostgresBridgeStore:
         self.campaign_binding(
             run_id, project_id=project_id, configuration_id=configuration_id
         )
-        connection = self._connect()
-        try:
+        with self._transaction() as connection:
+            self._scope_run(
+                connection, run_id, claimed_project_id=project_id
+            )
             rows = connection.execute(
                 "SELECT * FROM bridge_extension_events WHERE run_id=%s ORDER BY sequence",
                 (run_id,),
             ).fetchall()
-        finally:
-            connection.close()
         items: List[Dict[str, Any]] = []
         expected_previous = ZERO_HASH
         chain_valid = True
@@ -1186,11 +1225,7 @@ class PostgresBridgeStore:
             ) from error
         with self._transaction() as connection:
             self._advisory_lock(connection, stream="extension", run_id=run_id)
-            run = connection.execute(
-                "SELECT * FROM bridge_runs WHERE id=%s", (run_id,)
-            ).fetchone()
-            if run is None:
-                raise BridgeError("run_not_found", "Bridge run was not found", status_code=404)
+            run = self._scope_run(connection, run_id)
             if run["campaign_binding"] is None:
                 raise BridgeError("campaign_binding_required", "Campaign binding required")
             binding_row = dict(run)
@@ -1253,14 +1288,14 @@ class PostgresBridgeStore:
         self.campaign_binding(
             run_id, project_id=project_id, configuration_id=configuration_id
         )
-        connection = self._connect()
-        try:
+        with self._transaction() as connection:
+            self._scope_run(
+                connection, run_id, claimed_project_id=project_id
+            )
             row = connection.execute(
                 "SELECT * FROM bridge_task_leases WHERE run_id=%s AND task_id=%s",
                 (run_id, task_id),
             ).fetchone()
-        finally:
-            connection.close()
         if row is None:
             raise BridgeError("task_lease_not_found", "Task lease was not found", status_code=404)
         return self._lease_row(row)
@@ -1289,11 +1324,7 @@ class PostgresBridgeStore:
             )
         with self._transaction() as connection:
             self._advisory_lock(connection, stream="extension", run_id=run_id)
-            run = connection.execute(
-                "SELECT * FROM bridge_runs WHERE id=%s", (run_id,)
-            ).fetchone()
-            if run is None:
-                raise BridgeError("run_not_found", "Bridge run was not found", status_code=404)
+            run = self._scope_run(connection, run_id)
             if connection.execute(
                 "SELECT 1 FROM bridge_task_leases WHERE run_id=%s AND task_id=%s",
                 (run_id, task_id),
@@ -1358,8 +1389,10 @@ class PostgresBridgeStore:
         self.campaign_binding(
             run_id, project_id=project_id, configuration_id=configuration_id
         )
-        connection = self._connect()
-        try:
+        with self._transaction() as connection:
+            self._scope_run(
+                connection, run_id, claimed_project_id=project_id
+            )
             row = connection.execute(
                 """
                 SELECT * FROM bridge_evaluator_bindings
@@ -1367,8 +1400,6 @@ class PostgresBridgeStore:
                 """,
                 (run_id, binding_id),
             ).fetchone()
-        finally:
-            connection.close()
         if row is None:
             raise BridgeError(
                 "evaluator_binding_not_found", "Evaluator binding not found", status_code=404
@@ -1388,8 +1419,10 @@ class PostgresBridgeStore:
         events = self.extension_events(
             run_id, project_id=project_id, configuration_id=configuration_id
         )
-        connection = self._connect()
-        try:
+        with self._transaction() as connection:
+            self._scope_run(
+                connection, run_id, claimed_project_id=project_id
+            )
             leases = connection.execute(
                 "SELECT * FROM bridge_task_leases WHERE run_id=%s ORDER BY event_sequence",
                 (run_id,),
@@ -1401,8 +1434,6 @@ class PostgresBridgeStore:
                 """,
                 (run_id,),
             ).fetchall()
-        finally:
-            connection.close()
         items = events["items"]
         projections = [item for item in items if item["event_type"] == "USER_STATUS_PROJECTION"]
         return {

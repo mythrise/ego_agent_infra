@@ -231,16 +231,12 @@ SET search_path = public, pg_temp
 AS $$
     SELECT EXISTS (
         SELECT 1
-          FROM bridge_runs AS run
+         FROM bridge_runs AS run
          WHERE run.id = target_run_id
-           AND (
-               NULLIF(current_setting('egoagentos.tenant_id', true), '') IS NULL
-               OR run.tenant_id = current_setting('egoagentos.tenant_id', true)
-           )
-           AND (
-               NULLIF(current_setting('egoagentos.project_id', true), '') IS NULL
-               OR run.agentteams_project_id = current_setting('egoagentos.project_id', true)
-           )
+           AND NULLIF(current_setting('egoagentos.tenant_id', true), '') IS NOT NULL
+           AND run.tenant_id = current_setting('egoagentos.tenant_id', true)
+           AND NULLIF(current_setting('egoagentos.project_id', true), '') IS NOT NULL
+           AND run.agentteams_project_id = current_setting('egoagentos.project_id', true)
     )
 $$;
 
@@ -278,8 +274,11 @@ BEFORE TRUNCATE ON bridge_evaluator_bindings
 FOR EACH STATEMENT EXECUTE FUNCTION egoagentos_bridge_reject_ledger_mutation();
 
 ALTER TABLE bridge_extension_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bridge_extension_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE bridge_task_leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bridge_task_leases FORCE ROW LEVEL SECURITY;
 ALTER TABLE bridge_evaluator_bindings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bridge_evaluator_bindings FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY bridge_extension_events_scope ON bridge_extension_events
     USING (egoagentos_bridge_scope_allows(run_id))

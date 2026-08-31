@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from apps.agentteams_bridge.settings import BridgeSettings
+from apps.agentteams_bridge.postgres_store import PostgresBridgeStore
 from apps.agentteams_bridge.store import BridgeStore, build_bridge_store
 
 
@@ -74,3 +75,91 @@ def test_campaign_authority_migration_is_append_only_and_contains_no_bearer_colu
             r"\b%s\s+(?:text|bytea|jsonb)\b" % re.escape(forbidden_column),
             migration.lower(),
         ) is None
+
+
+def test_campaign_authority_rls_and_runtime_grants_fail_closed() -> None:
+    migration = (
+        ROOT
+        / "apps/agentteams_bridge/migrations/postgres/002_campaign_safety_attention.sql"
+    ).read_text(encoding="utf-8")
+    security = (ROOT / "deploy/postgres/agentteams_bridge_security.sql").read_text(
+        encoding="utf-8"
+    )
+
+    for table in (
+        "bridge_extension_events",
+        "bridge_task_leases",
+        "bridge_evaluator_bindings",
+    ):
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in migration
+        assert table in security
+
+    scope_body = migration.split(
+        "CREATE OR REPLACE FUNCTION egoagentos_bridge_scope_allows", 1
+    )[1].split("CREATE TRIGGER bridge_runs_campaign_no_update", 1)[0]
+    assert "NULLIF(current_setting('egoagentos.tenant_id', true), '') IS NOT NULL" in scope_body
+    assert "NULLIF(current_setting('egoagentos.project_id', true), '') IS NOT NULL" in scope_body
+    assert "OR run.tenant_id" not in scope_body
+    assert "OR run.agentteams_project_id" not in scope_body
+
+    update_grant = re.search(
+        r"GRANT UPDATE\((.*?)\)\s+ON bridge_runs",
+        security,
+        flags=re.DOTALL,
+    )
+    assert update_grant is not None
+    granted_columns = {item.strip() for item in update_grant.group(1).split(",")}
+    assert granted_columns == {
+        "state",
+        "task_graph",
+        "checkpoint",
+        "version",
+        "updated_at",
+        "tenant_id",
+        "campaign_binding",
+        "campaign_binding_sha256",
+        "campaign_id",
+        "configuration_id",
+        "execution_phase_owner",
+        "problem_id",
+        "campaign_turn",
+        "campaign_generation",
+        "manifest_sha256",
+        "post_selection_extension_sha256",
+        "policy_sha256",
+        "requirement_ledger_sha256",
+        "workspace_checkpoint_sha256",
+        "memory_watermark",
+    }
+    for table in (
+        "bridge_extension_events",
+        "bridge_task_leases",
+        "bridge_evaluator_bindings",
+    ):
+        for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+            assert re.search(
+                rf"GRANT\s+{privilege}\s+ON\s+{table}\b",
+                security,
+                flags=re.IGNORECASE,
+            ) is None
+    for function_name in (
+        "egoagentos_bridge_guard_extension_insert",
+        "egoagentos_bridge_notify_extension",
+        "egoagentos_bridge_reject_campaign_rebind",
+        "egoagentos_bridge_scope_allows",
+    ):
+        assert f"REVOKE ALL ON FUNCTION {function_name}" in security
+        assert f"GRANT EXECUTE ON FUNCTION {function_name}" in security
+
+
+def test_postgres_bridge_store_requires_a_valid_explicit_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(PostgresBridgeStore, "initialize", lambda _store: None)
+
+    store = PostgresBridgeStore("postgresql://unused/test", tenant_id="local-dev")
+    assert store.tenant_id == "local-dev"
+
+    for invalid in ("", " ", "tenant\x00escape", "tenant\nother"):
+        with pytest.raises(ValueError, match="tenant"):
+            PostgresBridgeStore("postgresql://unused/test", tenant_id=invalid)
