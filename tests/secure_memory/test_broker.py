@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-import threading
 
 import pytest
 
@@ -20,26 +19,46 @@ from benchmarks.secure_memory.substrate.broker import (
     provision_secret_descriptor,
     read_authorized_secret_fd,
 )
-from tests.secure_memory.test_budget_ledger import SHA, _ledger, _lease, _template, _ticket, _trust
+from tests.secure_memory.test_budget_ledger import SHA, _ledger, _lease, _template, _ticket
 from benchmarks.secure_memory.substrate.budget import BudgetLedger, BudgetTrustContext
 
 
 class FakeTransport:
     def __init__(self, reply=None):
         self.calls = []
-        self.reply = reply or ProviderReply(raw_usage={"input_tokens": 12, "output_tokens": 3}, output_text="ok", first_stream_ns=1, first_content_ns=2)
+        self.reply = reply or ProviderReply(
+            raw_usage={"input_tokens": 12, "output_tokens": 3},
+            output_text="ok",
+            first_stream_ns=1,
+            first_content_ns=2,
+        )
+
     def send(self, *, base_url, method, endpoint, body, api_key, allow_redirects, tls_verified):
-        self.calls.append((method, base_url, endpoint, body, api_key, allow_redirects, tls_verified))
+        self.calls.append(
+            (method, base_url, endpoint, body, api_key, allow_redirects, tls_verified)
+        )
         return self.reply
 
 
 def _request(*, lease=None, **overrides):
-    values = dict(schema_version="secure-memory-model-request/v1", request_id="r1", campaign_id="campaign",
-                  lease_sha256=SHA, ticket_id="ticket-1", request_class="main",
-                  provider_base_url="https://apihub.agnes-ai.com/v1", provider_model="agnes-2.5-pro",
-                  runtime="agentteams", messages=({"role": "user", "content": "hello"},),
-                  max_input_tokens=10000, max_output_tokens=1500, temperature=0, top_p=1,
-                  stream=True, tools=())
+    values = dict(
+        schema_version="secure-memory-model-request/v1",
+        request_id="r1",
+        campaign_id="campaign",
+        lease_sha256=SHA,
+        ticket_id="ticket-1",
+        request_class="main",
+        provider_base_url="https://apihub.agnes-ai.com/v1",
+        provider_model="agnes-2.5-pro",
+        runtime="agentteams",
+        messages=({"role": "user", "content": "hello"},),
+        max_input_tokens=10000,
+        max_output_tokens=1500,
+        temperature=0,
+        top_p=1,
+        stream=True,
+        tools=(),
+    )
     values.update(overrides)
     if lease is not None:
         values["lease_sha256"] = lease.core_sha256
@@ -47,24 +66,72 @@ def _request(*, lease=None, **overrides):
 
 
 def _capability(**overrides):
-    values = dict(state=BrokerState.QUALIFIED, campaign_id="campaign", project_id="official-calibration-project",
-                  base_url="https://apihub.agnes-ai.com/v1", endpoint="/chat/completions", method="POST",
-                  body_shape=ProviderRequestShape.CHAT_COMPLETIONS, model="agnes-2.5-pro",
-                  hard_output_limit=True, role_attribution=True, authoritative_usage=True,
-                  streaming_semantics=True, zero_background_calls=True, calibrated_positive_error=0, temperature_present=True, top_p_present=True,
-                  matrix_cases=("basic_nonstream_body", "stream_first_content", "tool_call_id", "tool_result_continuation", "hard_output_boundary", "context_overlimit_refusal", "authoritative_total_usage", "cached_input_subset", "reasoning_output_subset", "429_retry", "5xx_retry", "timeout", "redirect", "tls", "multi_role_attribution", "idle_window_zero_background_call"),
-                  matrix_digest="", issuer_id="capability-control", key_id="capability-key", issue_sequence=1,
-                  expires_at_sequence=10, record_sha256="", signature_base64="sig")
+    values = dict(
+        state=BrokerState.QUALIFIED,
+        campaign_id="campaign",
+        project_id="official-calibration-project",
+        base_url="https://apihub.agnes-ai.com/v1",
+        endpoint="/chat/completions",
+        method="POST",
+        body_shape=ProviderRequestShape.CHAT_COMPLETIONS,
+        model="agnes-2.5-pro",
+        hard_output_limit=True,
+        role_attribution=True,
+        authoritative_usage=True,
+        streaming_semantics=True,
+        zero_background_calls=True,
+        calibrated_positive_error=0,
+        temperature_present=True,
+        top_p_present=True,
+        matrix_cases=(
+            "basic_nonstream_body",
+            "stream_first_content",
+            "tool_call_id",
+            "tool_result_continuation",
+            "hard_output_boundary",
+            "context_overlimit_refusal",
+            "authoritative_total_usage",
+            "cached_input_subset",
+            "reasoning_output_subset",
+            "429_retry",
+            "5xx_retry",
+            "timeout",
+            "redirect",
+            "tls",
+            "multi_role_attribution",
+            "idle_window_zero_background_call",
+        ),
+        matrix_digest="",
+        issuer_id="capability-control",
+        key_id="capability-key",
+        issue_sequence=1,
+        expires_at_sequence=10,
+        record_sha256="",
+        signature_base64="sig",
+    )
     values.update(overrides)
-    values["matrix_digest"] = canonical_sha256("agentteams-capability-matrix", values["matrix_cases"])
-    core = {key: value for key, value in values.items() if key not in {"record_sha256", "signature_base64"}}
+    values["matrix_digest"] = canonical_sha256(
+        "agentteams-capability-matrix", values["matrix_cases"]
+    )
+    core = {
+        key: value
+        for key, value in values.items()
+        if key not in {"record_sha256", "signature_base64"}
+    }
     values["record_sha256"] = canonical_sha256("provider-capability-record", core)
     return ProviderCapabilityRecord(**values)
 
 
 def _authority(**overrides):
-    return CampaignCapabilityAuthority(_capability(**overrides), signature_verifier=lambda _value: True,
-                                       current_sequence=lambda: 1, expected_campaign_id="campaign", expected_project_id="official-calibration-project", expected_issuer_id="capability-control", expected_key_id="capability-key")
+    return CampaignCapabilityAuthority(
+        _capability(**overrides),
+        signature_verifier=lambda _value: True,
+        current_sequence=lambda: 1,
+        expected_campaign_id="campaign",
+        expected_project_id="official-calibration-project",
+        expected_issuer_id="capability-control",
+        expected_key_id="capability-key",
+    )
 
 
 def test_locked_capability_rejects_before_transport():
@@ -75,11 +142,22 @@ def test_locked_capability_rejects_before_transport():
 def test_exact_qualified_request_is_forwarded_unchanged_with_terminal_usage():
     ledger, lease = _ledger()
     transport = FakeTransport()
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     method, base_url, endpoint, body, _secret, redirects, tls = transport.calls[0]
-    assert (method, base_url, endpoint, redirects, tls) == ("POST", "https://apihub.agnes-ai.com/v1", "/chat/completions", False, True)
+    assert (method, base_url, endpoint, redirects, tls) == (
+        "POST",
+        "https://apihub.agnes-ai.com/v1",
+        "/chat/completions",
+        False,
+        True,
+    )
     assert body["messages"] == [{"role": "user", "content": "hello"}]
     assert body["tools"] == []
     assert body["model"] == "agnes-2.5-pro"
@@ -92,24 +170,41 @@ def test_exact_qualified_request_is_forwarded_unchanged_with_terminal_usage():
 def test_bad_signature_or_unqualified_shape_never_reaches_transport():
     ledger, lease = _ledger()
     transport = FakeTransport()
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: False, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: False,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="signature"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert not transport.calls
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(endpoint="/other"), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(endpoint="/other"),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="capability"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
 
 
 def test_transport_failure_retains_reservation_and_sanitizes_error():
     ledger, lease = _ledger()
+
     class BrokenTransport(FakeTransport):
         def send(self, **kwargs):
             raise RuntimeError("api-key=definitely-not-logged")
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=BrokenTransport(),
-                            signature_verifier=lambda _value: True, secret_fd=None)
+
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=BrokenTransport(),
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="provider_failure") as error:
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert "definitely" not in str(error.value)
@@ -132,15 +227,24 @@ def test_provisioner_opens_a_temp_secret_once_with_bound_inode_handoff():
     os.write(fd, b"fake")
     os.close(fd)
     calls = []
+
     def opener(value, flags):
         calls.append((value, flags))
         return os.open(value, flags)
+
     handoff = provision_secret_descriptor(path, expected_uid=os.getuid(), opener=opener)
     try:
         assert len(calls) == 1
         assert calls[0][1] & os.O_NOFOLLOW
-        assert read_authorized_secret_fd(handoff.fd, expected_uid=os.getuid(),
-                                        expected_device=handoff.device, expected_inode=handoff.inode) == b"fake"
+        assert (
+            read_authorized_secret_fd(
+                handoff.fd,
+                expected_uid=os.getuid(),
+                expected_device=handoff.device,
+                expected_inode=handoff.inode,
+            )
+            == b"fake"
+        )
     finally:
         os.close(handoff.fd)
         os.unlink(path)
@@ -149,9 +253,16 @@ def test_provisioner_opens_a_temp_secret_once_with_bound_inode_handoff():
 def test_request_lease_digest_usage_breach_and_null_timestamps_freeze_campaign():
     ledger, lease = _ledger()
     bad = _request(lease_sha256="b" * 64)
-    transport = FakeTransport(ProviderReply(raw_usage={"input_tokens": 20_000, "output_tokens": 1}, output_text="x"))
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    transport = FakeTransport(
+        ProviderReply(raw_usage={"input_tokens": 20_000, "output_tokens": 1}, output_text="x")
+    )
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="lease_digest"):
         broker.dispatch(bad, lease=lease, requester_role="Worker")
     with pytest.raises(BrokerDenied, match="authoritative_usage_invalid") as error:
@@ -165,8 +276,13 @@ def test_provider_null_timestamps_remain_null_and_base_url_is_exact():
     ledger, lease = _ledger()
     reply = ProviderReply(raw_usage={"input_tokens": 1, "output_tokens": 1}, output_text="x")
     transport = FakeTransport(reply)
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert response.first_stream_ns is None
     assert response.first_content_ns is None
@@ -175,13 +291,31 @@ def test_provider_null_timestamps_remain_null_and_base_url_is_exact():
 
 def test_shared_capability_authority_freezes_every_broker_after_background_call():
     capability = _capability()
-    authority = CampaignCapabilityAuthority(capability, signature_verifier=lambda _value: True, current_sequence=lambda: 1, expected_campaign_id="campaign", expected_project_id="official-calibration-project", expected_issuer_id="capability-control", expected_key_id="capability-key")
+    authority = CampaignCapabilityAuthority(
+        capability,
+        signature_verifier=lambda _value: True,
+        current_sequence=lambda: 1,
+        expected_campaign_id="campaign",
+        expected_project_id="official-calibration-project",
+        expected_issuer_id="capability-control",
+        expected_key_id="capability-key",
+    )
     ledger_one, lease_one = _ledger()
     ledger_two, lease_two = _ledger()
-    one = ProviderBroker(ledger=ledger_one, capability_authority=authority, transport=FakeTransport(),
-                         signature_verifier=lambda _value: True, secret_fd=None)
-    two = ProviderBroker(ledger=ledger_two, capability_authority=authority, transport=FakeTransport(),
-                         signature_verifier=lambda _value: True, secret_fd=None)
+    one = ProviderBroker(
+        ledger=ledger_one,
+        capability_authority=authority,
+        transport=FakeTransport(),
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
+    two = ProviderBroker(
+        ledger=ledger_two,
+        capability_authority=authority,
+        transport=FakeTransport(),
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     authority.observe_unattributed_call()
     for broker, ledger, lease in ((one, ledger_one, lease_one), (two, ledger_two, lease_two)):
         with pytest.raises(BrokerDenied, match="capability_frozen"):
@@ -190,8 +324,13 @@ def test_shared_capability_authority_freezes_every_broker_after_background_call(
 
 def test_optional_field_contract_rejects_non_none_value_when_omitted():
     ledger, lease = _ledger()
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(temperature_present=False), transport=FakeTransport(),
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(temperature_present=False),
+        transport=FakeTransport(),
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="qualified_request"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
 
@@ -199,20 +338,34 @@ def test_optional_field_contract_rejects_non_none_value_when_omitted():
 def test_request_token_ceilings_must_equal_trusted_ticket_before_transport():
     ledger, lease = _ledger()
     transport = FakeTransport()
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="qualified_request"):
-        broker.dispatch(_request(lease=lease, max_input_tokens=9999), lease=lease, requester_role="Worker")
+        broker.dispatch(
+            _request(lease=lease, max_input_tokens=9999), lease=lease, requester_role="Worker"
+        )
     assert not transport.calls
 
 
 def test_transient_failure_is_sanitized_and_retains_original_without_untrusted_retry():
     ledger, lease = _ledger()
+
     class Transient(FakeTransport):
         def send(self, **kwargs):
             raise ProviderTransportFailure.timeout()
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=Transient(),
-                            signature_verifier=lambda _value: True, secret_fd=None)
+
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=Transient(),
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
     with pytest.raises(BrokerDenied, match="provider_failure"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert ledger.reservation_for("ticket-1").state.value == "RETAINED"
@@ -220,31 +373,134 @@ def test_transient_failure_is_sanitized_and_retains_original_without_untrusted_r
 
 def _retry_ledger():
     original_template = _template()
-    retry_template = _template(template_id="retry-template", request_class="main", retry_owner="A",
-                                slot_id="retry-slot", attempt_group="retry")
+    retry_template = _template(
+        template_id="retry-template",
+        request_class="main",
+        retry_owner="A",
+        slot_id="retry-slot",
+        attempt_group="retry",
+    )
     original_ticket = _ticket()
     retry_ticket = _ticket(template_id="retry-template", ticket_id="retry-ticket", issue_sequence=2)
-    trust = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 2,
-                               signature_verifier=lambda _value: True)
-    ledger = BudgetLedger(templates=(original_template, retry_template), tickets=(original_ticket, retry_ticket),
-                          manifest_sha256=SHA, trust_context=trust)
+    trust = BudgetTrustContext(
+        issuer_id="control",
+        key_id="k",
+        current_sequence=lambda: 2,
+        signature_verifier=lambda _value: True,
+    )
+    ledger = BudgetLedger(
+        templates=(original_template, retry_template),
+        tickets=(original_ticket, retry_ticket),
+        manifest_sha256=SHA,
+        trust_context=trust,
+    )
     return ledger, _lease("ticket-1", issued_ticket_ids=("retry-ticket", "ticket-1"))
 
 
-@pytest.mark.parametrize("failure", [ProviderTransportFailure.status(429), ProviderTransportFailure.status(500), ProviderTransportFailure.timeout()])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ProviderTransportFailure.status(429),
+        ProviderTransportFailure.status(500),
+        ProviderTransportFailure.timeout(),
+    ],
+)
 def test_owned_transient_retry_uses_second_ticket_and_exact_same_body(failure):
     ledger, lease = _retry_ledger()
+
     class RetryTransport(FakeTransport):
-        def __init__(self): self.calls=[]; self.count=0
+        def __init__(self):
+            self.calls = []
+            self.count = 0
+
         def send(self, **kwargs):
-            self.calls.append(kwargs); self.count += 1
-            if self.count == 1: raise failure
-            return ProviderReply(raw_usage={"input_tokens": 1, "output_tokens": 1}, output_text="ok")
-    transport = RetryTransport(); backoff=[]
-    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
-                            signature_verifier=lambda _value: True, secret_fd=None)
-    broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker", retry_ticket_id="retry-ticket", backoff_observer=backoff.append)
+            self.calls.append(kwargs)
+            self.count += 1
+            if self.count == 1:
+                raise failure
+            return ProviderReply(
+                raw_usage={"input_tokens": 1, "output_tokens": 1}, output_text="ok"
+            )
+
+    transport = RetryTransport()
+    backoff = []
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
+    broker.dispatch(
+        _request(lease=lease),
+        lease=lease,
+        requester_role="Worker",
+        retry_ticket_id="retry-ticket",
+        backoff_observer=backoff.append,
+    )
     assert len(transport.calls) == 2 and transport.calls[0]["body"] == transport.calls[1]["body"]
     assert backoff == [failure.kind] and ledger.totals.requests == 2
     assert ledger.reservation_for("ticket-1").retained_reason == failure.kind
     assert ledger.reservation_for("retry-ticket").state.value == "SETTLED"
+
+
+def test_nontransient_4xx_retains_original_and_leaves_retry_unused():
+    ledger, lease = _retry_ledger()
+
+    class Fourxx(FakeTransport):
+        def __init__(self):
+            self.calls = []
+
+        def send(self, **kwargs):
+            self.calls.append(kwargs)
+            raise ProviderTransportFailure.status(400)
+
+    transport = Fourxx()
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
+    with pytest.raises(BrokerDenied, match="provider_failure"):
+        broker.dispatch(
+            _request(lease=lease),
+            lease=lease,
+            requester_role="Worker",
+            retry_ticket_id="retry-ticket",
+        )
+    assert len(transport.calls) == 1
+    assert ledger.reservation_for("ticket-1").retained_reason == "4xx"
+    assert ledger.reservation_for("retry-ticket") is None
+
+
+def test_second_transient_failure_retains_both_without_third_call():
+    ledger, lease = _retry_ledger()
+
+    class Twice(FakeTransport):
+        def __init__(self):
+            self.calls = []
+
+        def send(self, **kwargs):
+            self.calls.append(kwargs)
+            raise ProviderTransportFailure.timeout()
+
+    transport = Twice()
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=_authority(),
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_fd=None,
+    )
+    with pytest.raises(BrokerDenied, match="provider_failure") as error:
+        broker.dispatch(
+            _request(lease=lease),
+            lease=lease,
+            requester_role="Worker",
+            retry_ticket_id="retry-ticket",
+        )
+    assert len(transport.calls) == 2 and error.value.__cause__ is None
+    assert ledger.reservation_for("ticket-1").retained_reason == "timeout"
+    assert ledger.reservation_for("retry-ticket").retained_reason == "provider_failure"
