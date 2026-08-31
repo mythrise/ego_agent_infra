@@ -93,8 +93,12 @@ benchmarks/secure_memory/__init__.py
 benchmarks/secure_memory/canonical.py
 benchmarks/secure_memory/manifest.py
 benchmarks/secure_memory/models.py
+benchmarks/secure_memory/substrate/__init__.py
+benchmarks/secure_memory/substrate/candidate_rpc.py
+benchmarks/secure_memory/substrate/channel.py
 benchmarks/secure_memory/schemas/campaign-event-v1.schema.json
 benchmarks/secure_memory/schemas/candidate-proposal-v1.schema.json
+benchmarks/secure_memory/schemas/channel-envelope-v2.schema.json
 benchmarks/secure_memory/schemas/checkpoint-v1.schema.json
 benchmarks/secure_memory/schemas/issued-budget-ticket-v1.schema.json
 benchmarks/secure_memory/schemas/model-request-v1.schema.json

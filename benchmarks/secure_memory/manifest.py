@@ -22,6 +22,7 @@ from .models import (
     TrustedRelationCore,
     validate_task_lease_core,
 )
+from .substrate.channel import ChannelEnvelope
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -32,6 +33,7 @@ DEFAULT_DIGEST_INDEX = REPOSITORY_ROOT / "docs/contracts/secure-agent/v2/contrac
 SCHEMA_MODELS: Mapping[str, Type[StrictModel]] = {
     "campaign-event-v1.schema.json": CampaignEventCore,
     "candidate-proposal-v1.schema.json": CandidateProposal,
+    "channel-envelope-v2.schema.json": ChannelEnvelope,
     "checkpoint-v1.schema.json": CheckpointCore,
     "issued-budget-ticket-v1.schema.json": IssuedBudgetTicket,
     "model-request-v1.schema.json": ModelRequest,

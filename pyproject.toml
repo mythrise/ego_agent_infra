@@ -50,6 +50,7 @@ include = [
   "benchmarks.profiles",
   "benchmarks.schemas",
   "benchmarks.secure_memory",
+  "benchmarks.secure_memory.substrate",
   "benchmarks.secure_memory.schemas",
   "experiments",
   "experiments.fashion_mnist_amp",
@@ -88,6 +89,7 @@ namespaces = true
 "benchmarks.secure_memory" = [
   "schemas/campaign-event-v1.schema.json",
   "schemas/candidate-proposal-v1.schema.json",
+  "schemas/channel-envelope-v2.schema.json",
   "schemas/checkpoint-v1.schema.json",
   "schemas/issued-budget-ticket-v1.schema.json",
   "schemas/model-request-v1.schema.json",
