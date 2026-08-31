@@ -13,6 +13,7 @@ from benchmarks.secure_memory.substrate.broker import (
     ProviderReply,
     ProviderRequestShape,
     ProviderBroker,
+    CampaignCapabilityAuthority,
     provision_secret_descriptor,
     read_authorized_secret_fd,
 )
@@ -159,3 +160,18 @@ def test_provider_null_timestamps_remain_null_and_base_url_is_exact():
     assert response.first_stream_ns is None
     assert response.first_content_ns is None
     assert transport.calls[0][1] == "https://apihub.agnes-ai.com/v1"
+
+
+def test_shared_capability_authority_freezes_every_broker_after_background_call():
+    capability = _capability()
+    authority = CampaignCapabilityAuthority(capability, signature_verifier=lambda _value: True)
+    ledger_one, lease_one = _ledger()
+    ledger_two, lease_two = _ledger()
+    one = ProviderBroker(ledger=ledger_one, capability_authority=authority, transport=FakeTransport(),
+                         signature_verifier=lambda _value: True, secret_fd=None)
+    two = ProviderBroker(ledger=ledger_two, capability_authority=authority, transport=FakeTransport(),
+                         signature_verifier=lambda _value: True, secret_fd=None)
+    authority.observe_unattributed_call()
+    for broker, ledger, lease in ((one, ledger_one, lease_one), (two, ledger_two, lease_two)):
+        with pytest.raises(BrokerDenied, match="capability_frozen"):
+            broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")

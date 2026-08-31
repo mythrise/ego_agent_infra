@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping, Optional, Protocol
@@ -49,6 +50,27 @@ class ProviderCapabilityRecord:
             self.hard_output_limit, self.role_attribution, self.authoritative_usage,
             self.streaming_semantics, self.zero_background_calls,
         ))
+
+
+class CampaignCapabilityAuthority:
+    """One lock-protected capability state shared by every campaign broker."""
+
+    def __init__(self, record: ProviderCapabilityRecord, *, signature_verifier: Callable[[object], bool]) -> None:
+        if not signature_verifier(record):
+            raise BrokerDenied("capability_signature")
+        self._record = record
+        self._lock = threading.RLock()
+
+    def record(self) -> ProviderCapabilityRecord:
+        with self._lock:
+            return self._record
+
+    def freeze(self) -> None:
+        with self._lock:
+            self._record = ProviderCapabilityRecord(**{**self._record.__dict__, "state": BrokerState.FROZEN})
+
+    def observe_unattributed_call(self) -> None:
+        self.freeze()
 
 
 @dataclass(frozen=True)
@@ -141,13 +163,19 @@ def read_authorized_secret_fd(
 
 
 class ProviderBroker:
-    def __init__(self, *, ledger: BudgetLedger, capability: ProviderCapabilityRecord,
-                 transport: ProviderTransport, signature_verifier: Callable[[object], bool],
-                 secret_fd: Optional[int], clock: Optional[Clock] = None,
+    def __init__(self, *, ledger: BudgetLedger, transport: ProviderTransport,
+                 signature_verifier: Callable[[object], bool], secret_fd: Optional[int],
+                 capability: Optional[ProviderCapabilityRecord] = None,
+                 capability_authority: Optional[CampaignCapabilityAuthority] = None,
+                 clock: Optional[Clock] = None,
                  tokenizer: Optional[Callable[[bytes], int]] = None,
                  scanner: Optional[Callable[[bytes], bool]] = None) -> None:
         self._ledger = ledger
-        self._capability = capability
+        if capability_authority is None:
+            if capability is None:
+                raise BrokerDenied("capability_required")
+            capability_authority = CampaignCapabilityAuthority(capability, signature_verifier=lambda _record: True)
+        self._capability_authority = capability_authority
         self._transport = transport
         self._signature_verifier = signature_verifier
         self._api_key = None if secret_fd is None else read_authorized_secret_fd(secret_fd, expected_uid=os.getuid())
@@ -156,19 +184,20 @@ class ProviderBroker:
         self._scanner = scanner or (lambda body: True)
 
     def dispatch(self, request: ModelRequest, *, lease: SignedTaskLease, requester_role: str) -> BrokerResponse:
-        if self._capability.state is BrokerState.FROZEN:
+        capability = self._capability_authority.record()
+        if capability.state is BrokerState.FROZEN:
             raise BrokerDenied("capability_frozen")
-        if self._capability.state is BrokerState.LOCKED:
+        if capability.state is BrokerState.LOCKED:
             raise BrokerDenied("capability_locked")
-        if not self._capability.usable():
-            self._capability = ProviderCapabilityRecord(**{**self._capability.__dict__, "state": BrokerState.FROZEN})
+        if not capability.usable():
+            self._capability_authority.freeze()
             raise BrokerDenied("capability")
         ticket = self._ledger.trusted_ticket(request.ticket_id)
         if ticket is None or not self._signature_verifier(lease) or not self._signature_verifier(ticket):
             raise BrokerDenied("signature")
         if request.lease_sha256 != lease.core_sha256:
             raise BrokerDenied("lease_digest")
-        if request.provider_model != self._capability.model or request.max_output_tokens != ticket.max_output_tokens:
+        if request.provider_model != capability.model or request.max_output_tokens != ticket.max_output_tokens:
             raise BrokerDenied("qualified_request")
         if request.request_class != ticket.effective_request_class or request.campaign_id != ticket.campaign_id:
             raise BrokerDenied("trusted_binding")
@@ -182,21 +211,21 @@ class ProviderBroker:
         try:
             self._ledger.reserve(request.ticket_id, lease, requester_role=requester_role,
                                  tokenizer_estimate=self._tokenizer(visible),
-                                 calibrated_positive_error=self._capability.calibrated_positive_error,
+                                 calibrated_positive_error=capability.calibrated_positive_error,
                                  serialized_model_visible_bytes=visible)
             self._ledger.mark_dispatched(request.ticket_id)
         except BudgetDenied as exc:
             raise BrokerDenied(str(exc)) from exc
         try:
-            reply = self._transport.send(base_url=request.provider_base_url, method=self._capability.method,
-                                         endpoint=self._capability.endpoint, body=body,
+            reply = self._transport.send(base_url=request.provider_base_url, method=capability.method,
+                                         endpoint=capability.endpoint, body=body,
                                          api_key=self._api_key, allow_redirects=False, tls_verified=True)
         except Exception:
             self._ledger.retain(request.ticket_id, "provider_failure")
             raise BrokerDenied("provider_failure") from None
         if reply.raw_usage is None:
             self._ledger.retain(request.ticket_id, "unknown_usage")
-            self._capability = ProviderCapabilityRecord(**{**self._capability.__dict__, "state": BrokerState.FROZEN})
+            self._capability_authority.freeze()
             raise BrokerDenied("authoritative_usage_missing")
         try:
             usage = self._ledger.settle(request.ticket_id, RawUsage(**reply.raw_usage))
@@ -205,7 +234,7 @@ class ProviderBroker:
                 self._ledger.retain(request.ticket_id, "contradictory_usage")
             except BudgetDenied:
                 pass
-            self._capability = ProviderCapabilityRecord(**{**self._capability.__dict__, "state": BrokerState.FROZEN})
+            self._capability_authority.freeze()
             raise BrokerDenied("authoritative_usage_invalid") from None
         return BrokerResponse(reply.output_text, usage,
                               reply.first_stream_ns, reply.first_content_ns)
