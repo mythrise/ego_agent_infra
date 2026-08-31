@@ -41,7 +41,9 @@ include = [
   "apps.api.fixtures",
   "apps.api.migrations",
   "apps.api.migrations.postgres",
+  "apps.api.trusted_memory",
   "apps.agentteams_bridge",
+  "apps.agentteams_bridge.extensions",
   "apps.agentteams_bridge.migrations",
   "apps.agentteams_bridge.migrations.postgres",
   "benchmarks",
@@ -79,8 +81,12 @@ namespaces = true
   "fixtures/egolite-mcp-launch.yaml",
   "migrations/postgres/001_control_plane.sql",
   "migrations/postgres/002_ledger_boundaries.sql",
+  "migrations/postgres/003_trusted_memory_core.sql",
 ]
-"apps.agentteams_bridge" = ["migrations/postgres/001_bridge_control_plane.sql"]
+"apps.agentteams_bridge" = [
+  "migrations/postgres/001_bridge_control_plane.sql",
+  "migrations/postgres/002_campaign_safety_attention.sql",
+]
 "benchmarks" = [
   "corpus/v1/scenario.schema.json",
   "corpus/v1/scenarios.json",
@@ -102,11 +108,16 @@ namespaces = true
 ]
 "integrations.agentteams" = [
   "agentteams-resources.yaml.tmpl",
+  "attention-packet.schema.json",
   "blueprint.yaml",
+  "campaign-envelope.schema.json",
+  "guardian-decision.schema.json",
   "message-envelope.schema.json",
   "official-contract.lock.json",
   "result-envelope.schema.json",
+  "safety-decision.schema.json",
   "scripts/verify_official_contract.py",
+  "user-status-projection.schema.json",
 ]
 "protocols.rxp" = [
   "schemas/rxp-decision-v1.schema.json",

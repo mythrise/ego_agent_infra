@@ -992,6 +992,21 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     assert "benchmarks/secure_memory/substrate/candidate_rpc.py" in names
     assert "benchmarks/secure_memory/schemas/channel-envelope-v2.schema.json" in names
     assert "benchmarks/secure_memory/schemas/run-manifest-v2.schema.json" in names
+    required_d_authority_files = {
+        "apps/agentteams_bridge/extensions/__init__.py",
+        "apps/agentteams_bridge/extensions/contracts.py",
+        "apps/agentteams_bridge/extensions/schema_contract.py",
+        "apps/agentteams_bridge/migrations/postgres/002_campaign_safety_attention.sql",
+        "apps/api/trusted_memory/__init__.py",
+        "apps/api/trusted_memory/models.py",
+        "apps/api/migrations/postgres/003_trusted_memory_core.sql",
+        "integrations/agentteams/attention-packet.schema.json",
+        "integrations/agentteams/campaign-envelope.schema.json",
+        "integrations/agentteams/guardian-decision.schema.json",
+        "integrations/agentteams/safety-decision.schema.json",
+        "integrations/agentteams/user-status-projection.schema.json",
+    }
+    assert required_d_authority_files <= set(names)
 
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(extracted)
@@ -1009,6 +1024,49 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     )
     assert smoke.returncode == 0, smoke.stderr
     assert "versioned RXP benchmark corpus" in smoke.stdout
+
+    contract_smoke = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "from importlib.resources import files",
+                    "from apps.agentteams_bridge.extensions import CampaignBinding",
+                    "from apps.agentteams_bridge.extensions.schema_contract import SCHEMA_MODELS",
+                    "from apps.agentteams_bridge.postgres_store import PostgresBridgeStore",
+                    "from apps.agentteams_bridge.store import BridgeStore",
+                    "from apps.api.postgres_store import PostgresStore",
+                    "from apps.api.store import SQLiteStore",
+                    "from apps.api.trusted_memory import TrustedFact",
+                    "from apps.api.trusted_memory.models import LegacyMemoryView",
+                    "assert CampaignBinding and BridgeStore and PostgresBridgeStore",
+                    "assert TrustedFact and LegacyMemoryView and SQLiteStore and PostgresStore",
+                    "assert len(SCHEMA_MODELS) == 5",
+                    "assert files('apps.agentteams_bridge').joinpath(",
+                    "    'migrations/postgres/002_campaign_safety_attention.sql'",
+                    ").is_file()",
+                    "assert files('apps.api').joinpath(",
+                    "    'migrations/postgres/003_trusted_memory_core.sql'",
+                    ").is_file()",
+                    "schema_root = files('integrations.agentteams')",
+                    "assert all(schema_root.joinpath(name).is_file() for name in (",
+                    "    'attention-packet.schema.json',",
+                    "    'campaign-envelope.schema.json',",
+                    "    'guardian-decision.schema.json',",
+                    "    'safety-decision.schema.json',",
+                    "    'user-status-projection.schema.json',",
+                    "))",
+                )
+            ),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert contract_smoke.returncode == 0, contract_smoke.stderr
 
 
 _WORKER_SOURCE_DIRECTORIES = (

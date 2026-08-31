@@ -43,6 +43,9 @@ apps/agentteams_bridge/__init__.py
 apps/agentteams_bridge/cli.py
 apps/agentteams_bridge/clients.py
 apps/agentteams_bridge/errors.py
+apps/agentteams_bridge/extensions/__init__.py
+apps/agentteams_bridge/extensions/contracts.py
+apps/agentteams_bridge/extensions/schema_contract.py
 apps/agentteams_bridge/main.py
 apps/agentteams_bridge/models.py
 apps/agentteams_bridge/postgres_store.py
@@ -51,6 +54,7 @@ apps/agentteams_bridge/settings.py
 apps/agentteams_bridge/store.py
 apps/agentteams_bridge/transport.py
 apps/agentteams_bridge/migrations/postgres/001_bridge_control_plane.sql
+apps/agentteams_bridge/migrations/postgres/002_campaign_safety_attention.sql
 apps/api/__init__.py
 apps/api/errors.py
 apps/api/event_stream.py
@@ -72,6 +76,9 @@ apps/api/store_factory.py
 apps/api/fixtures/egolite-mcp-launch.yaml
 apps/api/migrations/postgres/001_control_plane.sql
 apps/api/migrations/postgres/002_ledger_boundaries.sql
+apps/api/migrations/postgres/003_trusted_memory_core.sql
+apps/api/trusted_memory/__init__.py
+apps/api/trusted_memory/models.py
 benchmarks/__init__.py
 benchmarks/adapter_worker.py
 benchmarks/evidence_bundle.py
@@ -116,13 +123,18 @@ experiments/fashion_mnist_amp/verify.py
 integrations/__init__.py
 integrations/agentteams/__init__.py
 integrations/agentteams/agentteams-resources.yaml.tmpl
+integrations/agentteams/attention-packet.schema.json
 integrations/agentteams/benchmark_adapter.py
 integrations/agentteams/blueprint.yaml
+integrations/agentteams/campaign-envelope.schema.json
+integrations/agentteams/guardian-decision.schema.json
 integrations/agentteams/message-envelope.schema.json
 integrations/agentteams/official-contract.lock.json
 integrations/agentteams/render_resources.py
 integrations/agentteams/result-envelope.schema.json
+integrations/agentteams/safety-decision.schema.json
 integrations/agentteams/scripts/verify_official_contract.py
+integrations/agentteams/user-status-projection.schema.json
 protocols/__init__.py
 protocols/rxp/__init__.py
 protocols/rxp/__main__.py
