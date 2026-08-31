@@ -165,8 +165,13 @@ class CandidateRpc:
 
     def propose(self, proposal: Mapping[str, Any], *, context: CandidateContext) -> bytes:
         doc = dict(proposal) if isinstance(proposal, Mapping) else None
+        sensitive = _forbidden(doc) if doc is not None else False
         try:
-            digest = canonical_sha256("candidate-proposal", doc) if doc is not None else None
+            digest = (
+                None
+                if sensitive
+                else (canonical_sha256("candidate-proposal", doc) if doc is not None else None)
+            )
         except (TypeError, ValueError, UnicodeError):
             digest = None
         with self.ledger._lock:
@@ -177,6 +182,39 @@ class CandidateRpc:
                 if prior[1] is not None:
                     return prior[1]
                 raise CandidateRejected(prior[2] or "schema_invalid")
+            if doc is not None and sensitive:
+                try:
+                    self.ledger.reserve(context)
+                except CandidateRejected as exc:
+                    self.ledger._attempts[context.attempt_key] = (None, None, str(exc))
+                    raise
+                self.ledger.scanner_rejections.append(
+                    {"source_class": "proposal", "reason": "forbidden_field", "count": 1}
+                )
+                self.ledger._attempts[context.attempt_key] = (None, None, "forbidden_field")
+                raise CandidateRejected("forbidden_field")
+            if (
+                doc is not None
+                and not sensitive
+                and (
+                    doc.get("task_id") != context.task_id
+                    or doc.get("generation") != context.generation
+                )
+            ):
+                try:
+                    self.ledger.reserve(context)
+                except CandidateRejected as exc:
+                    self.ledger._attempts[context.attempt_key] = (digest, None, str(exc))
+                    raise
+                reason = (
+                    "task_mismatch"
+                    if doc.get("task_id") != context.task_id
+                    else "generation_mismatch"
+                )
+                self.ledger._attempts[context.attempt_key] = (digest, None, reason)
+                if digest is not None:
+                    self.ledger.schema_rejections.append({"proposal_digest": digest, "reason": reason})
+                raise CandidateRejected(reason)
             if (
                 doc is not None
                 and isinstance(doc.get("proposal_id"), str)
@@ -186,20 +224,25 @@ class CandidateRpc:
                 if boundary == context.semantic_boundary and old_digest == digest:
                     self.ledger._attempts[context.attempt_key] = (digest, old_receipt, None)
                     return old_receipt
+                self.ledger._attempts[context.attempt_key] = (
+                    digest,
+                    None,
+                    "cross_boundary_duplicate",
+                )
                 raise CandidateRejected("cross_boundary_duplicate")
             try:
                 self.ledger.reserve(context)
                 if doc is None:
                     raise CandidateRejected("schema_invalid")
-                if doc.get("task_id") != context.task_id:
-                    raise CandidateRejected("task_mismatch")
-                if doc.get("generation") != context.generation:
-                    raise CandidateRejected("generation_mismatch")
-                if _forbidden(doc):
+                if sensitive:
                     self.ledger.scanner_rejections.append(
                         {"source_class": "proposal", "reason": "forbidden_field", "count": 1}
                     )
                     raise CandidateRejected("forbidden_field")
+                if doc.get("task_id") != context.task_id:
+                    raise CandidateRejected("task_mismatch")
+                if doc.get("generation") != context.generation:
+                    raise CandidateRejected("generation_mismatch")
                 self._limits(doc)
                 candidate = CandidateProposal.model_validate(doc)
                 if digest is None:

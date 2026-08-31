@@ -146,7 +146,36 @@ class KeyProvisioner:
 class InMemoryReceiptStore:
     def __init__(self) -> None:
         self._records: Dict[Tuple[object, ...], InstalledReceipt] = {}
+        self._heads: Dict[WindowKey, Tuple[int, str, InstalledReceipt]] = {}
+        self._claims: Dict[Tuple[WindowKey, int], str] = {}
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
+
+    def claim(
+        self, window: WindowKey, sequence: int, digest: str
+    ) -> Tuple[str, Optional[InstalledReceipt]]:
+        with self._condition:
+            reservation = (window, sequence)
+            while reservation in self._claims:
+                if self._claims[reservation] != digest:
+                    return "conflict", None
+                self._condition.wait()
+            head = self._heads.get(window)
+            if head is not None:
+                if sequence == head[0]:
+                    return ("replay", head[2]) if head[1] == digest else ("conflict", None)
+                if sequence != head[0] + 1:
+                    return "mismatch", None
+            elif sequence != 1:
+                return "mismatch", None
+            self._claims[reservation] = digest
+            return "owner", None
+
+    def abort(self, window: WindowKey, sequence: int, digest: str) -> None:
+        with self._condition:
+            if self._claims.get((window, sequence)) == digest:
+                del self._claims[(window, sequence)]
+                self._condition.notify_all()
 
     def install_or_get(
         self, identity: Tuple[object, ...], digest: str, pending: PendingReceipt
@@ -172,6 +201,16 @@ class InMemoryReceiptStore:
             result = InstalledReceipt(digest, receipt_id, frame, identity)
             self._records[identity] = result
             return result
+
+    def commit(
+        self, window: WindowKey, sequence: int, digest: str, installed: InstalledReceipt
+    ) -> None:
+        with self._condition:
+            if self._claims.get((window, sequence)) != digest:
+                raise ChannelRejected("sequence_commit_conflict")
+            self._heads[window] = (sequence, digest, installed)
+            del self._claims[(window, sequence)]
+            self._condition.notify_all()
 
     def lookup(self, identity: Tuple[object, ...], digest: str) -> Optional[InstalledReceipt]:
         with self._lock:
@@ -209,9 +248,6 @@ class ChannelCodec:
         self.material = material
         self._methods = {k: frozenset(v) for k, v in allowed_methods.items()}
         self.store = receipt_store or InMemoryReceiptStore()
-        self._windows: Dict[WindowKey, Tuple[int, Optional[str], Optional[InstalledReceipt]]] = {}
-        self._inflight: Dict[Tuple[WindowKey, int], str] = {}
-        self._condition = threading.Condition(threading.RLock())
 
     def encode(
         self,
@@ -262,25 +298,14 @@ class ChannelCodec:
             raise ChannelRejected("invalid_mac")
         key = self._window(env)
         digest = _digest(frame)
-        reservation = (key, env.sequence)
         identity = key + (env.sequence,)
-        with self._condition:
-            while reservation in self._inflight:
-                if self._inflight[reservation] != digest:
-                    raise ChannelRejected("sequence_reuse_with_different_bytes")
-                self._condition.wait()
-            last, last_digest, last_receipt = self._windows.get(key, (0, None, None))
-            if env.sequence == last:
-                if last_digest == digest and last_receipt:
-                    return last_receipt.receipt_frame
-                raise ChannelRejected("sequence_reuse_with_different_bytes")
-            if env.sequence != last + 1:
-                raise ChannelRejected("sequence_mismatch")
-            existing = self.store.lookup(identity, digest)
-            if existing:
-                self._windows[key] = (env.sequence, digest, existing)
-                return existing.receipt_frame
-            self._inflight[reservation] = digest
+        state, existing = self.store.claim(key, env.sequence, digest)
+        if state == "replay":
+            return existing.receipt_frame  # type: ignore[union-attr]
+        if state == "conflict":
+            raise ChannelRejected("sequence_reuse_with_different_bytes")
+        if state == "mismatch":
+            raise ChannelRejected("sequence_mismatch")
         try:
             pending = route(env)
             installed = self.store.install_or_get(identity, digest, pending)
@@ -294,19 +319,9 @@ class ChannelCodec:
             ):
                 raise ChannelRejected("invalid_durable_receipt")
         except Exception:
-            with self._condition:
-                self._inflight.pop(reservation, None)
-                self._condition.notify_all()
+            self.store.abort(key, env.sequence, digest)
             raise
-        with self._condition:
-            last, last_digest, _ = self._windows.get(key, (0, None, None))
-            if last not in (env.sequence - 1, env.sequence) or (
-                last == env.sequence and last_digest != digest
-            ):
-                raise ChannelRejected("sequence_commit_conflict")
-            self._windows[key] = (env.sequence, digest, installed)
-            self._inflight.pop(reservation, None)
-            self._condition.notify_all()
+        self.store.commit(key, env.sequence, digest, installed)
         return installed.receipt_frame
 
     def _decode(self, frame: bytes) -> Tuple[ChannelEnvelope, str]:
