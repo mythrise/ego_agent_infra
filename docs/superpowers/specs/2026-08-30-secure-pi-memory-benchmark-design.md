@@ -1,8 +1,17 @@
-# Secure Pi Memory Architecture and Strong-Validation Benchmark
+# Historical Secure Pi Memory Architecture and Strong-Validation Benchmark
 
 **Date:** 2026-08-30
-**Status:** Draft under written-spec review
+**Status:** Superseded; do not implement
 **Target repositories:** `ego_agent_infra`, `pi`, and a read-only `codex` reference checkout
+
+> **Supersession notice (2026-08-30):** A later user instruction requires the
+> competition entry to remain entirely on the semifinal AgentTeams framework.
+> Pi and Codex may be consulted only as read-only design references; neither may
+> be an agent runtime, adapter, benchmark arm, or measured reference. The
+> executable replacement is
+> [`2026-08-30-agentteams-secure-memory-benchmark-design.md`](2026-08-30-agentteams-secure-memory-benchmark-design.md).
+> This historical document is retained so the evidence trail records why the
+> approved architecture changed.
 
 ## 1. Purpose
 
@@ -204,9 +213,9 @@ D separates long-term trust from per-task attention.
 
 **Layer 1: validated cross-task memory.** A record includes type, statement, outcome, applicability scope, tenant/project/component/version/task/generation, evidence IDs and digests, gate/decision/RXP linkage, origin trust, proposer, validator, rule version, lifecycle links, expiry, usage count, and last-use attribution.
 
-The validator consumes one canonical versioned immutable `DecisionClosure` containing closure ID/digest, `task_id`, generation, task version, decision ID and decision-event digest, decision outcome (`KEEP`, `DROP`, or `INCONCLUSIVE`), terminal stage/state, exact GateResult digest, sorted evidence-digest set, policy/rule versions, terminal audit-chain head, origin state, and selected RXP root/policy set when required. The trusted controller reconstructs and freezes this document from append-only controller/evaluator ledgers in the same finalization transaction; proposal RPC data is never accepted as a closure source.
+The validator consumes one canonical versioned immutable `DecisionClosure` containing closure ID/digest, `task_id`, generation, task version, decision ID and decision-event digest, decision outcome (`KEEP`, `DROP`, or `INCONCLUSIVE`), terminal stage/state, exact GateResult digest, sorted evidence-digest set, authenticated evaluator-result digest and sorted verified-fact digest set when local facts are claimed, policy/rule versions, terminal audit-chain head, origin state, and selected RXP root/policy set when required. The trusted controller reconstructs and freezes this document from append-only controller/evaluator ledgers in the same finalization transaction; proposal RPC data is never accepted as a closure source.
 
-Promotion locks the candidate lineage and current closure, recomputes the canonical digest, and requires candidate outcome/source references to equal the DecisionClosure. Stale, foreign, superseded, previous-generation, already-consumed, terminal-state-mismatched, or decision-substituted closures fail. The validator can verify but cannot create or alter candidate, evidence, gate, decision, audit, RXP, or closure inputs.
+Promotion locks the candidate lineage and current closure, recomputes the canonical digest, and requires candidate outcome/source references to equal the DecisionClosure. A `LOCAL_TRUSTED` statement must equal canonical `TrustedFact` bytes signed in the bound evaluator result; a passing evaluator receipt does not validate arbitrary LLM wording. An `ATTESTED_EXTERNAL` statement must be part of the issuer's exact signed candidate/revision core. Stale, foreign, superseded, previous-generation, already-consumed, terminal-state-mismatched, or decision-substituted closures fail. The validator can verify but cannot create or alter candidate, evaluator fact, evidence, gate, decision, audit, RXP, or closure inputs.
 
 Origin states and promotion predicates are fixed:
 
@@ -257,14 +266,15 @@ Roles are separated:
 
 - `runtime`: task execution and candidate submission;
 - `curator`: candidate normalization and graph proposal;
+- `finalizer`: authenticated evaluator-result, terminal-event, origin, and DecisionClosure finalization;
 - `validator`: validated-memory promotion and revocation;
 - `auditor`: read-only evidence and replay access.
 
 Validated tables are not writable by runtime or curator. Audit, evidence, validation, and relationship history are append-only. Tenant boundaries use row-level security. State changes and audit events commit atomically. Promotion notifications occur after commit, and consumers always replay from a durable cursor.
 
-Owner and runner identities are distinct. `runtime`, `curator`, `validator`, and `auditor` are `NOLOGIN` group roles. Separate Control-service `LOGIN` identities, whose credentials never leave the Control VM, are granted exactly one group role each. All tenant tables use `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`; each pooled transaction sets and then resets a validated tenant context. Runtime and curator receive no validated-table `INSERT`, `UPDATE`, `DELETE`, `ALTER`, `REFERENCES`, `TRIGGER`, DDL ownership, function ownership, role switching, schema creation, or permissive default privileges. The current runtime grant that permits memory insertion is removed.
+Owner and runner identities are distinct. `runtime`, `curator`, `finalizer`, `validator`, and `auditor` are `NOLOGIN` group roles. Separate per-arm/per-tenant Control-service `LOGIN` identities, whose credentials never leave the Control VM, are granted exactly one group role each. A DBA-owned login-to-tenant mapping is checked by every tenant policy; setting a custom transaction GUC alone grants no tenant access. All tenant tables use `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`; each pooled transaction sets, verifies, and then resets its authorized tenant context. Runtime and curator receive no validated-table `INSERT`, `UPDATE`, `DELETE`, `ALTER`, `REFERENCES`, `TRIGGER`, DDL ownership, function ownership, role switching, schema creation, or permissive default privileges. Finalizer can invoke only the atomic terminal-finalization entry point and cannot promote memory. The current runtime grant that permits memory insertion is removed.
 
-Promotion and revocation use a single validator-owned entry point with fixed `search_path`, typed parameters, caller-role checks, tenant checks, DecisionClosure verification, and atomic audit/outbox writes. Validator cannot write candidate/evidence/decision inputs, while runtime/curator cannot invoke promotion as validator. Acceptance captures role/grant/ownership/RLS dumps and proves direct SQL impersonation, owner bypass, cross-tenant reads, trigger disablement, and forged-closure promotion fail.
+Promotion and revocation use a single validator-owned entry point with fixed `search_path`, typed parameters, caller-role checks, mapped-tenant checks, DecisionClosure verification, and atomic audit/outbox writes. A separate finalizer-only fixed-search-path entry point atomically stores the exact independently verified evaluator receipt, terminal event, origin, and closure inputs. Validator cannot write candidate/evaluator/evidence/decision inputs, finalizer cannot transition memory, and runtime/curator cannot invoke either privileged role. Acceptance captures role/grant/ownership/RLS dumps and proves direct SQL impersonation, custom-GUC tenant forgery, owner bypass, cross-tenant reads, trigger disablement, and forged-closure promotion fail.
 
 SQLite remains a documented development fallback, but it cannot support PostgreSQL concurrency, role, trigger, notification, or recovery claims.
 
@@ -272,7 +282,7 @@ SQLite remains a documented development fallback, but it cannot support PostgreS
 
 Every arm receives an independent frozen copy of the same `ego_agent_infra` commit. Changes accumulate across the three problems.
 
-One problem is exactly one four-turn episode. Turns 1-3 end in signed working checkpoints with deterministic state serialization and visible development tests only. They do not create a final Gate, DecisionClosure, `after_decision` call, or trusted cross-task memory. The fourth turn runs the sealed evaluator, produces exactly one terminal Decision/DecisionClosure, and then permits one candidate-extraction/consolidation phase. C may update its explicitly unverified within-task summary after each turn; D's working capsule may update from deterministic current-task state; E's Navigator may query memory from previously completed problems. The unit definition, checkpoint digests, supersession timing, visible-test timing, and memory visibility are frozen in the RunManifest and evaluator receipts.
+One problem is exactly one four-turn episode. Turns 1-3 end in controller-signed working checkpoints after a trusted process reconstructs the stopped Agent VM's immutable seed plus bounded patch and recomputes its tree/state digests; no signing private key enters the Agent VM. Visible development tests remain untrusted feedback. These turns do not create a final Gate, DecisionClosure, `after_decision` call, or trusted cross-task memory. The fourth turn runs the sealed evaluator, produces exactly one terminal Decision/DecisionClosure, and then permits one candidate-extraction/consolidation phase. C may update its explicitly unverified within-task summary after each turn; D's working capsule may update from deterministic current-task state; E's Navigator may query memory from previously completed problems. The unit definition, checkpoint digests, supersession timing, visible-test timing, and memory visibility are frozen in the RunManifest and evaluator receipts.
 
 Each sealed fifth modification is a new one-turn follow-up generation with exactly one terminal Decision. It reuses the already frozen four-turn result but cannot rewrite the original DecisionClosure.
 
@@ -504,7 +514,7 @@ The following named negative suites are mandatory and produce trusted evaluator 
 | `evaluator_integrity` | Guest-edited tests/logs, forged exit status, patch/tree mismatch, and hidden-canary access fail |
 | `evaluator_channel` | Wrong evaluator identity, forged signature, seed/patch substitution, duplicate/out-of-order result, and retry replay fail |
 | `candidate_rpc` | Direct Control port access, forged/cross-arm/replayed/oversized frames, free retry, flood, duplicate amplification, and queue starvation fail |
-| `db_authority` | Runtime/curator promotion, validator input mutation, role switch, owner/trigger bypass, DDL, and cross-tenant access fail |
+| `db_authority` | Runtime/curator promotion, finalizer transition, validator input mutation, custom-GUC tenant forgery, role switch, owner/trigger bypass, DDL, and cross-tenant access fail |
 | `memory_closure` | Missing/forged/cross-generation Gate, Decision, Evidence, audit head, origin, attestation, or validator identity; wrong outcome; stale/reused closure; decision substitution; and terminal mismatch fail |
 | `memory_concurrency` | Concurrent promote/revoke, stale CAS, duplicate idempotency key, outbox crash, and replay converge deterministically |
 | `rxp_linkage` | Cross-task graft, reserialization mismatch, root substitution, invalid/expired/revoked/unknown Grant, empty/downgraded trust policy, partial import, favorable selection, and replay fail closed |
