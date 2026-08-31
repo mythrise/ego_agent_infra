@@ -64,7 +64,10 @@ def test_guest_task_generation_and_cross_boundary_duplicate_fail_closed() -> Non
     receipt = rpc.propose(proposal, context=context)
     assert rpc.propose(proposal, context=context) == receipt
     with pytest.raises(CandidateRejected, match="task_mismatch"):
-        rpc.propose(_proposal(task_id="forged"), context=context)
+        rpc.propose(
+            _proposal(task_id="forged", proposal_id="forged"),
+            context=_context(attempt="forged", idempotency_key="forged"),
+        )
     with pytest.raises(CandidateRejected, match="cross_boundary"):
         rpc.propose(
             proposal, context=_context(turn="turn-2", attempt="attempt-2", idempotency_key="idem-2")
@@ -162,5 +165,40 @@ def test_concurrent_duplicate_and_bound_queue_completion() -> None:
     assert result[0] == result[1]
     receipt_id = _receipt_id(result[0])
     rpc.complete(context=context, receipt_id=receipt_id)
+    rpc.complete(context=context, receipt_id=receipt_id)
     with pytest.raises(CandidateRejected, match="queue_completion"):
-        rpc.complete(context=context, receipt_id=receipt_id)
+        rpc.complete(context=context, receipt_id="forged")
+
+
+def test_semantic_quotas_and_terminal_retries_are_shared_across_handlers() -> None:
+    ledger = CandidateQuotaLedger()
+    for number in range(16):
+        context = _context(
+            task_id="task-%s" % number,
+            generation=number + 1,
+            attempt="a-%s" % number,
+            idempotency_key="i-%s" % number,
+        )
+        CandidateRpc(ledger=ledger).propose(
+            _proposal(
+                proposal_id="p-%s" % number, task_id="task-%s" % number, generation=number + 1
+            ),
+            context=context,
+        )
+    with pytest.raises(CandidateRejected, match="turn_quota_exhausted"):
+        CandidateRpc(ledger=ledger).propose(
+            _proposal(proposal_id="over", task_id="new", generation=99),
+            context=_context(task_id="new", generation=99, attempt="over", idempotency_key="over"),
+        )
+    bad = _context(attempt="bad", idempotency_key="bad")
+    with pytest.raises(CandidateRejected):
+        CandidateRpc(ledger=CandidateQuotaLedger()).propose(
+            _proposal(component={"gate": "x"}), context=bad
+        )
+
+
+@pytest.mark.parametrize("clock", [lambda: float("nan"), lambda: float("inf"), lambda: True])
+def test_invalid_clock_fails_closed(clock: object) -> None:
+    rpc = CandidateRpc(ledger=CandidateQuotaLedger(monotonic=clock))  # type: ignore[arg-type]
+    with pytest.raises(CandidateRejected, match="clock"):
+        rpc.propose(_proposal(), context=_context())

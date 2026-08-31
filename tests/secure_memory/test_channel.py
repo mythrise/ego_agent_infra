@@ -10,8 +10,9 @@ from benchmarks.secure_memory.substrate.channel import (
     ChannelKind,
     ChannelRejected,
     ChannelTrust,
-    DurableReceipt,
+    InMemoryReceiptStore,
     KeyProvisioner,
+    PendingReceipt,
 )
 
 
@@ -45,8 +46,8 @@ def _frame(codec: ChannelCodec, **overrides: object) -> bytes:
         sender_role="agentteams",
         recipient_role="broker",
         direction="request",
-        key_id="candidate-a-request-e1",
-        epoch=1,
+        key_id=codec.material.key_id,
+        epoch=codec.material.epoch,
         sequence=1,
         method="candidate.propose",
         idempotency_key="proposal-1",
@@ -56,13 +57,8 @@ def _frame(codec: ChannelCodec, **overrides: object) -> bytes:
     return codec.encode(**values)
 
 
-def _receipt(_envelope: object, digest: str) -> DurableReceipt:
-    return DurableReceipt(
-        request_frame_sha256=digest,
-        durable_receipt_id="journal-1",
-        receipt_frame=b'{"receipt":"ok"}',
-        installed=True,
-    )
+def _receipt(_envelope: object) -> PendingReceipt:
+    return PendingReceipt(receipt_payload={"receipt": "ok"})
 
 
 def test_trusted_epoch_key_identity_and_receipts_are_epoch_scoped() -> None:
@@ -71,7 +67,7 @@ def test_trusted_epoch_key_identity_and_receipts_are_epoch_scoped() -> None:
         first.receive(_frame(first, epoch=999), route=_receipt)
     epoch_two = _trust(epoch=2, key_id="candidate-a-request-e2")
     second = _codec(trusted_epoch=epoch_two)
-    frame = _frame(second, epoch=2, key_id="candidate-a-request-e2", idempotency_key="same")
+    frame = _frame(second, epoch=2, idempotency_key="same")
     assert second.receive(frame, route=_receipt) == b'{"receipt":"ok"}'
     assert _codec().key_for_frame(_frame(_codec())) != second.key_for_frame(frame)
 
@@ -83,11 +79,11 @@ def test_concurrent_identical_delivery_routes_once_and_waits_for_receipt() -> No
     entered = threading.Event()
     release = threading.Event()
 
-    def route(_envelope: object, digest: str) -> DurableReceipt:
-        calls.append(digest)
+    def route(_envelope: object) -> PendingReceipt:
+        calls.append(1)
         entered.set()
         release.wait(timeout=2)
-        return _receipt(_envelope, digest)
+        return _receipt(_envelope)
 
     results = []
     first = threading.Thread(target=lambda: results.append(codec.receive(frame, route=route)))
@@ -121,29 +117,10 @@ def test_frame_grammar_and_durable_receipt_validation_leave_window_retryable() -
     pretty = json.dumps(json.loads(frame), indent=2).encode()
     with pytest.raises(ChannelRejected, match="noncanonical_frame"):
         codec.receive(pretty, route=_receipt)
-    bad = [
-        DurableReceipt(
-            request_frame_sha256=codec.frame_sha256(frame),
-            durable_receipt_id="x",
-            receipt_frame=b"",
-            installed=True,
-        ),
-        DurableReceipt(
-            request_frame_sha256="0" * 64,
-            durable_receipt_id="x",
-            receipt_frame=b"{}",
-            installed=True,
-        ),
-        DurableReceipt(
-            request_frame_sha256=codec.frame_sha256(frame),
-            durable_receipt_id="x",
-            receipt_frame=b"{}",
-            installed=False,
-        ),
-    ]
+    bad = [PendingReceipt(receipt_payload={}), PendingReceipt(receipt_payload=1)]
     for receipt in bad:
         with pytest.raises(ChannelRejected):
-            codec.receive(frame, route=lambda _e, _d, result=receipt: result)
+            codec.receive(frame, route=lambda _e, result=receipt: result)
     assert codec.receive(frame, route=_receipt) == b'{"receipt":"ok"}'
 
 
@@ -161,3 +138,76 @@ def test_invalid_frames_leave_sequence_one_available(frame: bytes) -> None:
     with pytest.raises(ChannelRejected):
         codec.receive(frame, route=_receipt)
     assert codec.receive(_frame(codec), route=_receipt) == b'{"receipt":"ok"}'
+
+
+def test_provisioned_keys_are_unique_and_same_sequence_different_bytes_never_route_twice() -> None:
+    provisioner = KeyProvisioner.deterministic(b"channel-test-seed")
+    materials = [
+        provisioner.provision(
+            campaign_nonce="campaign-nonce",
+            channel=ChannelKind.CANDIDATE,
+            configuration_id=value,
+            sender_role="agentteams",
+            recipient_role="broker",
+            direction="request",
+            epoch=epoch,
+        )
+        for value, epoch in (("A", 1), ("B", 1), ("A", 2))
+    ]
+    assert len({item.key_id for item in materials}) == len(materials)
+    assert len({item.secret for item in materials}) == len(materials)
+    codec = ChannelCodec(
+        material=materials[0],
+        allowed_methods={ChannelKind.CANDIDATE: {"candidate.propose"}},
+        receipt_store=InMemoryReceiptStore(),
+    )
+    first = _frame(codec, payload={"proposal_id": "first"}, idempotency_key="first")
+    second = _frame(codec, payload={"proposal_id": "second"}, idempotency_key="second")
+    calls = []
+
+    def route(_envelope: object) -> PendingReceipt:
+        calls.append(1)
+        return PendingReceipt(receipt_payload={"receipt": "ok"})
+
+    results = []
+    errors = []
+
+    def deliver(value: bytes) -> None:
+        try:
+            results.append(codec.receive(value, route=route))
+        except ChannelRejected as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=lambda value=value: deliver(value)) for value in (first, second)
+    ]
+    [thread.start() for thread in threads]
+    [thread.join() for thread in threads]
+    assert len(calls) == 1
+    assert len(results) == 1
+    assert len(errors) == 1
+
+
+def test_store_owned_installation_reconciles_and_rejects_scalar_pending_payload() -> None:
+    material = KeyProvisioner.deterministic(b"channel-test-seed").provision(
+        campaign_nonce="campaign-nonce",
+        channel=ChannelKind.CANDIDATE,
+        configuration_id="A",
+        sender_role="agentteams",
+        recipient_role="broker",
+        direction="request",
+        epoch=1,
+    )
+    store = InMemoryReceiptStore()
+    codec = ChannelCodec(
+        material=material,
+        allowed_methods={ChannelKind.CANDIDATE: {"candidate.propose"}},
+        receipt_store=store,
+    )
+    frame = _frame(codec)
+    with pytest.raises(ChannelRejected):
+        codec.receive(frame, route=lambda _e: PendingReceipt(receipt_payload=1))
+    assert (
+        codec.receive(frame, route=lambda _e: PendingReceipt(receipt_payload={"ok": True}))
+        == b'{"ok":true}'
+    )

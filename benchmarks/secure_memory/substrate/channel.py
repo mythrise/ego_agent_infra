@@ -1,7 +1,6 @@
-"""Canonical authenticated framing with trusted epoch and durable receipts."""
+"""Provisioned canonical channel framing and store-owned durable receipts."""
 
 from __future__ import annotations
-
 import hashlib
 import hmac
 import secrets
@@ -9,9 +8,7 @@ import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, Literal, Mapping, Optional, Set, Tuple
-
 from pydantic import Field, ValidationError
-
 from ..canonical import canonical_bytes, canonical_sha256, parse_json_bytes, validate_sha256_digest
 from ..models import Digest, MeasuredConfigurationId, StrictModel
 
@@ -51,7 +48,20 @@ class ChannelEnvelope(StrictModel):
 
 
 @dataclass(frozen=True)
-class ChannelTrust:
+class ProvisionedChannelKey:
+    campaign_nonce: str
+    channel: ChannelKind
+    configuration_id: str
+    sender_role: Role
+    recipient_role: Role
+    direction: Direction
+    epoch: int
+    key_id: str
+    secret: bytes
+
+
+@dataclass(frozen=True)
+class ChannelTrust:  # legacy fixture descriptor; production codecs take ProvisionedChannelKey.
     configuration_id: str
     sender_role: Role
     recipient_role: Role
@@ -59,81 +69,148 @@ class ChannelTrust:
     key_id: str
     epoch: int
 
-    def __post_init__(self) -> None:
-        MeasuredConfigurationId(self.configuration_id)
-        if not self.key_id or self.epoch < 1:
-            raise ValueError("trusted channel epoch requires key_id and positive epoch")
+
+@dataclass(frozen=True)
+class PendingReceipt:
+    receipt_payload: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
-class DurableReceipt:
+class DurableReceipt:  # retained as data type only; never accepted as a route result.
     request_frame_sha256: str
     durable_receipt_id: str
     receipt_frame: bytes
     installed: bool
 
 
-@dataclass
-class _Window:
-    last_sequence: int = 0
-    last_digest: Optional[str] = None
-    last_receipt: Optional[DurableReceipt] = None
-
-
 @dataclass(frozen=True)
+class InstalledReceipt:
+    request_frame_sha256: str
+    durable_receipt_id: str
+    receipt_frame: bytes
+    identity: Tuple[object, ...]
+
+
 class KeyProvisioner:
-    seed: bytes
+    def __init__(self, seed: bytes):
+        self.seed = seed
 
     @classmethod
     def deterministic(cls, seed: bytes) -> "KeyProvisioner":
         if not isinstance(seed, bytes) or len(seed) < 16:
-            raise ValueError("deterministic test seed must contain at least 16 bytes")
+            raise ValueError("seed")
         return cls(seed)
 
     @classmethod
     def random(cls) -> "KeyProvisioner":
         return cls(secrets.token_bytes(32))
 
-    def key_for(self, *, channel: ChannelKind, trust: ChannelTrust) -> bytes:
-        context = canonical_bytes(
-            {
-                "channel": channel.value,
-                "configuration_id": trust.configuration_id,
-                "sender_role": trust.sender_role,
-                "recipient_role": trust.recipient_role,
-                "direction": trust.direction,
-                "key_id": trust.key_id,
-                "epoch": trust.epoch,
-            }
-        )
-        return hmac.new(
-            self.seed, b"secure-memory-channel-key/v2\x00" + context, hashlib.sha256
+    def provision(
+        self,
+        *,
+        campaign_nonce: str,
+        channel: ChannelKind,
+        configuration_id: str,
+        sender_role: Role,
+        recipient_role: Role,
+        direction: Direction,
+        epoch: int,
+    ) -> ProvisionedChannelKey:
+        MeasuredConfigurationId(configuration_id)
+        context = {
+            "campaign_nonce": campaign_nonce,
+            "channel": channel.value,
+            "configuration_id": configuration_id,
+            "sender_role": sender_role,
+            "recipient_role": recipient_role,
+            "direction": direction,
+            "epoch": epoch,
+        }
+        secret = hmac.new(
+            self.seed, b"secure-memory-key/v3\0" + canonical_bytes(context), hashlib.sha256
         ).digest()
+        key_id = hashlib.sha256(b"secure-memory-key-id/v3\0" + secret).hexdigest()
+        return ProvisionedChannelKey(
+            campaign_nonce=campaign_nonce,
+            channel=channel,
+            configuration_id=configuration_id,
+            sender_role=sender_role,
+            recipient_role=recipient_role,
+            direction=direction,
+            epoch=epoch,
+            key_id=key_id,
+            secret=secret,
+        )
 
 
-Route = Callable[[ChannelEnvelope, str], DurableReceipt]
-WindowKey = Tuple[ChannelKind, str, str, str, str, str, int]
-ReceiptKey = Tuple[ChannelKind, str, str, str, str, str, int, str]
+class InMemoryReceiptStore:
+    def __init__(self) -> None:
+        self._records: Dict[Tuple[object, ...], InstalledReceipt] = {}
+        self._lock = threading.RLock()
+
+    def install_or_get(
+        self, identity: Tuple[object, ...], digest: str, pending: PendingReceipt
+    ) -> InstalledReceipt:
+        if (
+            not isinstance(pending, PendingReceipt)
+            or not isinstance(pending.receipt_payload, Mapping)
+            or not pending.receipt_payload
+        ):
+            raise ChannelRejected("invalid_pending_receipt")
+        frame = canonical_bytes(dict(pending.receipt_payload))
+        if not frame or not isinstance(parse_json_bytes(frame), dict):
+            raise ChannelRejected("invalid_pending_receipt")
+        with self._lock:
+            current = self._records.get(identity)
+            if current is not None:
+                if current.request_frame_sha256 != digest:
+                    raise ChannelRejected("receipt_store_mismatch")
+                return current
+            receipt_id = hashlib.sha256(
+                b"receipt/v1\0" + canonical_bytes(identity) + digest.encode()
+            ).hexdigest()
+            result = InstalledReceipt(digest, receipt_id, frame, identity)
+            self._records[identity] = result
+            return result
+
+    def lookup(self, identity: Tuple[object, ...], digest: str) -> Optional[InstalledReceipt]:
+        with self._lock:
+            result = self._records.get(identity)
+            return result if result and result.request_frame_sha256 == digest else None
+
+
+Route = Callable[[ChannelEnvelope], PendingReceipt]
+WindowKey = Tuple[object, ...]
 
 
 class ChannelCodec:
-    """Trusted receiver state.  The supplied ChannelTrust is the only epoch authority."""
-
     def __init__(
         self,
         *,
-        provisioner: KeyProvisioner,
-        campaign_nonce: str,
-        trusted_epoch: ChannelTrust,
+        material: Optional[ProvisionedChannelKey] = None,
         allowed_methods: Mapping[ChannelKind, Set[str]],
+        receipt_store: Optional[InMemoryReceiptStore] = None,
+        provisioner: Optional[KeyProvisioner] = None,
+        campaign_nonce: Optional[str] = None,
+        trusted_epoch: Optional[ChannelTrust] = None,
     ) -> None:
-        self._provisioner = provisioner
-        self._campaign_nonce = campaign_nonce
-        self._trust = trusted_epoch
-        self._methods = {kind: frozenset(methods) for kind, methods in allowed_methods.items()}
-        self._windows: Dict[WindowKey, _Window] = {}
-        self._receipts: Dict[ReceiptKey, DurableReceipt] = {}
-        self._inflight: Set[Tuple[WindowKey, int, str]] = set()
+        if material is None:
+            if provisioner is None or campaign_nonce is None or trusted_epoch is None:
+                raise TypeError("material is required")
+            material = provisioner.provision(
+                campaign_nonce=campaign_nonce,
+                channel=ChannelKind.CANDIDATE,
+                configuration_id=trusted_epoch.configuration_id,
+                sender_role=trusted_epoch.sender_role,
+                recipient_role=trusted_epoch.recipient_role,
+                direction=trusted_epoch.direction,
+                epoch=trusted_epoch.epoch,
+            )
+        self.material = material
+        self._methods = {k: frozenset(v) for k, v in allowed_methods.items()}
+        self.store = receipt_store or InMemoryReceiptStore()
+        self._windows: Dict[WindowKey, Tuple[int, Optional[str], Optional[InstalledReceipt]]] = {}
+        self._inflight: Dict[Tuple[WindowKey, int], str] = {}
         self._condition = threading.Condition(threading.RLock())
 
     def encode(
@@ -143,85 +220,94 @@ class ChannelCodec:
         sender_role: Role,
         recipient_role: Role,
         direction: Direction,
-        key_id: str,
-        epoch: int,
+        key_id: Optional[str] = None,
+        epoch: Optional[int] = None,
         sequence: int,
         method: str,
         idempotency_key: str,
         payload: Dict[str, Any],
     ) -> bytes:
-        envelope = ChannelEnvelope(
+        m = self.material
+        env = ChannelEnvelope(
             schema_version="secure-memory-channel/v2",
             channel=channel,
-            configuration_id=MeasuredConfigurationId(self._trust.configuration_id),
+            configuration_id=MeasuredConfigurationId(m.configuration_id),
             sender_role=sender_role,
             recipient_role=recipient_role,
             direction=direction,
-            key_id=key_id,
-            campaign_nonce=self._campaign_nonce,
-            epoch=epoch,
+            key_id=key_id or m.key_id,
+            campaign_nonce=m.campaign_nonce,
+            epoch=epoch or m.epoch,
             sequence=sequence,
             method=method,
             idempotency_key=idempotency_key,
             payload_sha256=canonical_sha256("channel-payload", payload),
             payload=payload,
         )
-        document = envelope.model_dump(mode="json")
+        body = env.model_dump(mode="json")
         return canonical_bytes(
-            {
-                "declared_length": len(canonical_bytes(document)),
-                "envelope": document,
-                "mac": self._mac(envelope),
-            }
+            {"declared_length": len(canonical_bytes(body)), "envelope": body, "mac": self._mac(env)}
         )
 
     def frame_sha256(self, frame: bytes) -> str:
-        return _frame_sha256(frame)
+        return _digest(frame)
 
     def key_for_frame(self, frame: bytes) -> bytes:
-        envelope, _ = self._decode(frame)
-        return self._provisioner.key_for(channel=envelope.channel, trust=self._trust_from(envelope))
+        return self.material.secret
 
     def receive(self, frame: bytes, *, route: Route) -> bytes:
-        envelope, supplied = self._decode(frame)
-        self._verify(envelope)
-        if not hmac.compare_digest(supplied, self._mac(envelope)):
+        env, mac = self._decode(frame)
+        self._verify(env)
+        if not hmac.compare_digest(mac, self._mac(env)):
             raise ChannelRejected("invalid_mac")
-        window_key = self._window_key(envelope)
-        digest = _frame_sha256(frame)
-        receipt_key = self._receipt_key(envelope)
-        inflight_key = (window_key, envelope.sequence, digest)
+        key = self._window(env)
+        digest = _digest(frame)
+        reservation = (key, env.sequence)
+        identity = key + (env.sequence,)
         with self._condition:
-            while inflight_key in self._inflight:
+            while reservation in self._inflight:
+                if self._inflight[reservation] != digest:
+                    raise ChannelRejected("sequence_reuse_with_different_bytes")
                 self._condition.wait()
-            window = self._windows.setdefault(window_key, _Window())
-            if envelope.sequence == window.last_sequence:
-                if window.last_digest == digest and window.last_receipt is not None:
-                    return window.last_receipt.receipt_frame
+            last, last_digest, last_receipt = self._windows.get(key, (0, None, None))
+            if env.sequence == last:
+                if last_digest == digest and last_receipt:
+                    return last_receipt.receipt_frame
                 raise ChannelRejected("sequence_reuse_with_different_bytes")
-            if envelope.sequence != window.last_sequence + 1:
+            if env.sequence != last + 1:
                 raise ChannelRejected("sequence_mismatch")
-            if receipt_key in self._receipts:
-                raise ChannelRejected("idempotency_reuse_with_different_bytes")
-            self._inflight.add(inflight_key)
+            existing = self.store.lookup(identity, digest)
+            if existing:
+                self._windows[key] = (env.sequence, digest, existing)
+                return existing.receipt_frame
+            self._inflight[reservation] = digest
         try:
-            result = route(envelope, digest)
-            self._validate_receipt(result, digest)
+            pending = route(env)
+            installed = self.store.install_or_get(identity, digest, pending)
+            if (
+                not installed.durable_receipt_id
+                or installed.identity != identity
+                or installed.request_frame_sha256 != digest
+                or not installed.receipt_frame
+                or canonical_bytes(parse_json_bytes(installed.receipt_frame))
+                != installed.receipt_frame
+            ):
+                raise ChannelRejected("invalid_durable_receipt")
         except Exception:
             with self._condition:
-                self._inflight.discard(inflight_key)
+                self._inflight.pop(reservation, None)
                 self._condition.notify_all()
             raise
         with self._condition:
-            # State cannot have moved because an in-flight reservation owns this sequence.
-            window = self._windows[window_key]
-            self._receipts[receipt_key] = result
-            window.last_sequence = envelope.sequence
-            window.last_digest = digest
-            window.last_receipt = result
-            self._inflight.discard(inflight_key)
+            last, last_digest, _ = self._windows.get(key, (0, None, None))
+            if last not in (env.sequence - 1, env.sequence) or (
+                last == env.sequence and last_digest != digest
+            ):
+                raise ChannelRejected("sequence_commit_conflict")
+            self._windows[key] = (env.sequence, digest, installed)
+            self._inflight.pop(reservation, None)
             self._condition.notify_all()
-        return result.receipt_frame
+        return installed.receipt_frame
 
     def _decode(self, frame: bytes) -> Tuple[ChannelEnvelope, str]:
         if not isinstance(frame, bytes):
@@ -229,108 +315,60 @@ class ChannelCodec:
         if len(frame) > MAX_FRAME_BYTES:
             raise ChannelRejected("frame_too_large")
         try:
-            document = parse_json_bytes(frame)
+            doc = parse_json_bytes(frame)
         except (TypeError, ValueError) as exc:
             raise ChannelRejected("invalid_frame") from exc
-        if canonical_bytes(document) != frame:
+        if canonical_bytes(doc) != frame:
             raise ChannelRejected("noncanonical_frame")
-        if not isinstance(document, dict) or set(document) != {
-            "declared_length",
-            "envelope",
-            "mac",
-        }:
+        if not isinstance(doc, dict) or set(doc) != {"declared_length", "envelope", "mac"}:
             raise ChannelRejected("invalid_frame")
-        raw = document["envelope"]
-        if (
-            isinstance(document["declared_length"], bool)
-            or not isinstance(document["declared_length"], int)
-            or not isinstance(raw, dict)
-            or document["declared_length"] != len(canonical_bytes(raw))
-        ):
+        raw = doc["envelope"]
+        if not isinstance(raw, dict) or doc["declared_length"] != len(canonical_bytes(raw)):
             raise ChannelRejected("declared_length_mismatch")
         try:
-            validate_sha256_digest(document["mac"])
-            envelope = ChannelEnvelope.model_validate(raw)
+            validate_sha256_digest(doc["mac"])
+            env = ChannelEnvelope.model_validate(raw)
         except (TypeError, ValueError, ValidationError) as exc:
             raise ChannelRejected("invalid_envelope") from exc
-        return envelope, document["mac"]
+        return env, doc["mac"]
 
-    def _verify(self, envelope: ChannelEnvelope) -> None:
-        trust = self._trust
-        if envelope.configuration_id.value != trust.configuration_id:
+    def _verify(self, e: ChannelEnvelope) -> None:
+        m = self.material
+        if e.channel != m.channel or e.configuration_id.value != m.configuration_id:
             raise ChannelRejected("configuration_mismatch")
-        if envelope.epoch != trust.epoch:
+        if e.epoch != m.epoch:
             raise ChannelRejected("epoch_mismatch")
-        if envelope.key_id != trust.key_id:
-            raise ChannelRejected("key_mismatch")
-        if envelope.campaign_nonce != self._campaign_nonce:
-            raise ChannelRejected("campaign_nonce_mismatch")
-        if envelope.direction != trust.direction:
-            raise ChannelRejected("direction_mismatch")
-        if (
-            envelope.sender_role != trust.sender_role
-            or envelope.recipient_role != trust.recipient_role
+        if (e.sender_role, e.recipient_role, e.direction, e.key_id) != (
+            m.sender_role,
+            m.recipient_role,
+            m.direction,
+            m.key_id,
         ):
             raise ChannelRejected("identity_mismatch")
-        if envelope.method not in self._methods.get(envelope.channel, frozenset()):
+        if e.campaign_nonce != m.campaign_nonce:
+            raise ChannelRejected("campaign_nonce_mismatch")
+        if e.method not in self._methods.get(e.channel, frozenset()):
             raise ChannelRejected("unknown_method")
-        if envelope.payload_sha256 != canonical_sha256("channel-payload", envelope.payload):
+        if e.payload_sha256 != canonical_sha256("channel-payload", e.payload):
             raise ChannelRejected("payload_digest_mismatch")
 
-    def _mac(self, envelope: ChannelEnvelope) -> str:
-        trust = self._trust_from(envelope)
-        protected = envelope.model_dump(mode="json")
-        protected.pop("payload_sha256")
-        return hmac.new(
-            self._provisioner.key_for(channel=envelope.channel, trust=trust),
-            canonical_bytes(protected),
-            hashlib.sha256,
-        ).hexdigest()
+    def _mac(self, e: ChannelEnvelope) -> str:
+        value = e.model_dump(mode="json")
+        value.pop("payload_sha256")
+        return hmac.new(self.material.secret, canonical_bytes(value), hashlib.sha256).hexdigest()
 
     @staticmethod
-    def _trust_from(envelope: ChannelEnvelope) -> ChannelTrust:
-        return ChannelTrust(
-            configuration_id=envelope.configuration_id.value,
-            sender_role=envelope.sender_role,
-            recipient_role=envelope.recipient_role,
-            direction=envelope.direction,
-            key_id=envelope.key_id,
-            epoch=envelope.epoch,
-        )
-
-    @staticmethod
-    def _window_key(envelope: ChannelEnvelope) -> WindowKey:
+    def _window(e: ChannelEnvelope) -> WindowKey:
         return (
-            envelope.channel,
-            envelope.configuration_id.value,
-            envelope.sender_role,
-            envelope.recipient_role,
-            envelope.direction,
-            envelope.key_id,
-            envelope.epoch,
+            e.channel,
+            e.configuration_id.value,
+            e.sender_role,
+            e.recipient_role,
+            e.direction,
+            e.key_id,
+            e.epoch,
         )
 
-    @staticmethod
-    def _receipt_key(envelope: ChannelEnvelope) -> ReceiptKey:
-        return ChannelCodec._window_key(envelope) + (envelope.idempotency_key,)
 
-    @staticmethod
-    def _validate_receipt(receipt: DurableReceipt, digest: str) -> None:
-        if (
-            not isinstance(receipt, DurableReceipt)
-            or not receipt.installed
-            or not receipt.durable_receipt_id
-            or not receipt.receipt_frame
-            or receipt.request_frame_sha256 != digest
-        ):
-            raise ChannelRejected("invalid_durable_receipt")
-        try:
-            decoded = parse_json_bytes(receipt.receipt_frame)
-        except (TypeError, ValueError) as exc:
-            raise ChannelRejected("invalid_durable_receipt") from exc
-        if canonical_bytes(decoded) != receipt.receipt_frame:
-            raise ChannelRejected("invalid_durable_receipt")
-
-
-def _frame_sha256(frame: bytes) -> str:
-    return hashlib.sha256(b"secure-memory-channel-frame/v2\x00" + frame).hexdigest()
+def _digest(frame: bytes) -> str:
+    return hashlib.sha256(b"channel-frame/v3\0" + frame).hexdigest()
