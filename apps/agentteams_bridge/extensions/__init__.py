@@ -1,3 +1,9 @@
+from .attention import (
+    AttentionBudgetExceeded,
+    AttentionSourceContext,
+    build_attention_packet,
+    deterministic_conservative_token_bound,
+)
 from .contracts import (
     ApprovalDisclosure,
     AttentionFactRef,
@@ -28,13 +34,23 @@ from .safety import (
     evaluate_effect_safety,
     validate_approval_receipt,
 )
+from .user_status import (
+    AdmittedStatusEvent,
+    StatusEventType,
+    StatusLocale,
+    StatusStateCode,
+    project_user_status,
+)
 from .workspace_adapter import WORKSPACE_MAPPING_VERSION, build_workspace_effect
 
 __all__ = [
+    "AdmittedStatusEvent",
     "ApprovalDisclosure",
     "ApprovalReceipt",
+    "AttentionBudgetExceeded",
     "AttentionFactRef",
     "AttentionPacket",
+    "AttentionSourceContext",
     "CampaignBinding",
     "CanonicalEffect",
     "EnforcementMode",
@@ -47,6 +63,9 @@ __all__ = [
     "RiskStage",
     "SafetyDecision",
     "SafetyVerdict",
+    "StatusEventType",
+    "StatusLocale",
+    "StatusStateCode",
     "SystemRiskClassifier",
     "UserMessageMode",
     "UserStatusProjection",
@@ -55,9 +74,12 @@ __all__ = [
     "WorkNode",
     "WORKSPACE_MAPPING_VERSION",
     "build_approval_receipt",
+    "build_attention_packet",
     "build_guardian_decision",
     "build_workspace_effect",
     "campaign_binding_sha256",
+    "deterministic_conservative_token_bound",
     "evaluate_effect_safety",
+    "project_user_status",
     "validate_approval_receipt",
 ]
