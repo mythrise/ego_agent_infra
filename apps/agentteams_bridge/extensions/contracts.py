@@ -8,10 +8,14 @@ from pydantic import Field, JsonValue, field_validator, model_validator
 
 from benchmarks.secure_memory.canonical import canonical_sha256
 from benchmarks.secure_memory.models import (
+    NO_WORKSPACE_CHECKPOINT_SHA256,
     Digest,
     ExecutionPhaseOwner,
     MeasuredConfigurationId,
+    RunManifest,
+    SignedTaskLeaseCore,
     StrictModel,
+    validate_task_lease_core,
 )
 
 
@@ -93,27 +97,145 @@ class CampaignBinding(StrictModel):
 
     @model_validator(mode="after")
     def validate_owner_binding(self) -> "CampaignBinding":
-        measured_owners = {
+        owner = self.execution_phase_owner
+        initial_owners = {
             ExecutionPhaseOwner.A,
             ExecutionPhaseOwner.B,
             ExecutionPhaseOwner.C,
             ExecutionPhaseOwner.D,
             ExecutionPhaseOwner.E,
-            ExecutionPhaseOwner.F,
         }
-        if self.execution_phase_owner in measured_owners:
-            if (
+        if owner in initial_owners:
+            if self.configuration_id is None or self.configuration_id.value != owner.value:
+                raise ValueError("initial execution phase owner must match configuration_id")
+            if self.post_selection_extension_sha256 is not None:
+                raise ValueError("initial A-E owner forbids a post-selection extension")
+            self._validate_real_problem()
+        elif owner in {ExecutionPhaseOwner.F, ExecutionPhaseOwner.F_SEALED}:
+            if self.configuration_id is not MeasuredConfigurationId.F:
+                raise ValueError("F and F_SEALED owners require configuration F")
+            if self.post_selection_extension_sha256 is None:
+                raise ValueError("F and F_SEALED owners require a post-selection extension")
+            self._validate_real_problem()
+        elif owner is ExecutionPhaseOwner.WINNER_SEALED:
+            if self.configuration_id not in {
+                MeasuredConfigurationId.C,
+                MeasuredConfigurationId.D,
+                MeasuredConfigurationId.E,
+            }:
+                raise ValueError("WINNER_SEALED requires configuration C, D, or E")
+            if self.post_selection_extension_sha256 is None:
+                raise ValueError("WINNER_SEALED requires a post-selection extension")
+            self._validate_real_problem()
+        elif owner is ExecutionPhaseOwner.QUALIFICATION:
+            if not (
                 self.configuration_id is None
-                or self.configuration_id.value != self.execution_phase_owner.value
+                and self.post_selection_extension_sha256 is None
+                and self.problem_id == "__qualification__"
+                and self.turn == 1
+                and 1 <= self.generation <= 16
+                and self.workspace_checkpoint_sha256 == NO_WORKSPACE_CHECKPOINT_SHA256
+                and self.memory_watermark == 0
             ):
-                raise ValueError("execution phase owner must match configuration_id")
-        elif self.execution_phase_owner in {
-            ExecutionPhaseOwner.QUALIFICATION,
-            ExecutionPhaseOwner.OPTIMIZER,
-        }:
-            if self.configuration_id is not None:
-                raise ValueError("qualification/optimizer owners cannot bind a configuration")
+                raise ValueError("qualification owner sentinel fields are invalid")
+        elif owner is ExecutionPhaseOwner.OPTIMIZER:
+            if not (
+                self.configuration_id is None
+                and self.post_selection_extension_sha256 is None
+                and self.problem_id == "__optimizer__"
+                and self.turn == 1
+                and 1 <= self.generation <= 6
+                and self.workspace_checkpoint_sha256 == NO_WORKSPACE_CHECKPOINT_SHA256
+                and self.memory_watermark == 0
+            ):
+                raise ValueError("optimizer owner sentinel fields are invalid")
+        elif owner is ExecutionPhaseOwner.GPU_DEMO:
+            if self.configuration_id not in {
+                MeasuredConfigurationId.C,
+                MeasuredConfigurationId.D,
+                MeasuredConfigurationId.E,
+                MeasuredConfigurationId.F,
+            }:
+                raise ValueError("GPU_DEMO requires configuration C, D, E, or F")
+            extension_is_valid = (
+                self.post_selection_extension_sha256 is not None
+                if self.configuration_id is MeasuredConfigurationId.F
+                else self.post_selection_extension_sha256 is None
+            )
+            if not (
+                self.problem_id == "__gpu_demo__"
+                and self.turn == 1
+                and self.generation == 1
+                and extension_is_valid
+            ):
+                raise ValueError("GPU_DEMO owner sentinel fields are invalid")
+        else:  # pragma: no cover - exhaustive enum guard
+            raise ValueError("unsupported execution phase owner")
         return self
+
+    def _validate_real_problem(self) -> None:
+        if self.problem_id.startswith("__"):
+            raise ValueError("measured campaign owner requires a real problem ID")
+
+    @classmethod
+    def reconstruct_from_already_signature_verified_core(
+        cls,
+        core: SignedTaskLeaseCore,
+        manifest: RunManifest,
+        *,
+        released_problem_id: Optional[str] = None,
+        released_turn: Optional[int] = None,
+        released_generation: Optional[int] = None,
+        current_requirement_ledger_sha256: Optional[str] = None,
+        current_workspace_checkpoint_sha256: Optional[str] = None,
+        current_memory_watermark: Optional[int] = None,
+        verified_post_selection_extension_sha256: Optional[str] = None,
+        selected_original_configuration_id: Optional[MeasuredConfigurationId] = None,
+        qualification_case_index: Optional[int] = None,
+        optimizer_input_sha256: Optional[str] = None,
+        optimizer_proposal_index: Optional[int] = None,
+        gpu_selected_configuration_id: Optional[MeasuredConfigurationId] = None,
+        gpu_authorization_core_sha256: Optional[str] = None,
+    ) -> "CampaignBinding":
+        """Reconstruct from a core whose signature the caller already verified.
+
+        This method does not verify a signature. It applies the manifest and
+        owner-specific authoritative context checks before copying lease fields;
+        digests carried by the lease are never accepted as their own authority.
+        """
+
+        validated = validate_task_lease_core(
+            core,
+            manifest,
+            released_problem_id=released_problem_id,
+            released_turn=released_turn,
+            released_generation=released_generation,
+            current_requirement_ledger_sha256=current_requirement_ledger_sha256,
+            current_workspace_checkpoint_sha256=current_workspace_checkpoint_sha256,
+            current_memory_watermark=current_memory_watermark,
+            verified_post_selection_extension_sha256=(verified_post_selection_extension_sha256),
+            selected_original_configuration_id=selected_original_configuration_id,
+            qualification_case_index=qualification_case_index,
+            optimizer_input_sha256=optimizer_input_sha256,
+            optimizer_proposal_index=optimizer_proposal_index,
+            gpu_selected_configuration_id=gpu_selected_configuration_id,
+            gpu_authorization_core_sha256=gpu_authorization_core_sha256,
+        )
+        return cls(
+            schema_version="agentteams-campaign-envelope/v1",
+            campaign_id=validated.campaign_id,
+            configuration_id=validated.configuration_id,
+            execution_phase_owner=validated.execution_phase_owner,
+            problem_id=validated.problem_id,
+            turn=validated.turn,
+            generation=validated.generation,
+            manifest_sha256=validated.manifest_sha256,
+            post_selection_extension_sha256=(validated.post_selection_extension_sha256),
+            policy_sha256=validated.policy_sha256,
+            requirement_ledger_sha256=validated.requirement_ledger_sha256,
+            workspace_checkpoint_sha256=validated.workspace_checkpoint_sha256,
+            memory_watermark=validated.memory_watermark,
+        )
 
 
 class CanonicalEffect(StrictModel):

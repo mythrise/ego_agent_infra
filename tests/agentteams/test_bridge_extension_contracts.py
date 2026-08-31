@@ -37,7 +37,13 @@ from benchmarks.secure_memory.manifest import (
     SchemaContractError,
     verify_schema_contract,
 )
-from benchmarks.secure_memory.models import ExecutionPhaseOwner, MeasuredConfigurationId
+from benchmarks.secure_memory.models import (
+    NO_WORKSPACE_CHECKPOINT_SHA256,
+    ExecutionPhaseOwner,
+    MeasuredConfigurationId,
+    SignedTaskLeaseCore,
+)
+from tests.secure_memory.test_canonical_and_manifest import frozen_manifest, lease_data
 
 
 SHA = "a" * 64
@@ -315,6 +321,277 @@ def _projection_payload(
         "agentteams-user-status-projection", values
     )
     return values
+
+
+def _campaign_binding_payload(
+    owner: ExecutionPhaseOwner,
+    configuration_id: Optional[MeasuredConfigurationId],
+    **overrides: Any,
+) -> Dict[str, Any]:
+    values: Dict[str, Any] = {
+        "schema_version": "agentteams-campaign-envelope/v1",
+        "campaign_id": "campaign-1",
+        "configuration_id": configuration_id,
+        "execution_phase_owner": owner,
+        "problem_id": "problem-1",
+        "turn": 2,
+        "generation": 3,
+        "manifest_sha256": SHA,
+        "post_selection_extension_sha256": None,
+        "policy_sha256": SHA,
+        "requirement_ledger_sha256": SHA,
+        "workspace_checkpoint_sha256": SHA,
+        "memory_watermark": 7,
+    }
+    if owner in {ExecutionPhaseOwner.F, ExecutionPhaseOwner.F_SEALED}:
+        values["post_selection_extension_sha256"] = OTHER_SHA
+    elif owner is ExecutionPhaseOwner.WINNER_SEALED:
+        values["post_selection_extension_sha256"] = OTHER_SHA
+    elif owner is ExecutionPhaseOwner.QUALIFICATION:
+        values.update(
+            problem_id="__qualification__",
+            turn=1,
+            generation=1,
+            workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
+            memory_watermark=0,
+        )
+    elif owner is ExecutionPhaseOwner.OPTIMIZER:
+        values.update(
+            problem_id="__optimizer__",
+            turn=1,
+            generation=1,
+            workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
+            memory_watermark=0,
+        )
+    elif owner is ExecutionPhaseOwner.GPU_DEMO:
+        values.update(problem_id="__gpu_demo__", turn=1, generation=1)
+        if configuration_id is MeasuredConfigurationId.F:
+            values["post_selection_extension_sha256"] = OTHER_SHA
+    values.update(overrides)
+    return values
+
+
+@pytest.mark.parametrize(
+    (
+        "owner",
+        "configuration_id",
+        "overrides",
+    ),
+    [
+        *[(ExecutionPhaseOwner(value), MeasuredConfigurationId(value), {}) for value in "ABCDE"],
+        (ExecutionPhaseOwner.F, MeasuredConfigurationId.F, {}),
+        (ExecutionPhaseOwner.F_SEALED, MeasuredConfigurationId.F, {}),
+        *[
+            (
+                ExecutionPhaseOwner.WINNER_SEALED,
+                MeasuredConfigurationId(value),
+                {},
+            )
+            for value in "CDE"
+        ],
+        (
+            ExecutionPhaseOwner.QUALIFICATION,
+            None,
+            {"generation": 1},
+        ),
+        (
+            ExecutionPhaseOwner.QUALIFICATION,
+            None,
+            {"generation": 16},
+        ),
+        (
+            ExecutionPhaseOwner.OPTIMIZER,
+            None,
+            {"generation": 1},
+        ),
+        (
+            ExecutionPhaseOwner.OPTIMIZER,
+            None,
+            {"generation": 6},
+        ),
+        *[(ExecutionPhaseOwner.GPU_DEMO, MeasuredConfigurationId(value), {}) for value in "CDEF"],
+    ],
+)
+def test_campaign_binding_accepts_only_intrinsically_valid_owner_sentinels(
+    owner: ExecutionPhaseOwner,
+    configuration_id: Optional[MeasuredConfigurationId],
+    overrides: Dict[str, Any],
+) -> None:
+    binding = CampaignBinding.model_validate(
+        _campaign_binding_payload(owner, configuration_id, **overrides)
+    )
+
+    assert binding.execution_phase_owner is owner
+    assert binding.configuration_id is configuration_id
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _campaign_binding_payload(
+            ExecutionPhaseOwner.WINNER_SEALED,
+            None,
+            problem_id="ordinary-problem",
+            post_selection_extension_sha256=None,
+            memory_watermark=0,
+        ),
+        _campaign_binding_payload(
+            ExecutionPhaseOwner.QUALIFICATION,
+            None,
+            problem_id="not-the-qualification-sentinel",
+            turn=5,
+            generation=999,
+            post_selection_extension_sha256=OTHER_SHA,
+            workspace_checkpoint_sha256=SHA,
+            memory_watermark=42,
+        ),
+    ],
+)
+def test_campaign_binding_rejects_exact_reviewer_blocker_payloads(
+    payload: Dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match="configuration|extension|sentinel"):
+        CampaignBinding.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("owner", "configuration_id", "overrides"),
+    [
+        *[
+            (ExecutionPhaseOwner.A, MeasuredConfigurationId.A, overrides)
+            for overrides in (
+                {"post_selection_extension_sha256": OTHER_SHA},
+                {"problem_id": "__qualification__"},
+            )
+        ],
+        *[
+            (ExecutionPhaseOwner.F, MeasuredConfigurationId.F, overrides)
+            for overrides in (
+                {"post_selection_extension_sha256": None},
+                {"problem_id": "__gpu_demo__"},
+            )
+        ],
+        (
+            ExecutionPhaseOwner.F_SEALED,
+            MeasuredConfigurationId.F,
+            {"post_selection_extension_sha256": None},
+        ),
+        (ExecutionPhaseOwner.F_SEALED, MeasuredConfigurationId.E, {}),
+        (
+            ExecutionPhaseOwner.WINNER_SEALED,
+            None,
+            {"problem_id": "problem-1", "post_selection_extension_sha256": None},
+        ),
+        (ExecutionPhaseOwner.WINNER_SEALED, MeasuredConfigurationId.F, {}),
+        *[
+            (ExecutionPhaseOwner.WINNER_SEALED, MeasuredConfigurationId.D, overrides)
+            for overrides in (
+                {"post_selection_extension_sha256": None},
+                {"problem_id": "__optimizer__"},
+            )
+        ],
+        (ExecutionPhaseOwner.QUALIFICATION, MeasuredConfigurationId.A, {}),
+        *[
+            (ExecutionPhaseOwner.QUALIFICATION, None, {field: value})
+            for field, value in (
+                ("problem_id", "problem-1"),
+                ("turn", 2),
+                ("generation", 17),
+                ("workspace_checkpoint_sha256", SHA),
+                ("memory_watermark", 1),
+                ("post_selection_extension_sha256", OTHER_SHA),
+            )
+        ],
+        (ExecutionPhaseOwner.OPTIMIZER, MeasuredConfigurationId.A, {}),
+        *[
+            (ExecutionPhaseOwner.OPTIMIZER, None, {field: value})
+            for field, value in (
+                ("problem_id", "problem-1"),
+                ("turn", 2),
+                ("generation", 7),
+                ("workspace_checkpoint_sha256", SHA),
+                ("memory_watermark", 1),
+                ("post_selection_extension_sha256", OTHER_SHA),
+            )
+        ],
+        (ExecutionPhaseOwner.GPU_DEMO, MeasuredConfigurationId.A, {}),
+        *[
+            (ExecutionPhaseOwner.GPU_DEMO, MeasuredConfigurationId.C, {field: value})
+            for field, value in (
+                ("problem_id", "problem-1"),
+                ("turn", 2),
+                ("generation", 2),
+                ("post_selection_extension_sha256", OTHER_SHA),
+            )
+        ],
+        (
+            ExecutionPhaseOwner.GPU_DEMO,
+            MeasuredConfigurationId.F,
+            {"post_selection_extension_sha256": None},
+        ),
+    ],
+)
+def test_campaign_binding_rejects_malformed_owner_sentinels(
+    owner: ExecutionPhaseOwner,
+    configuration_id: Optional[MeasuredConfigurationId],
+    overrides: Dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match="owner|configuration|extension|sentinel|GPU"):
+        CampaignBinding.model_validate(
+            _campaign_binding_payload(owner, configuration_id, **overrides)
+        )
+
+
+def test_campaign_binding_reconstruction_rejects_guest_digest_authority() -> None:
+    manifest = frozen_manifest()
+    untrusted = lease_data()
+    untrusted["manifest_sha256"] = OTHER_SHA
+    core = SignedTaskLeaseCore.model_validate(untrusted)
+
+    with pytest.raises(ValueError, match="manifest_sha256"):
+        CampaignBinding.reconstruct_from_already_signature_verified_core(
+            core,
+            manifest,
+            released_problem_id="problem-1",
+            released_turn=2,
+            released_generation=3,
+            current_requirement_ledger_sha256=untrusted["requirement_ledger_sha256"],
+            current_workspace_checkpoint_sha256=untrusted["workspace_checkpoint_sha256"],
+            current_memory_watermark=7,
+        )
+
+
+def test_campaign_binding_reconstruction_copies_exact_validated_lease_fields() -> None:
+    manifest = frozen_manifest()
+    core_data = lease_data()
+    core = SignedTaskLeaseCore.model_validate(core_data)
+
+    binding = CampaignBinding.reconstruct_from_already_signature_verified_core(
+        core,
+        manifest,
+        released_problem_id="problem-1",
+        released_turn=2,
+        released_generation=3,
+        current_requirement_ledger_sha256=core_data["requirement_ledger_sha256"],
+        current_workspace_checkpoint_sha256=core_data["workspace_checkpoint_sha256"],
+        current_memory_watermark=7,
+    )
+
+    assert binding.model_dump(mode="python") == {
+        "schema_version": "agentteams-campaign-envelope/v1",
+        "campaign_id": "campaign-test",
+        "configuration_id": MeasuredConfigurationId.A,
+        "execution_phase_owner": ExecutionPhaseOwner.A,
+        "problem_id": "problem-1",
+        "turn": 2,
+        "generation": 3,
+        "manifest_sha256": manifest.manifest_sha256,
+        "post_selection_extension_sha256": None,
+        "policy_sha256": manifest.core.effect_policy_bundle_sha256,
+        "requirement_ledger_sha256": core_data["requirement_ledger_sha256"],
+        "workspace_checkpoint_sha256": core_data["workspace_checkpoint_sha256"],
+        "memory_watermark": 7,
+    }
 
 
 def test_campaign_binding_rejects_an_owner_configuration_mismatch() -> None:
