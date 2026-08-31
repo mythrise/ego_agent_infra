@@ -230,7 +230,8 @@ class ProviderBroker:
             raise BrokerDenied("signature")
         if request.lease_sha256 != lease.core_sha256:
             raise BrokerDenied("lease_digest")
-        if request.provider_model != capability.model or request.max_output_tokens != ticket.max_output_tokens:
+        if (request.provider_model != capability.model or request.max_input_tokens != ticket.max_input_tokens
+                or request.max_output_tokens != ticket.max_output_tokens):
             raise BrokerDenied("qualified_request")
         if request.request_class != ticket.effective_request_class or request.campaign_id != ticket.campaign_id:
             raise BrokerDenied("trusted_binding")

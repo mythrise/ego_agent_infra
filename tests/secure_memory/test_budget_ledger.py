@@ -85,6 +85,13 @@ def test_trusted_context_rejects_stale_ticket_before_reservation():
         BudgetLedger(templates=(_template(),), tickets=(ticket,), manifest_sha256=SHA, trust_context=context)
 
 
+def test_template_problem_and_turn_bind_the_live_lease_row():
+    ledger, _lease_one = _ledger()
+    with pytest.raises(BudgetDenied, match="template_row"):
+        ledger.reserve("ticket-1", _lease("ticket-1", problem_id="p2"), requester_role="Worker",
+                       tokenizer_estimate=1, calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+
+
 def test_frozen_caps_and_four_request_margin_are_exact():
     assert CAMPAIGN_RESERVATION.requests == 356
     assert CAMPAIGN_RESERVATION.input == 3_306_000

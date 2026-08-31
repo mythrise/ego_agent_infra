@@ -142,6 +142,8 @@ class BudgetLedger:
             raise BudgetDenied("manifest")
         self._manifest_sha256 = manifest_sha256
         self._trust_context = trust_context
+        if not trust_context.issuer_id or not trust_context.key_id:
+            raise BudgetDenied("trust_identity")
         current = trust_context.current_sequence()
         self._reservation_cap = CAMPAIGN_RESERVATION
         self._absolute_cap = CAMPAIGN_ABSOLUTE
@@ -162,14 +164,23 @@ class BudgetLedger:
                 or ticket.issue_sequence > current or current > ticket.expires_at_sequence
             ):
                 raise BudgetDenied("ticket_sequence")
+            retry = template.retry_owner is not None
+            if retry and (
+                template.retry_owner != template.execution_phase_owner
+                or template.execution_phase_owner.value in {"QUALIFICATION", "OPTIMIZER"}
+                or template.request_class is not RequestClass.MAIN
+            ):
+                raise BudgetDenied("retry_template")
             if (
                 ticket.execution_phase_owner != template.execution_phase_owner
                 or ticket.configuration_id != template.configuration_id
                 or ticket.allowed_role != template.allowed_role
-                or ticket.effective_request_class != template.request_class
-                or ticket.usage_phase != template.usage_phase
-                or ticket.max_input_tokens > template.max_input_tokens
-                or ticket.max_output_tokens > template.max_output_tokens
+                or (not retry and ticket.effective_request_class != template.request_class)
+                or (not retry and ticket.usage_phase != template.usage_phase)
+                or (not retry and (ticket.max_input_tokens != template.max_input_tokens
+                                  or ticket.max_output_tokens != template.max_output_tokens))
+                or (retry and (ticket.max_input_tokens > REQUEST_LIMITS[ticket.effective_request_class].max_input
+                               or ticket.max_output_tokens > REQUEST_LIMITS[ticket.effective_request_class].max_output))
             ):
                 raise BudgetDenied("template_binding")
 
@@ -232,6 +243,9 @@ class BudgetLedger:
             if ticket is None:
                 raise BudgetDenied("untrusted_ticket")
             template = self._templates[ticket.template_id]
+            current = self._trust_context.current_sequence()
+            if ticket.issue_sequence > current or current > ticket.expires_at_sequence:
+                raise BudgetDenied("ticket_sequence")
             if ticket.template_id in self._used_templates or ticket_id in self._reservations:
                 raise BudgetDenied("ticket_consumed")
             core = lease.core
@@ -258,6 +272,9 @@ class BudgetLedger:
                 raise BudgetDenied("lease_binding")
             if template.allowed_role != ticket.allowed_role or template.request_class != ticket.effective_request_class:
                 raise BudgetDenied("template_binding")
+            if ((template.problem_id is not None and template.problem_id != core.problem_id)
+                    or (template.turn is not None and template.turn != core.turn)):
+                raise BudgetDenied("template_row")
             estimated = tokenizer_estimate + calibrated_positive_error + 512
             byte_bound = len(serialized_model_visible_bytes) + 1_024
             reserved_input = max(estimated, byte_bound)

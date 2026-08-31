@@ -191,3 +191,13 @@ def test_optional_field_contract_rejects_non_none_value_when_omitted():
                             signature_verifier=lambda _value: True, secret_fd=None)
     with pytest.raises(BrokerDenied, match="qualified_request"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+
+
+def test_request_token_ceilings_must_equal_trusted_ticket_before_transport():
+    ledger, lease = _ledger()
+    transport = FakeTransport()
+    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
+                            signature_verifier=lambda _value: True, secret_fd=None)
+    with pytest.raises(BrokerDenied, match="qualified_request"):
+        broker.dispatch(_request(lease=lease, max_input_tokens=9999), lease=lease, requester_role="Worker")
+    assert not transport.calls
