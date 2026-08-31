@@ -248,6 +248,9 @@ class ProviderBroker:
         if not capability.usable():
             self._capability_authority.freeze()
             raise BrokerDenied("capability")
+        if capability.calibrated_positive_error != self._ledger.calibrated_positive_error:
+            self._capability_authority.freeze()
+            raise BrokerDenied("capability_calibration")
         ticket = self._ledger.trusted_ticket(request.ticket_id)
         if ticket is None or not self._signature_verifier(lease) or not self._signature_verifier(ticket):
             raise BrokerDenied("signature")

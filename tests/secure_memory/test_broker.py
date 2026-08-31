@@ -192,6 +192,24 @@ def test_bad_signature_or_unqualified_shape_never_reaches_transport():
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
 
 
+def test_signed_capability_calibration_must_match_ledger_before_reservation_or_transport():
+    ledger, lease = _ledger()
+    transport = FakeTransport()
+    authority = _authority(calibrated_positive_error=1)
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=authority,
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_handoff=None,
+    )
+    with pytest.raises(BrokerDenied, match="capability_calibration"):
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+    assert ledger.events == ()
+    assert transport.calls == []
+    assert authority.record().state is BrokerState.FROZEN
+
+
 def test_transport_failure_retains_reservation_and_sanitizes_error():
     ledger, lease = _ledger()
 
@@ -420,6 +438,7 @@ def _retry_ledger():
         key_id="k",
         current_sequence=lambda: 2,
         signature_verifier=lambda _value: True,
+        calibrated_positive_error=0,
     )
     ledger = BudgetLedger(
         templates=(original_template, retry_template),

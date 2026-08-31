@@ -1,5 +1,6 @@
 """Fail-closed budget reservations are entirely host-side state."""
 
+from dataclasses import replace
 import threading
 
 import pytest
@@ -64,23 +65,77 @@ def _ticket(template_id="template-1", ticket_id="ticket-1", **overrides):
     return IssuedBudgetTicket(**values)
 
 
-def _ledger(template=None, ticket=None):
+def _ledger(template=None, ticket=None, *, calibrated_positive_error=0):
     template = template or _template()
     ticket = ticket or _ticket(template.template_id)
     context = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
-                                 signature_verifier=lambda _value: True)
+                                 signature_verifier=lambda _value: True,
+                                 calibrated_positive_error=calibrated_positive_error)
     return BudgetLedger(templates=(template,), tickets=(ticket,), manifest_sha256=SHA, trust_context=context), _lease(ticket.ticket_id)
 
 
-def _trust():
+def _trust(*, calibrated_positive_error=0):
     return BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
-                              signature_verifier=lambda _value: True)
+                              signature_verifier=lambda _value: True,
+                              calibrated_positive_error=calibrated_positive_error)
+
+
+def _rehashed_events(events, mutate):
+    """Rebuild a deliberately forged chain without using production hash helpers."""
+    previous = ""
+    changed_events = []
+    for index, event in enumerate(events):
+        changed = replace(
+            mutate(index, event),
+            previous_event_sha256=previous,
+            event_sha256="",
+        )
+        core = {
+            "sequence": changed.sequence,
+            "ticket_id": changed.ticket_id,
+            "template_id": changed.template_id,
+            "previous_state": None
+            if changed.previous_state is None
+            else changed.previous_state.value,
+            "new_state": changed.state.value,
+            "reserved_input": changed.reserved_input,
+            "reserved_output": changed.reserved_output,
+            "tokenizer_estimate": changed.tokenizer_estimate,
+            "calibrated_positive_error": changed.calibrated_positive_error,
+            "model_visible_byte_length": changed.model_visible_byte_length,
+            "settled_usage": changed.settled_usage,
+            "retained_reason": changed.retained_reason,
+            "previous_event_sha256": changed.previous_event_sha256,
+        }
+        changed = replace(
+            changed,
+            event_sha256=canonical_sha256("budget-ledger-event", core),
+        )
+        changed_events.append(changed)
+        previous = changed.event_sha256
+    return tuple(changed_events)
+
+
+def _settled_ledger(*, calibrated_positive_error=0, tokenizer_estimate=1, visible=b""):
+    ledger, lease = _ledger(calibrated_positive_error=calibrated_positive_error)
+    ledger.reserve(
+        "ticket-1",
+        lease,
+        requester_role="Worker",
+        tokenizer_estimate=tokenizer_estimate,
+        calibrated_positive_error=calibrated_positive_error,
+        serialized_model_visible_bytes=visible,
+    )
+    ledger.mark_dispatched("ticket-1")
+    ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
+    return ledger
 
 
 def test_trusted_context_rejects_stale_ticket_before_reservation():
     ticket = _ticket(expires_at_sequence=0)
     context = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
-                                 signature_verifier=lambda _value: True)
+                                 signature_verifier=lambda _value: True,
+                                 calibrated_positive_error=0)
     with pytest.raises(BudgetDenied, match="sequence"):
         BudgetLedger(templates=(_template(),), tickets=(ticket,), manifest_sha256=SHA, trust_context=context)
 
@@ -103,13 +158,33 @@ def test_frozen_caps_and_four_request_margin_are_exact():
 
 
 def test_reserves_conservative_input_and_entire_output_ceiling():
-    ledger, lease = _ledger()
+    ledger, lease = _ledger(calibrated_positive_error=20)
     reservation = ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=100,
                                  calibrated_positive_error=20, serialized_model_visible_bytes=b"x" * 700)
     assert reservation.reserved_input == 1724
     assert reservation.reserved_output == 1500
     assert reservation.state is ReservationState.RESERVED
     assert ledger.totals.requests == 1
+    assert (
+        reservation.tokenizer_estimate,
+        reservation.calibrated_positive_error,
+        reservation.model_visible_byte_length,
+    ) == (100, 20, 700)
+    assert not hasattr(reservation, "serialized_model_visible_bytes")
+
+
+def test_reserve_requires_the_immutable_trusted_calibration_bound():
+    ledger, lease = _ledger(calibrated_positive_error=20)
+    with pytest.raises(BudgetDenied, match="calibration_binding"):
+        ledger.reserve(
+            "ticket-1",
+            lease,
+            requester_role="Worker",
+            tokenizer_estimate=100,
+            calibrated_positive_error=19,
+            serialized_model_visible_bytes=b"",
+        )
+    assert ledger.events == ()
 
 
 def test_reservation_rejects_class_overflow_before_consuming_ticket():
@@ -216,12 +291,98 @@ def test_events_are_hash_chained_and_replayable():
     assert replayed.totals == ledger.totals
 
 
+def test_replay_rejects_rehashed_but_underreserved_event_chain():
+    ledger = _settled_ledger()
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(event, reserved_input=1, reserved_output=1),
+    )
+
+    with pytest.raises(BudgetDenied, match="event_reservation"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+        )
+
+
+def test_replay_rejects_rehashed_calibration_and_reservation_tamper():
+    ledger = _settled_ledger(calibrated_positive_error=20, tokenizer_estimate=600)
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(
+            event,
+            calibrated_positive_error=0,
+            reserved_input=1_112,
+        ),
+    )
+    with pytest.raises(BudgetDenied, match="event_reservation"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(calibrated_positive_error=20),
+            events=tampered,
+        )
+
+
+def test_replay_rejects_rehashed_lower_output_reservation():
+    ledger = _settled_ledger()
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(event, reserved_output=1_499),
+    )
+    with pytest.raises(BudgetDenied, match="event_reservation"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+        )
+
+
+def test_replay_rejects_rehashed_basis_drift_between_transitions():
+    ledger = _settled_ledger()
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda index, event: replace(event, tokenizer_estimate=2)
+        if index == 1
+        else event,
+    )
+    with pytest.raises(BudgetDenied, match="event_transition"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+        )
+
+
+def test_replay_rejects_rehashed_negative_reservation_basis():
+    ledger = _settled_ledger()
+    tampered = _rehashed_events(
+        ledger.events,
+        lambda _index, event: replace(event, tokenizer_estimate=-1),
+    )
+    with pytest.raises(BudgetDenied, match="event_reservation"):
+        BudgetLedger.replay(
+            templates=(_template(),),
+            tickets=(_ticket(),),
+            manifest_sha256=SHA,
+            trust_context=_trust(),
+            events=tampered,
+        )
+
+
 def test_replay_rejects_event_hash_tamper():
     ledger, lease = _ledger()
     ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
                    calibrated_positive_error=0, serialized_model_visible_bytes=b"")
     bad = list(ledger.events)
-    from dataclasses import replace
     bad[0] = replace(bad[0], event_sha256="0" * 64)
     with pytest.raises(BudgetDenied, match="event_hash"):
         BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
@@ -234,7 +395,8 @@ def test_replay_two_ticket_settled_and_retained_round_trip():
     one = _ticket()
     two = _ticket(template_id="template-2", ticket_id="ticket-2", issue_sequence=2)
     trust = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 2,
-                               signature_verifier=lambda _value: True)
+                               signature_verifier=lambda _value: True,
+                               calibrated_positive_error=0)
     ledger = BudgetLedger(templates=(first, second), tickets=(one, two), manifest_sha256=SHA, trust_context=trust)
     lease = _lease("ticket-1", issued_ticket_ids=("ticket-1", "ticket-2"))
     for ticket_id in ("ticket-1", "ticket-2"):

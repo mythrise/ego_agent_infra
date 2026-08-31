@@ -27,6 +27,7 @@ class BudgetTrustContext:
     key_id: str
     current_sequence: Callable[[], int]
     signature_verifier: Callable[[object], bool]
+    calibrated_positive_error: int
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,9 @@ class Reservation:
     template_id: str
     reserved_input: int
     reserved_output: int
+    tokenizer_estimate: int
+    calibrated_positive_error: int
+    model_visible_byte_length: int
     state: ReservationState
     sequence: int
     settled_usage: Optional[SettledUsage] = None
@@ -108,6 +112,9 @@ class BudgetEvent:
     state: ReservationState
     reserved_input: int
     reserved_output: int
+    tokenizer_estimate: int
+    calibrated_positive_error: int
+    model_visible_byte_length: int
     template_id: str = ""
     previous_state: Optional[ReservationState] = None
     settled_usage: Optional[SettledUsage] = None
@@ -155,7 +162,11 @@ class BudgetLedger:
             raise BudgetDenied("manifest")
         self._manifest_sha256 = manifest_sha256
         self._trust_context = trust_context
-        if not trust_context.issuer_id or not trust_context.key_id:
+        if (
+            not trust_context.issuer_id
+            or not trust_context.key_id
+            or trust_context.calibrated_positive_error < 0
+        ):
             raise BudgetDenied("trust_identity")
         current = trust_context.current_sequence()
         self._reservation_cap = CAMPAIGN_RESERVATION
@@ -243,6 +254,11 @@ class BudgetLedger:
     def trusted_ticket(self, ticket_id: str) -> Optional[IssuedBudgetTicket]:
         return self._tickets.get(ticket_id)
 
+    @property
+    def calibrated_positive_error(self) -> int:
+        """Return the immutable, non-secret calibration bound trusted by this ledger."""
+        return self._trust_context.calibrated_positive_error
+
     def reservation_for(self, ticket_id: str) -> Optional[Reservation]:
         with self._lock:
             return self._reservations.get(ticket_id)
@@ -288,6 +304,9 @@ class BudgetLedger:
                     event.previous_state != prior.state
                     or event.reserved_input != prior.reserved_input
                     or event.reserved_output != prior.reserved_output
+                    or event.tokenizer_estimate != prior.tokenizer_estimate
+                    or event.calibrated_positive_error != prior.calibrated_positive_error
+                    or event.model_visible_byte_length != prior.model_visible_byte_length
                     or (
                         prior.state is ReservationState.RESERVED
                         and event.state is not ReservationState.DISPATCHED
@@ -309,13 +328,31 @@ class BudgetLedger:
                 "new_state": event.state.value,
                 "reserved_input": event.reserved_input,
                 "reserved_output": event.reserved_output,
+                "tokenizer_estimate": event.tokenizer_estimate,
+                "calibrated_positive_error": event.calibrated_positive_error,
+                "model_visible_byte_length": event.model_visible_byte_length,
                 "settled_usage": event.settled_usage,
                 "retained_reason": event.retained_reason,
                 "previous_event_sha256": event.previous_event_sha256,
             }
             if event.event_sha256 != canonical_sha256("budget-ledger-event", core):
                 raise BudgetDenied("event_hash")
-            if event.reserved_input <= 0 or event.reserved_output <= 0:
+            if min(
+                event.tokenizer_estimate,
+                event.calibrated_positive_error,
+                event.model_visible_byte_length,
+            ) < 0:
+                raise BudgetDenied("event_reservation")
+            expected_input = max(
+                event.tokenizer_estimate + event.calibrated_positive_error + 512,
+                event.model_visible_byte_length + 1_024,
+            )
+            if (
+                event.calibrated_positive_error
+                != ledger._trust_context.calibrated_positive_error
+                or event.reserved_input != expected_input
+                or event.reserved_output != ticket.max_output_tokens
+            ):
                 raise BudgetDenied("event_reservation")
             limit = REQUEST_LIMITS[ticket.effective_request_class]
             if event.reserved_input > ticket.max_input_tokens or event.reserved_output > ticket.max_output_tokens or event.reserved_input > limit.max_input or event.reserved_output > limit.max_output:
@@ -341,14 +378,17 @@ class BudgetLedger:
             ):
                 raise BudgetDenied("event_terminal")
             reservation = Reservation(
-                event.ticket_id,
-                event.template_id,
-                event.reserved_input,
-                event.reserved_output,
-                event.state,
-                event.sequence,
-                event.settled_usage,
-                event.retained_reason,
+                ticket_id=event.ticket_id,
+                template_id=event.template_id,
+                reserved_input=event.reserved_input,
+                reserved_output=event.reserved_output,
+                tokenizer_estimate=event.tokenizer_estimate,
+                calibrated_positive_error=event.calibrated_positive_error,
+                model_visible_byte_length=event.model_visible_byte_length,
+                state=event.state,
+                sequence=event.sequence,
+                settled_usage=event.settled_usage,
+                retained_reason=event.retained_reason,
             )
             ledger._events = ledger._events + (event,)
             ledger._reservations[event.ticket_id] = reservation
@@ -364,6 +404,9 @@ class BudgetLedger:
             "new_state": reservation.state.value,
             "reserved_input": reservation.reserved_input,
             "reserved_output": reservation.reserved_output,
+            "tokenizer_estimate": reservation.tokenizer_estimate,
+            "calibrated_positive_error": reservation.calibrated_positive_error,
+            "model_visible_byte_length": reservation.model_visible_byte_length,
             "settled_usage": reservation.settled_usage,
             "retained_reason": reservation.retained_reason,
             "previous_event_sha256": "" if not self._events else self._events[-1].event_sha256,
@@ -374,6 +417,9 @@ class BudgetLedger:
             state=reservation.state,
             reserved_input=reservation.reserved_input,
             reserved_output=reservation.reserved_output,
+            tokenizer_estimate=reservation.tokenizer_estimate,
+            calibrated_positive_error=reservation.calibrated_positive_error,
+            model_visible_byte_length=reservation.model_visible_byte_length,
             template_id=reservation.template_id,
             previous_state=None if previous is None else previous.state,
             settled_usage=reservation.settled_usage,
@@ -398,6 +444,8 @@ class BudgetLedger:
     ) -> Reservation:
         if min(tokenizer_estimate, calibrated_positive_error) < 0:
             raise BudgetDenied("negative_estimate")
+        if calibrated_positive_error != self._trust_context.calibrated_positive_error:
+            raise BudgetDenied("calibration_binding")
         with self._lock:
             ticket = self._tickets.get(ticket_id)
             if ticket is None:
@@ -448,7 +496,8 @@ class BudgetLedger:
             ):
                 raise BudgetDenied("template_row")
             estimated = tokenizer_estimate + calibrated_positive_error + 512
-            byte_bound = len(serialized_model_visible_bytes) + 1_024
+            model_visible_byte_length = len(serialized_model_visible_bytes)
+            byte_bound = model_visible_byte_length + 1_024
             reserved_input = max(estimated, byte_bound)
             limit = REQUEST_LIMITS[ticket.effective_request_class]
             if reserved_input > limit.max_input or reserved_input > ticket.max_input_tokens:
@@ -469,12 +518,15 @@ class BudgetLedger:
             self._used_templates.add(ticket.template_id)
             return self._append(
                 Reservation(
-                    ticket_id,
-                    ticket.template_id,
-                    reserved_input,
-                    reserved_output,
-                    ReservationState.RESERVED,
-                    0,
+                    ticket_id=ticket_id,
+                    template_id=ticket.template_id,
+                    reserved_input=reserved_input,
+                    reserved_output=reserved_output,
+                    tokenizer_estimate=tokenizer_estimate,
+                    calibrated_positive_error=calibrated_positive_error,
+                    model_visible_byte_length=model_visible_byte_length,
+                    state=ReservationState.RESERVED,
+                    sequence=0,
                 )
             )
 
