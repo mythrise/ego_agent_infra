@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 
 import pytest
 
@@ -504,3 +505,39 @@ def test_second_transient_failure_retains_both_without_third_call():
     assert len(transport.calls) == 2 and error.value.__cause__ is None
     assert ledger.reservation_for("ticket-1").retained_reason == "timeout"
     assert ledger.reservation_for("retry-ticket").retained_reason == "provider_failure"
+
+
+def test_reserve_retry_is_atomic_and_rejects_cross_live_ticket_binding():
+    ledger, lease = _retry_ledger()
+    ledger.reserve(
+        "ticket-1",
+        lease,
+        requester_role="Worker",
+        tokenizer_estimate=1,
+        calibrated_positive_error=0,
+        serialized_model_visible_bytes=b"x",
+    )
+    ledger.mark_dispatched("ticket-1")
+    ledger.retain("ticket-1", "timeout")
+    outcomes = []
+
+    def reserve():
+        try:
+            ledger.reserve_retry(
+                "retry-ticket",
+                "ticket-1",
+                lease,
+                requester_role="Worker",
+                tokenizer_estimate=1,
+                calibrated_positive_error=0,
+                serialized_model_visible_bytes=b"x",
+            )
+            outcomes.append("ok")
+        except Exception:
+            outcomes.append("denied")
+
+    threads = [threading.Thread(target=reserve) for _ in range(12)]
+    [thread.start() for thread in threads]
+    [thread.join() for thread in threads]
+    assert outcomes.count("ok") == 1 and outcomes.count("denied") == 11
+    assert ledger.totals.requests == 2
