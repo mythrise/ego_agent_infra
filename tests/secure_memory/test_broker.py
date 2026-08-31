@@ -148,7 +148,7 @@ def test_exact_qualified_request_is_forwarded_unchanged_with_terminal_usage():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     method, base_url, endpoint, body, _secret, redirects, tls = transport.calls[0]
@@ -176,7 +176,7 @@ def test_bad_signature_or_unqualified_shape_never_reaches_transport():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: False,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="signature"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
@@ -186,7 +186,7 @@ def test_bad_signature_or_unqualified_shape_never_reaches_transport():
         capability_authority=_authority(endpoint="/other"),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="capability"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
@@ -204,7 +204,7 @@ def test_transport_failure_retains_reservation_and_sanitizes_error():
         capability_authority=_authority(),
         transport=BrokenTransport(),
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="provider_failure") as error:
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
@@ -251,6 +251,22 @@ def test_provisioner_opens_a_temp_secret_once_with_bound_inode_handoff():
         os.unlink(path)
 
 
+def test_broker_rejects_malformed_temp_descriptor_handoff_before_transport():
+    fd, path = tempfile.mkstemp()
+    try:
+        os.write(fd, b"fake")
+        handoff = provision_secret_descriptor(path, expected_uid=os.getuid())
+        ledger, _lease_value = _ledger()
+        with pytest.raises(BrokerDenied, match="secret_handoff_invalid"):
+            ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=FakeTransport(),
+                           signature_verifier=lambda _value: True,
+                           secret_handoff=handoff.__class__(handoff.fd, handoff.device, handoff.inode, (), False))
+        os.close(handoff.fd)
+    finally:
+        os.close(fd)
+        os.unlink(path)
+
+
 def test_request_lease_digest_usage_breach_and_null_timestamps_freeze_campaign():
     ledger, lease = _ledger()
     bad = _request(lease_sha256="b" * 64)
@@ -262,7 +278,7 @@ def test_request_lease_digest_usage_breach_and_null_timestamps_freeze_campaign()
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="lease_digest"):
         broker.dispatch(bad, lease=lease, requester_role="Worker")
@@ -282,7 +298,7 @@ def test_provider_null_timestamps_remain_null_and_base_url_is_exact():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert response.first_stream_ns is None
@@ -308,14 +324,14 @@ def test_shared_capability_authority_freezes_every_broker_after_background_call(
         capability_authority=authority,
         transport=FakeTransport(),
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     two = ProviderBroker(
         ledger=ledger_two,
         capability_authority=authority,
         transport=FakeTransport(),
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     authority.observe_unattributed_call()
     for broker, ledger, lease in ((one, ledger_one, lease_one), (two, ledger_two, lease_two)):
@@ -330,7 +346,7 @@ def test_optional_field_contract_rejects_non_none_value_when_omitted():
         capability_authority=_authority(temperature_present=False),
         transport=FakeTransport(),
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="qualified_request"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
@@ -344,7 +360,7 @@ def test_request_token_ceilings_must_equal_trusted_ticket_before_transport():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="qualified_request"):
         broker.dispatch(
@@ -365,7 +381,7 @@ def test_transient_failure_is_sanitized_and_retains_original_without_untrusted_r
         capability_authority=_authority(),
         transport=Transient(),
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="provider_failure"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
@@ -430,7 +446,7 @@ def test_owned_transient_retry_uses_second_ticket_and_exact_same_body(failure):
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     broker.dispatch(
         _request(lease=lease),
@@ -462,7 +478,7 @@ def test_nontransient_4xx_retains_original_and_leaves_retry_unused():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="provider_failure"):
         broker.dispatch(
@@ -493,7 +509,7 @@ def test_second_transient_failure_retains_both_without_third_call():
         capability_authority=_authority(),
         transport=transport,
         signature_verifier=lambda _value: True,
-        secret_fd=None,
+        secret_handoff=None,
     )
     with pytest.raises(BrokerDenied, match="provider_failure") as error:
         broker.dispatch(

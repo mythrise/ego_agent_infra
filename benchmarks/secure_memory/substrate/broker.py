@@ -214,7 +214,7 @@ def read_authorized_secret_fd(
 
 class ProviderBroker:
     def __init__(self, *, ledger: BudgetLedger, transport: ProviderTransport,
-                 signature_verifier: Callable[[object], bool], secret_fd: Optional[int],
+                 signature_verifier: Callable[[object], bool], secret_handoff: Optional[SecretDescriptorHandoff],
                  capability: Optional[ProviderCapabilityRecord] = None,
                  capability_authority: Optional[CampaignCapabilityAuthority] = None,
                  clock: Optional[Clock] = None,
@@ -228,7 +228,11 @@ class ProviderBroker:
         self._capability_authority = capability_authority
         self._transport = transport
         self._signature_verifier = signature_verifier
-        self._api_key = None if secret_fd is None else read_authorized_secret_fd(secret_fd, expected_uid=os.getuid())
+        if secret_handoff is not None and (not secret_handoff.close_fds or secret_handoff.pass_fds != (secret_handoff.fd,)):
+            raise BrokerDenied("secret_handoff_invalid")
+        self._api_key = None if secret_handoff is None else read_authorized_secret_fd(
+            secret_handoff.fd, expected_uid=os.getuid(), expected_device=secret_handoff.device,
+            expected_inode=secret_handoff.inode)
         self._clock = clock or SystemMonotonicClock()
         self._tokenizer = tokenizer or (lambda body: len(body) // 4)
         self._scanner = scanner or (lambda body: True)
