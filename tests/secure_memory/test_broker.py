@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 
 import pytest
 
@@ -19,7 +20,8 @@ from benchmarks.secure_memory.substrate.broker import (
     provision_secret_descriptor,
     read_authorized_secret_fd,
 )
-from tests.secure_memory.test_budget_ledger import SHA, _ledger
+from tests.secure_memory.test_budget_ledger import SHA, _ledger, _lease, _template, _ticket, _trust
+from benchmarks.secure_memory.substrate.budget import BudgetLedger, BudgetTrustContext
 
 
 class FakeTransport:
@@ -214,3 +216,35 @@ def test_transient_failure_is_sanitized_and_retains_original_without_untrusted_r
     with pytest.raises(BrokerDenied, match="provider_failure"):
         broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert ledger.reservation_for("ticket-1").state.value == "RETAINED"
+
+
+def _retry_ledger():
+    original_template = _template()
+    retry_template = _template(template_id="retry-template", request_class="main", retry_owner="A",
+                                slot_id="retry-slot", attempt_group="retry")
+    original_ticket = _ticket()
+    retry_ticket = _ticket(template_id="retry-template", ticket_id="retry-ticket", issue_sequence=2)
+    trust = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 2,
+                               signature_verifier=lambda _value: True)
+    ledger = BudgetLedger(templates=(original_template, retry_template), tickets=(original_ticket, retry_ticket),
+                          manifest_sha256=SHA, trust_context=trust)
+    return ledger, _lease("ticket-1", issued_ticket_ids=("retry-ticket", "ticket-1"))
+
+
+@pytest.mark.parametrize("failure", [ProviderTransportFailure.status(429), ProviderTransportFailure.status(500), ProviderTransportFailure.timeout()])
+def test_owned_transient_retry_uses_second_ticket_and_exact_same_body(failure):
+    ledger, lease = _retry_ledger()
+    class RetryTransport(FakeTransport):
+        def __init__(self): self.calls=[]; self.count=0
+        def send(self, **kwargs):
+            self.calls.append(kwargs); self.count += 1
+            if self.count == 1: raise failure
+            return ProviderReply(raw_usage={"input_tokens": 1, "output_tokens": 1}, output_text="ok")
+    transport = RetryTransport(); backoff=[]
+    broker = ProviderBroker(ledger=ledger, capability_authority=_authority(), transport=transport,
+                            signature_verifier=lambda _value: True, secret_fd=None)
+    broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker", retry_ticket_id="retry-ticket", backoff_observer=backoff.append)
+    assert len(transport.calls) == 2 and transport.calls[0]["body"] == transport.calls[1]["body"]
+    assert backoff == [failure.kind] and ledger.totals.requests == 2
+    assert ledger.reservation_for("ticket-1").retained_reason == failure.kind
+    assert ledger.reservation_for("retry-ticket").state.value == "SETTLED"
