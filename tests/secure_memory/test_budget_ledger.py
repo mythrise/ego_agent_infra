@@ -124,6 +124,7 @@ def test_settlement_is_append_only_and_subtotals_do_not_double_count():
     ledger, lease = _ledger()
     ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
                    calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+    ledger.mark_dispatched("ticket-1")
     settled = ledger.settle("ticket-1", RawUsage(input_tokens=10, output_tokens=5,
                                                    cache_read_tokens=3, cache_write_tokens=2,
                                                    reasoning_tokens=4))
@@ -151,3 +152,27 @@ def test_atomic_concurrent_reservation_only_issues_one_slot():
     [thread.join() for thread in threads]
     assert outcomes.count("ok") == 1
     assert ledger.totals.requests == 1
+
+
+def test_caps_are_frozen_and_duplicate_trusted_inputs_fail_closed():
+    template = _template()
+    ticket = _ticket()
+    with pytest.raises(TypeError):
+        BudgetLedger(templates=(template,), tickets=(ticket,), manifest_sha256=SHA,
+                     reservation_cap=CAMPAIGN_ABSOLUTE)
+    with pytest.raises(BudgetDenied, match="duplicate_template"):
+        BudgetLedger(templates=(template, template), tickets=(ticket,), manifest_sha256=SHA)
+    with pytest.raises(BudgetDenied, match="template_ticket"):
+        BudgetLedger(templates=(template,), tickets=(ticket, _ticket(ticket_id="ticket-2", issue_sequence=2)), manifest_sha256=SHA)
+
+
+def test_ticket_template_bindings_and_state_machine_are_exact():
+    template = _template(max_input_tokens=1200, max_output_tokens=10)
+    escalated = _ticket(max_input_tokens=10_000, max_output_tokens=1500)
+    with pytest.raises(BudgetDenied, match="template_binding"):
+        BudgetLedger(templates=(template,), tickets=(escalated,), manifest_sha256=SHA)
+    ledger, lease = _ledger()
+    ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
+                   calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+    with pytest.raises(BudgetDenied, match="already_terminal"):
+        ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))

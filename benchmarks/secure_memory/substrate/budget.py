@@ -111,28 +111,44 @@ class BudgetLedger:
         templates: Iterable[TicketTemplate],
         tickets: Iterable[IssuedBudgetTicket],
         manifest_sha256: str,
-        reservation_cap: BudgetTriple = CAMPAIGN_RESERVATION,
-        absolute_cap: BudgetTriple = CAMPAIGN_ABSOLUTE,
     ) -> None:
-        self._templates: Dict[str, TicketTemplate] = {item.template_id: item for item in templates}
-        self._tickets: Dict[str, IssuedBudgetTicket] = {item.ticket_id: item for item in tickets}
-        if len(self._templates) == 0 or len(self._templates) != len(set(self._templates)):
+        template_items = tuple(templates)
+        ticket_items = tuple(tickets)
+        self._templates: Dict[str, TicketTemplate] = {item.template_id: item for item in template_items}
+        self._tickets: Dict[str, IssuedBudgetTicket] = {item.ticket_id: item for item in ticket_items}
+        if not template_items:
             raise BudgetDenied("templates_required")
-        if len(self._tickets) != len(set(self._tickets)):
+        if len(self._templates) != len(template_items):
+            raise BudgetDenied("duplicate_template")
+        if len(self._tickets) != len(ticket_items):
             raise BudgetDenied("duplicate_ticket")
+        if len({item.issue_sequence for item in ticket_items}) != len(ticket_items):
+            raise BudgetDenied("duplicate_issue_sequence")
+        if len({item.template_id for item in ticket_items}) != len(ticket_items):
+            raise BudgetDenied("template_ticket")
         if any(ticket.template_id not in self._templates for ticket in self._tickets.values()):
             raise BudgetDenied("unknown_template")
         if any(ticket.manifest_sha256 != manifest_sha256 for ticket in self._tickets.values()):
             raise BudgetDenied("manifest")
-        if reservation_cap.requests > absolute_cap.requests:
-            raise BudgetDenied("reservation_exceeds_absolute")
         self._manifest_sha256 = manifest_sha256
-        self._reservation_cap = reservation_cap
-        self._absolute_cap = absolute_cap
+        self._reservation_cap = CAMPAIGN_RESERVATION
+        self._absolute_cap = CAMPAIGN_ABSOLUTE
         self._reservations: Dict[str, Reservation] = {}
         self._used_templates: set[str] = set()
         self._events: Tuple[BudgetEvent, ...] = ()
         self._lock = threading.RLock()
+        for ticket in ticket_items:
+            template = self._templates[ticket.template_id]
+            if (
+                ticket.execution_phase_owner != template.execution_phase_owner
+                or ticket.configuration_id != template.configuration_id
+                or ticket.allowed_role != template.allowed_role
+                or ticket.effective_request_class != template.request_class
+                or ticket.usage_phase != template.usage_phase
+                or ticket.max_input_tokens > template.max_input_tokens
+                or ticket.max_output_tokens > template.max_output_tokens
+            ):
+                raise BudgetDenied("template_binding")
 
     @staticmethod
     def absolute_allows(total: BudgetTriple) -> bool:
@@ -248,7 +264,7 @@ class BudgetLedger:
 
     def settle(self, ticket_id: str, raw_usage: RawUsage) -> SettledUsage:
         with self._lock:
-            value = self._require(ticket_id, ReservationState.DISPATCHED, ReservationState.RESERVED)
+            value = self._require(ticket_id, ReservationState.DISPATCHED)
             if raw_usage.input_tokens > value.reserved_input or raw_usage.output_tokens > value.reserved_output:
                 raise BudgetDenied("contradictory_usage")
             settled = SettledUsage(raw_usage=raw_usage, budget_input=raw_usage.input_tokens,

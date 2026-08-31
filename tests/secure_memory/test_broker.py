@@ -13,6 +13,7 @@ from benchmarks.secure_memory.substrate.broker import (
     ProviderReply,
     ProviderRequestShape,
     ProviderBroker,
+    provision_secret_descriptor,
     read_authorized_secret_fd,
 )
 from tests.secure_memory.test_budget_ledger import SHA, _ledger
@@ -21,13 +22,13 @@ from tests.secure_memory.test_budget_ledger import SHA, _ledger
 class FakeTransport:
     def __init__(self, reply=None):
         self.calls = []
-        self.reply = reply or ProviderReply(raw_usage={"input_tokens": 12, "output_tokens": 3}, output_text="ok")
-    def send(self, *, method, endpoint, body, api_key, allow_redirects, tls_verified):
-        self.calls.append((method, endpoint, body, api_key, allow_redirects, tls_verified))
+        self.reply = reply or ProviderReply(raw_usage={"input_tokens": 12, "output_tokens": 3}, output_text="ok", first_stream_ns=1, first_content_ns=2)
+    def send(self, *, base_url, method, endpoint, body, api_key, allow_redirects, tls_verified):
+        self.calls.append((method, base_url, endpoint, body, api_key, allow_redirects, tls_verified))
         return self.reply
 
 
-def _request(**overrides):
+def _request(*, lease=None, **overrides):
     values = dict(schema_version="secure-memory-model-request/v1", request_id="r1", campaign_id="campaign",
                   lease_sha256=SHA, ticket_id="ticket-1", request_class="main",
                   provider_base_url="https://apihub.agnes-ai.com/v1", provider_model="agnes-2.5-pro",
@@ -35,6 +36,8 @@ def _request(**overrides):
                   max_input_tokens=10000, max_output_tokens=1500, temperature=0, top_p=1,
                   stream=True, tools=())
     values.update(overrides)
+    if lease is not None:
+        values["lease_sha256"] = lease.core_sha256
     return ModelRequest(**values)
 
 
@@ -53,7 +56,7 @@ def test_locked_capability_rejects_before_transport():
     broker = ProviderBroker(ledger=ledger, capability=_capability(state=BrokerState.LOCKED), transport=transport,
                             signature_verifier=lambda _value: True, secret_fd=None)
     with pytest.raises(BrokerDenied, match="capability_locked"):
-        broker.dispatch(_request(), lease=lease, requester_role="Worker")
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert not transport.calls
 
 
@@ -62,9 +65,9 @@ def test_exact_qualified_request_is_forwarded_unchanged_with_terminal_usage():
     transport = FakeTransport()
     broker = ProviderBroker(ledger=ledger, capability=_capability(), transport=transport,
                             signature_verifier=lambda _value: True, secret_fd=None)
-    response = broker.dispatch(_request(), lease=lease, requester_role="Worker")
-    method, endpoint, body, _secret, redirects, tls = transport.calls[0]
-    assert (method, endpoint, redirects, tls) == ("POST", "/chat/completions", False, True)
+    response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+    method, base_url, endpoint, body, _secret, redirects, tls = transport.calls[0]
+    assert (method, base_url, endpoint, redirects, tls) == ("POST", "https://apihub.agnes-ai.com/v1", "/chat/completions", False, True)
     assert body["messages"] == [{"role": "user", "content": "hello"}]
     assert body["tools"] == []
     assert body["model"] == "agnes-2.5-pro"
@@ -80,12 +83,12 @@ def test_bad_signature_or_unqualified_shape_never_reaches_transport():
     broker = ProviderBroker(ledger=ledger, capability=_capability(), transport=transport,
                             signature_verifier=lambda _value: False, secret_fd=None)
     with pytest.raises(BrokerDenied, match="signature"):
-        broker.dispatch(_request(), lease=lease, requester_role="Worker")
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert not transport.calls
     broker = ProviderBroker(ledger=ledger, capability=_capability(endpoint="/other"), transport=transport,
                             signature_verifier=lambda _value: True, secret_fd=None)
     with pytest.raises(BrokerDenied, match="capability"):
-        broker.dispatch(_request(), lease=lease, requester_role="Worker")
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
 
 
 def test_transport_failure_retains_reservation_and_sanitizes_error():
@@ -96,7 +99,7 @@ def test_transport_failure_retains_reservation_and_sanitizes_error():
     broker = ProviderBroker(ledger=ledger, capability=_capability(), transport=BrokenTransport(),
                             signature_verifier=lambda _value: True, secret_fd=None)
     with pytest.raises(BrokerDenied, match="provider_failure") as error:
-        broker.dispatch(_request(), lease=lease, requester_role="Worker")
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
     assert "definitely" not in str(error.value)
     assert ledger.reservation_for("ticket-1").state.value == "RETAINED"
 
@@ -110,3 +113,49 @@ def test_secret_reader_uses_an_already_open_fake_regular_descriptor_only():
     finally:
         os.close(fd)
         os.unlink(path)
+
+
+def test_provisioner_opens_a_temp_secret_once_with_bound_inode_handoff():
+    fd, path = tempfile.mkstemp()
+    os.write(fd, b"fake")
+    os.close(fd)
+    calls = []
+    def opener(value, flags):
+        calls.append((value, flags))
+        return os.open(value, flags)
+    handoff = provision_secret_descriptor(path, expected_uid=os.getuid(), opener=opener)
+    try:
+        assert len(calls) == 1
+        assert calls[0][1] & os.O_NOFOLLOW
+        assert read_authorized_secret_fd(handoff.fd, expected_uid=os.getuid(),
+                                        expected_device=handoff.device, expected_inode=handoff.inode) == b"fake"
+    finally:
+        os.close(handoff.fd)
+        os.unlink(path)
+
+
+def test_request_lease_digest_usage_breach_and_null_timestamps_freeze_campaign():
+    ledger, lease = _ledger()
+    bad = _request(lease_sha256="b" * 64)
+    transport = FakeTransport(ProviderReply(raw_usage={"input_tokens": 20_000, "output_tokens": 1}, output_text="x"))
+    broker = ProviderBroker(ledger=ledger, capability=_capability(), transport=transport,
+                            signature_verifier=lambda _value: True, secret_fd=None)
+    with pytest.raises(BrokerDenied, match="lease_digest"):
+        broker.dispatch(bad, lease=lease, requester_role="Worker")
+    with pytest.raises(BrokerDenied, match="authoritative_usage_invalid") as error:
+        broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+    assert error.value.__cause__ is None
+    with pytest.raises(BrokerDenied, match="capability_frozen"):
+        broker.dispatch(_request(), lease=lease, requester_role="Worker")
+
+
+def test_provider_null_timestamps_remain_null_and_base_url_is_exact():
+    ledger, lease = _ledger()
+    reply = ProviderReply(raw_usage={"input_tokens": 1, "output_tokens": 1}, output_text="x")
+    transport = FakeTransport(reply)
+    broker = ProviderBroker(ledger=ledger, capability=_capability(), transport=transport,
+                            signature_verifier=lambda _value: True, secret_fd=None)
+    response = broker.dispatch(_request(lease=lease), lease=lease, requester_role="Worker")
+    assert response.first_stream_ns is None
+    assert response.first_content_ns is None
+    assert transport.calls[0][1] == "https://apihub.agnes-ai.com/v1"
