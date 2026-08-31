@@ -151,6 +151,29 @@ class InMemoryReceiptStore:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
 
+    @staticmethod
+    def valid_record(record: InstalledReceipt, identity: Tuple[object, ...], digest: str) -> bool:
+        if (
+            not isinstance(record, InstalledReceipt)
+            or record.identity != identity
+            or record.request_frame_sha256 != digest
+        ):
+            return False
+        expected = hashlib.sha256(
+            b"receipt/v1\0" + canonical_bytes(identity) + digest.encode()
+        ).hexdigest()
+        if record.durable_receipt_id != expected or not record.receipt_frame:
+            return False
+        try:
+            value = parse_json_bytes(record.receipt_frame)
+        except (TypeError, ValueError):
+            return False
+        return (
+            isinstance(value, dict)
+            and bool(value)
+            and canonical_bytes(value) == record.receipt_frame
+        )
+
     def claim(
         self, window: WindowKey, sequence: int, digest: str
     ) -> Tuple[str, Optional[InstalledReceipt]]:
@@ -164,7 +187,9 @@ class InMemoryReceiptStore:
             if head is not None:
                 if sequence <= head[0]:
                     historical = self._records.get(window + (sequence,))
-                    if historical is None or historical.identity != window + (sequence,):
+                    if historical is None or not self.valid_record(
+                        historical, window + (sequence,), digest
+                    ):
                         return "inconsistent", None
                     return (
                         ("replay", historical)
@@ -199,13 +224,15 @@ class InMemoryReceiptStore:
         with self._lock:
             current = self._records.get(identity)
             if current is not None:
-                if current.request_frame_sha256 != digest:
+                if not self.valid_record(current, identity, digest):
                     raise ChannelRejected("receipt_store_mismatch")
                 return current
             receipt_id = hashlib.sha256(
                 b"receipt/v1\0" + canonical_bytes(identity) + digest.encode()
             ).hexdigest()
             result = InstalledReceipt(digest, receipt_id, frame, identity)
+            if not self.valid_record(result, identity, digest):
+                raise ChannelRejected("invalid_durable_receipt")
             self._records[identity] = result
             return result
 
@@ -318,14 +345,7 @@ class ChannelCodec:
         try:
             pending = route(env)
             installed = self.store.install_or_get(identity, digest, pending)
-            if (
-                not installed.durable_receipt_id
-                or installed.identity != identity
-                or installed.request_frame_sha256 != digest
-                or not installed.receipt_frame
-                or canonical_bytes(parse_json_bytes(installed.receipt_frame))
-                != installed.receipt_frame
-            ):
+            if not self.store.valid_record(installed, identity, digest):
                 raise ChannelRejected("invalid_durable_receipt")
         except Exception:
             self.store.abort(key, env.sequence, digest)
