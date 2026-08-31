@@ -72,6 +72,13 @@ def _reject_non_finite(token: str) -> Any:
     raise ValueError(f"non-finite JSON number: {token}")
 
 
+def _parse_finite_float(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError(f"non-finite JSON number: {token}")
+    return value
+
+
 def parse_json_bytes(raw: bytes) -> Any:
     """Decode UTF-8 JSON while rejecting duplicate keys and non-finite numbers."""
 
@@ -86,6 +93,7 @@ def parse_json_bytes(raw: bytes) -> Any:
             text,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_non_finite,
+            parse_float=_parse_finite_float,
         )
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON: {exc.msg}") from exc

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict
@@ -41,6 +43,11 @@ from benchmarks.secure_memory.models import (
     TicketTemplate,
     TrustedFactCore,
     validate_task_lease_core,
+)
+from worker_distribution import (
+    PublicArtifactError,
+    validate_public_worker_sdist,
+    validate_public_worker_wheel,
 )
 
 
@@ -239,6 +246,20 @@ def test_canonical_json_and_domain_digest_are_literal_and_deterministic() -> Non
     ],
 )
 def test_json_parser_rejects_duplicate_keys_and_non_finite_numbers(raw: bytes) -> None:
+    with pytest.raises(ValueError):
+        parse_json_bytes(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"1e400",
+        b"-1e400",
+        b'{"outer":[1e400]}',
+        b'{"outer":{"inner":-1e400}}',
+    ],
+)
+def test_json_parser_rejects_exponent_overflow_at_every_depth(raw: bytes) -> None:
     with pytest.raises(ValueError):
         parse_json_bytes(raw)
 
@@ -919,17 +940,19 @@ def test_model_response_rejects_noncanonical_json_tool_calls(tool_calls: Any) ->
 
 
 def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Path) -> None:
-    result = subprocess.run(
-        ["uv", "build", "--offline", "--wheel", "--out-dir", str(tmp_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    source = _copy_worker_build_source(tmp_path)
+    output = tmp_path / "wheel"
+    result = _build_worker_wheel(source, output)
     assert result.returncode == 0, result.stderr
-    wheels = list(tmp_path.glob("*.whl"))
+    wheels = list(output.glob("*.whl"))
     assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
+        validate_public_worker_wheel(names)
+        with pytest.raises(PublicArtifactError):
+            validate_public_worker_wheel(
+                [*names, "benchmarks/secure_memory/schemas/unreviewed-public-data.json"]
+            )
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         entry_points_name = next(
             name for name in names if name.endswith(".dist-info/entry_points.txt")
@@ -969,3 +992,141 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     )
     assert smoke.returncode == 0, smoke.stderr
     assert "versioned RXP benchmark corpus" in smoke.stdout
+
+
+_WORKER_SOURCE_DIRECTORIES = (
+    "apps",
+    "benchmarks",
+    "experiments",
+    "integrations",
+    "protocols",
+    "semifinal_acceptance",
+    "skill_runtime",
+    "skills",
+)
+_STALE_PRIVATE_PATHS = (
+    "apps/api/evaluator.py",
+    "benchmarks/secure_memory/hidden/secret.py",
+    "benchmarks/secure_memory/schemas/sealed-data.json",
+    "benchmarks/secure_memory/schemas/hidden-fixture.json",
+    "benchmarks/secure_memory/schemas/evaluator.schema.json",
+    "benchmarks/secure_memory/schemas/sealed_data.json",
+    "benchmarks/secure_memory/schemas/hidden.fixture.json",
+    "benchmarks/secure_memory/schemas/evaluator-fixture.json",
+)
+
+
+def _copy_worker_build_source(destination: Path) -> Path:
+    source = destination / "source"
+    source.mkdir()
+    for filename in (
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+        "worker_distribution.py",
+    ):
+        shutil.copy2(filename, source / filename)
+    for directory in _WORKER_SOURCE_DIRECTORIES:
+        shutil.copytree(directory, source / directory)
+    return source
+
+
+def _build_worker_wheel(source: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "build", "--offline", "--wheel", "--out-dir", str(output)],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_worker_sdist(source: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "build", "--offline", "--sdist", "--out-dir", str(output)],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_worker_wheel_fails_closed_on_stale_private_staging(tmp_path: Path) -> None:
+    source = _copy_worker_build_source(tmp_path)
+    first = _build_worker_wheel(source, tmp_path / "first-wheel")
+    assert first.returncode == 0, first.stderr
+
+    for relative in _STALE_PRIVATE_PATHS:
+        target = source / "build/lib" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("private sentinel\n", encoding="utf-8")
+
+    second_output = tmp_path / "second-wheel"
+    second = _build_worker_wheel(source, second_output)
+    if second.returncode == 0:
+        wheel_path = next(second_output.glob("*.whl"))
+        with zipfile.ZipFile(wheel_path) as wheel:
+            names = wheel.namelist()
+        with pytest.raises(PublicArtifactError) as rejected:
+            validate_public_worker_wheel(names)
+        pytest.fail(f"stale private staging was accepted: {rejected.value}")
+    assert "stale public Worker staging" in second.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "artifact_flag"),
+    [
+        ("benchmarks/secure_memory/schemas/sealed-data.json", "--wheel"),
+        ("benchmarks/secure_memory/schemas/hidden.fixture.json", "--sdist"),
+        ("benchmarks/secure_memory/evaluator_fixture.py", "--wheel"),
+    ],
+)
+def test_worker_build_rejects_ambiguous_private_source(
+    tmp_path: Path, relative: str, artifact_flag: str
+) -> None:
+    source = _copy_worker_build_source(tmp_path)
+    private_source = source / relative
+    private_source.parent.mkdir(parents=True, exist_ok=True)
+    private_source.write_text("private sentinel\n", encoding="utf-8")
+    output = tmp_path / "artifact"
+    result = subprocess.run(
+        ["uv", "build", "--offline", artifact_flag, "--out-dir", str(output)],
+        cwd=source,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Worker" in result.stdout + result.stderr
+
+
+def test_offline_worker_sdist_contains_only_public_build_inputs(tmp_path: Path) -> None:
+    source = _copy_worker_build_source(tmp_path)
+    output = tmp_path / "sdist"
+    result = _build_worker_sdist(source, output)
+    assert result.returncode == 0, result.stderr
+    sdist = next(output.glob("*.tar.gz"))
+    with tarfile.open(sdist, "r:gz") as archive:
+        names = [member.name for member in archive.getmembers() if member.isfile()]
+    validate_public_worker_sdist(names)
+
+
+def test_worker_wheel_rebuilt_from_sdist_preserves_public_boundary(tmp_path: Path) -> None:
+    source = _copy_worker_build_source(tmp_path)
+    sdist_output = tmp_path / "sdist"
+    sdist_result = _build_worker_sdist(source, sdist_output)
+    assert sdist_result.returncode == 0, sdist_result.stderr
+    sdist = next(sdist_output.glob("*.tar.gz"))
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    with tarfile.open(sdist, "r:gz") as archive:
+        archive.extractall(extracted)
+    rebuilt_source = next(path for path in extracted.iterdir() if path.is_dir())
+
+    wheel_output = tmp_path / "rebuilt-wheel"
+    wheel_result = _build_worker_wheel(rebuilt_source, wheel_output)
+    assert wheel_result.returncode == 0, wheel_result.stderr
+    wheel = next(wheel_output.glob("*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        validate_public_worker_wheel(archive.namelist())

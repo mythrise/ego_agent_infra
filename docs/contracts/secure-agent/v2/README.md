@@ -37,9 +37,10 @@ concrete F and all F/WINNER_SEALED/F_SEALED leases require a later verified,
 signed post-selection extension digest.
 
 The repository's root wheel is the public Worker distribution. Its setuptools
-hook removes Python modules and non-schema data whose path identifies an
-Evaluator, sealed, or hidden component, including stale files in the wheel
-staging directory. Package discovery also excludes matching future private
-subpackages. The current generated schemas contain no private path component;
-a future public schema whose filename matches the private-path policy requires
-an explicit reviewed packaging-policy change rather than entering by glob.
+hooks share one exact, file-level public allowlist with the wheel/sdist archive
+validator. A real wheel build starts from an empty staging tree; unexpected
+stale staged files make the build fail before the tree is cleared. Python
+modules and package data are selected explicitly rather than by broad public
+globs, and new Evaluator-, sealed-, or hidden-looking source files fail closed.
+A future public file requires an explicit reviewed allowlist and package-data
+change rather than entering an artifact through discovery or stale staging.

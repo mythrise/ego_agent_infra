@@ -32,34 +32,105 @@ ego-egolite-agentteam-live = "experiments.egolite_agentteam.run:main"
 ego-egolite-agentteam-verify = "experiments.egolite_agentteam.verify:main"
 ego-semifinal-bundle = "semifinal_acceptance.cli:main"
 
+[tool.setuptools]
+py-modules = ["worker_distribution"]
+
 [tool.setuptools.packages.find]
 include = [
-  "apps.api*",
-  "apps.agentteams_bridge*",
-  "benchmarks*",
-  "experiments*",
-  "integrations*",
-  "protocols*",
-  "semifinal_acceptance*",
-  "skill_runtime*",
-  "skills*",
-]
-exclude = [
-  "*.evaluator*",
-  "*.hidden*",
-  "*.sealed*",
+  "apps.api",
+  "apps.api.fixtures",
+  "apps.api.migrations",
+  "apps.api.migrations.postgres",
+  "apps.agentteams_bridge",
+  "apps.agentteams_bridge.migrations",
+  "apps.agentteams_bridge.migrations.postgres",
+  "benchmarks",
+  "benchmarks.corpus",
+  "benchmarks.corpus.v1",
+  "benchmarks.profiles",
+  "benchmarks.schemas",
+  "benchmarks.secure_memory",
+  "benchmarks.secure_memory.schemas",
+  "experiments",
+  "experiments.fashion_mnist_amp",
+  "integrations",
+  "integrations.agentteams",
+  "integrations.agentteams.scripts",
+  "protocols",
+  "protocols.rxp",
+  "protocols.rxp.schemas",
+  "semifinal_acceptance",
+  "semifinal_acceptance.schemas",
+  "skill_runtime",
+  "skills",
+  "skills.ablation-analyzer",
+  "skills.dataset-manifest",
+  "skills.dataset-manifest.scripts",
+  "skills.evidence-gate",
+  "skills.research-memory",
+  "skills.research-plan",
+  "skills.safe-experiment-runner",
 ]
 namespaces = true
 
 [tool.setuptools.package-data]
-"apps.api" = ["fixtures/*.yaml", "migrations/postgres/*.sql"]
-"apps.agentteams_bridge" = ["migrations/postgres/*.sql"]
-"benchmarks" = ["corpus/v1/*.json", "schemas/*.json"]
-"benchmarks.secure_memory" = ["schemas/*.schema.json", "corpus/public/*.json"]
-"integrations.agentteams" = ["*.json", "*.yaml", "*.tmpl", "scripts/*.py"]
-"protocols.rxp" = ["schemas/*.json"]
-"semifinal_acceptance" = ["schemas/*.json", "README.md"]
-"skills" = ["*/SKILL.md", "*/egoagentos.skill.yaml", "*/scripts/*.py"]
+"apps.api" = [
+  "fixtures/egolite-mcp-launch.yaml",
+  "migrations/postgres/001_control_plane.sql",
+  "migrations/postgres/002_ledger_boundaries.sql",
+]
+"apps.agentteams_bridge" = ["migrations/postgres/001_bridge_control_plane.sql"]
+"benchmarks" = [
+  "corpus/v1/scenario.schema.json",
+  "corpus/v1/scenarios.json",
+  "schemas/agentteams-rxp-trace-v1.schema.json",
+]
+"benchmarks.secure_memory" = [
+  "schemas/campaign-event-v1.schema.json",
+  "schemas/candidate-proposal-v1.schema.json",
+  "schemas/checkpoint-v1.schema.json",
+  "schemas/issued-budget-ticket-v1.schema.json",
+  "schemas/model-request-v1.schema.json",
+  "schemas/model-response-v1.schema.json",
+  "schemas/run-manifest-v2.schema.json",
+  "schemas/signed-task-lease-v1.schema.json",
+  "schemas/ticket-template-v1.schema.json",
+  "schemas/trusted-fact-v1.schema.json",
+  "schemas/trusted-relation-v1.schema.json",
+]
+"integrations.agentteams" = [
+  "agentteams-resources.yaml.tmpl",
+  "blueprint.yaml",
+  "message-envelope.schema.json",
+  "official-contract.lock.json",
+  "result-envelope.schema.json",
+  "scripts/verify_official_contract.py",
+]
+"protocols.rxp" = [
+  "schemas/rxp-decision-v1.schema.json",
+  "schemas/rxp-evidence-v1.schema.json",
+  "schemas/rxp-grant-v1.schema.json",
+  "schemas/rxp-intent-v1.schema.json",
+  "schemas/rxp-matrix-ledger-v1.schema.json",
+  "schemas/rxp-matrix-plan-v1.schema.json",
+  "schemas/rxp-receipt-v1.schema.json",
+]
+"semifinal_acceptance" = ["README.md", "schemas/semifinal-acceptance-v1.schema.json"]
+"skills" = [
+  "ablation-analyzer/SKILL.md",
+  "ablation-analyzer/egoagentos.skill.yaml",
+  "dataset-manifest/SKILL.md",
+  "dataset-manifest/egoagentos.skill.yaml",
+  "dataset-manifest/scripts/build_manifest.py",
+  "evidence-gate/SKILL.md",
+  "evidence-gate/egoagentos.skill.yaml",
+  "research-memory/SKILL.md",
+  "research-memory/egoagentos.skill.yaml",
+  "research-plan/SKILL.md",
+  "research-plan/egoagentos.skill.yaml",
+  "safe-experiment-runner/SKILL.md",
+  "safe-experiment-runner/egoagentos.skill.yaml",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"
