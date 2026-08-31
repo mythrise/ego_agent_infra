@@ -24,6 +24,7 @@ ego-repo-mcp = "egoagentos_mcp.repo_server:main"
 ego-dataset-mcp = "egoagentos_mcp.dataset_server:main"
 ego-gpu-mcp = "egoagentos_mcp.gpu_server:main"
 ego-metrics-mcp = "egoagentos_mcp.metrics_server:main"
+ego-workspace-mcp = "egoagentos_mcp.workspace_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
