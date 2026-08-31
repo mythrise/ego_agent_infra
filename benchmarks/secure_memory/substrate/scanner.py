@@ -28,15 +28,6 @@ _POLICY_IDS = (
     "SIZE_INVALID",
     "UTF8_INVALID",
 )
-SCANNER_SHA256 = canonical_sha256(
-    "secure-memory-scanner-rules",
-    {
-        "rule_version": SCANNER_RULE_VERSION,
-        "max_bytes": MAX_INGRESS_BYTES,
-        "text_schema_version": INGRESS_TEXT_SCHEMA_VERSION,
-        "policy_ids": list(_POLICY_IDS),
-    },
-)
 
 _AUTHORITY_PARTS = frozenset(
     {
@@ -62,6 +53,7 @@ _CREDENTIAL_PATTERNS = tuple(
         r"\bauthorization\s*:\s*(?:bearer|basic)\s+\S+",
         r"\bbearer\s+[A-Za-z0-9._~+/=-]{12,}",
         r"\b(?:api[_-]?key|access[_-]?token|password|passwd|hmac[_-]?(?:key|secret))\s*[:=]\s*\S{8,}",
+        r"\b(?:password|passwd)\s+is\s+(?!(?:not|never|required|optional|redacted|omitted|hidden)\b)\S{4,}",
         r"\bsk-[A-Za-z0-9_-]{20,}",
         r"\bAKIA[A-Z0-9]{16}\b",
         r"-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----",
@@ -78,7 +70,37 @@ _PROMPT_AUTHORITY_PATTERNS = tuple(
         r"\bdo\s+not\s+scan\b.*\b(?:evaluator|decision|pass|approve)\b",
         r"\b(?:treat|mark)\s+(?:this|me|content|message)\s+as\s+(?:trusted|validated|approved)\b",
         r"\bi\s+(?:am|have\s+been)\s+authorized\s+to\s+(?:approve|grant|override)\b",
+        r"\b(?:i|we|this\s+(?:message|content))\s+(?:am|are|is|have\s+been|has\s+been)\s+(?:approved|authorized)\s+to\s+(?:mark|promote|store|treat|write)\b.*\b(?:trusted|validated|approved|authority)\b",
+        r"\b(?:this\s+)?approved\s+(?:decision|review|message|content)\b.*\b(?:grants?|confers?|provides?)\s+(?:approval\s+)?authority\b.*\b(?:mark|promote|store|treat|write)\b.*\btrusted\b",
+        r"\bbypass\s+(?:the\s+)?(?:scanner|admission|policy)\b",
+        r"\b(?:developer|system|reviewer|evaluator)\s+(?:grant|permission|approval)\b.*\b(?:authority|authorized|bypass|promote|trusted)\b",
+        r"\b(?:approved|authorized|permission|authority)\b.*\bpromot(?:e|ion)\b.*\btrusted\s+memory\b",
+        r"\bpromote\b.*\btrusted\s+memory\b.*\b(?:approved|authorized|permission|authority)\b",
+        r"\b(?:this\s+)?(?:content|message|memory|result)\s+(?:is|was|has\s+been)\s+(?:approved|authorized)(?:\s+and)?\s+(?:trusted|validated)\b",
     )
+)
+
+SCANNER_RULE_MANIFEST = {
+    "rule_version": SCANNER_RULE_VERSION,
+    "text_schema_version": INGRESS_TEXT_SCHEMA_VERSION,
+    "max_ingress_bytes": MAX_INGRESS_BYTES,
+    "policy_ids": _POLICY_IDS,
+    "authority_parts": tuple(sorted(_AUTHORITY_PARTS)),
+    "credential_patterns": tuple(
+        (pattern.pattern, pattern.flags) for pattern in _CREDENTIAL_PATTERNS
+    ),
+    "prompt_authority_patterns": tuple(
+        (pattern.pattern, pattern.flags) for pattern in _PROMPT_AUTHORITY_PATTERNS
+    ),
+    "control_categories": ("Cc", "Cf"),
+    "accepted_shape": ("schema_version", "text"),
+    "accepted_text_min_chars": 1,
+    "canonical_json_required": True,
+    "strict_utf8_required": True,
+}
+SCANNER_SHA256 = canonical_sha256(
+    "secure-memory-scanner-rules",
+    SCANNER_RULE_MANIFEST,
 )
 
 
@@ -226,6 +248,7 @@ __all__ = [
     "INGRESS_TEXT_SCHEMA_VERSION",
     "MAX_INGRESS_BYTES",
     "SCANNER_RULE_VERSION",
+    "SCANNER_RULE_MANIFEST",
     "SCANNER_SHA256",
     "ScanReceipt",
 ]
