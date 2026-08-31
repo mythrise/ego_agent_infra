@@ -101,8 +101,10 @@ benchmarks/secure_memory/canonical.py
 benchmarks/secure_memory/manifest.py
 benchmarks/secure_memory/models.py
 benchmarks/secure_memory/substrate/__init__.py
+benchmarks/secure_memory/substrate/admission.py
 benchmarks/secure_memory/substrate/candidate_rpc.py
 benchmarks/secure_memory/substrate/channel.py
+benchmarks/secure_memory/substrate/scanner.py
 benchmarks/secure_memory/schemas/campaign-event-v1.schema.json
 benchmarks/secure_memory/schemas/candidate-proposal-v1.schema.json
 benchmarks/secure_memory/schemas/channel-envelope-v2.schema.json
@@ -184,6 +186,8 @@ worker_distribution.py
 KNOWN_PRIVATE_SOURCE_FILES: FrozenSet[str] = frozenset(
     {
         "apps/api/evaluator.py",
+        # Host-only: verifies evaluator identity/signatures and tracks replay state.
+        "benchmarks/secure_memory/substrate/evaluator_channel.py",
         # Host-only: these modules can hold trusted reservations and an already-open secret FD.
         "benchmarks/secure_memory/substrate/broker.py",
         "benchmarks/secure_memory/substrate/budget.py",

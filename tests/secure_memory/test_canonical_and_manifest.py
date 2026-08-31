@@ -990,6 +990,9 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     assert "benchmarks/secure_memory/models.py" in names
     assert "benchmarks/secure_memory/substrate/channel.py" in names
     assert "benchmarks/secure_memory/substrate/candidate_rpc.py" in names
+    assert "benchmarks/secure_memory/substrate/admission.py" in names
+    assert "benchmarks/secure_memory/substrate/scanner.py" in names
+    assert "benchmarks/secure_memory/substrate/evaluator_channel.py" not in names
     assert "benchmarks/secure_memory/schemas/channel-envelope-v2.schema.json" in names
     assert "benchmarks/secure_memory/schemas/run-manifest-v2.schema.json" in names
     required_d_authority_files = {
@@ -1040,8 +1043,10 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
                     "from apps.api.store import SQLiteStore",
                     "from apps.api.trusted_memory import TrustedFact",
                     "from apps.api.trusted_memory.models import LegacyMemoryView",
+                    "from benchmarks.secure_memory.substrate import AdmissionGate, ContentScanner",
                     "assert CampaignBinding and BridgeStore and PostgresBridgeStore",
                     "assert TrustedFact and LegacyMemoryView and SQLiteStore and PostgresStore",
+                    "assert AdmissionGate and ContentScanner",
                     "assert len(SCHEMA_MODELS) == 5",
                     "assert files('apps.agentteams_bridge').joinpath(",
                     "    'migrations/postgres/002_campaign_safety_attention.sql'",
