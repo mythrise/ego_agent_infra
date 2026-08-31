@@ -52,6 +52,9 @@ REQUEST_LIMITS = {
 }
 CAMPAIGN_RESERVATION = BudgetTriple(requests=356, input=3_306_000, output=485_500)
 CAMPAIGN_ABSOLUTE = BudgetTriple(requests=360, input=4_000_000, output=600_000)
+ALLOWED_RETAIN_REASONS = frozenset(
+    {"provider_failure", "429", "5xx", "timeout", "4xx", "unknown_usage", "contradictory_usage"}
+)
 
 
 class ReservationState(str, Enum):
@@ -130,8 +133,12 @@ class BudgetLedger:
     ) -> None:
         template_items = tuple(templates)
         ticket_items = tuple(tickets)
-        self._templates: Dict[str, TicketTemplate] = {item.template_id: item for item in template_items}
-        self._tickets: Dict[str, IssuedBudgetTicket] = {item.ticket_id: item for item in ticket_items}
+        self._templates: Dict[str, TicketTemplate] = {
+            item.template_id: item for item in template_items
+        }
+        self._tickets: Dict[str, IssuedBudgetTicket] = {
+            item.ticket_id: item for item in ticket_items
+        }
         if not template_items:
             raise BudgetDenied("templates_required")
         if len(self._templates) != len(template_items):
@@ -160,14 +167,17 @@ class BudgetLedger:
         for ticket in ticket_items:
             template = self._templates[ticket.template_id]
             ticket_core = {
-                key: value for key, value in ticket.model_dump(mode="python").items()
+                key: value
+                for key, value in ticket.model_dump(mode="python").items()
                 if key not in {"ticket_sha256", "signature_base64"}
             }
             if (
                 ticket.ticket_sha256 != canonical_sha256("issued-budget-ticket", ticket_core)
                 or not trust_context.signature_verifier(ticket)
-                or ticket.issuer_id != trust_context.issuer_id or ticket.key_id != trust_context.key_id
-                or ticket.issue_sequence > current or current > ticket.expires_at_sequence
+                or ticket.issuer_id != trust_context.issuer_id
+                or ticket.key_id != trust_context.key_id
+                or ticket.issue_sequence > current
+                or current > ticket.expires_at_sequence
             ):
                 raise BudgetDenied("ticket_sequence")
             retry = template.retry_owner is not None
@@ -183,10 +193,22 @@ class BudgetLedger:
                 or ticket.allowed_role != template.allowed_role
                 or (not retry and ticket.effective_request_class != template.request_class)
                 or (not retry and ticket.usage_phase != template.usage_phase)
-                or (not retry and (ticket.max_input_tokens != template.max_input_tokens
-                                  or ticket.max_output_tokens != template.max_output_tokens))
-                or (retry and (ticket.max_input_tokens > REQUEST_LIMITS[ticket.effective_request_class].max_input
-                               or ticket.max_output_tokens > REQUEST_LIMITS[ticket.effective_request_class].max_output))
+                or (
+                    not retry
+                    and (
+                        ticket.max_input_tokens != template.max_input_tokens
+                        or ticket.max_output_tokens != template.max_output_tokens
+                    )
+                )
+                or (
+                    retry
+                    and (
+                        ticket.max_input_tokens
+                        > REQUEST_LIMITS[ticket.effective_request_class].max_input
+                        or ticket.max_output_tokens
+                        > REQUEST_LIMITS[ticket.effective_request_class].max_output
+                    )
+                )
             ):
                 raise BudgetDenied("template_binding")
 
@@ -205,7 +227,9 @@ class BudgetLedger:
 
     @property
     def state_digest(self) -> str:
-        return canonical_sha256("budget-ledger-state", tuple(event.event_sha256 for event in self._events))
+        return canonical_sha256(
+            "budget-ledger-state", tuple(event.event_sha256 for event in self._events)
+        )
 
     @property
     def totals(self) -> BudgetTriple:
@@ -224,9 +248,21 @@ class BudgetLedger:
             return self._reservations.get(ticket_id)
 
     @classmethod
-    def replay(cls, *, templates: Iterable[TicketTemplate], tickets: Iterable[IssuedBudgetTicket], manifest_sha256: str,
-               trust_context: BudgetTrustContext, events: Iterable[BudgetEvent]) -> "BudgetLedger":
-        ledger = cls(templates=templates, tickets=tickets, manifest_sha256=manifest_sha256, trust_context=trust_context)
+    def replay(
+        cls,
+        *,
+        templates: Iterable[TicketTemplate],
+        tickets: Iterable[IssuedBudgetTicket],
+        manifest_sha256: str,
+        trust_context: BudgetTrustContext,
+        events: Iterable[BudgetEvent],
+    ) -> "BudgetLedger":
+        ledger = cls(
+            templates=templates,
+            tickets=tickets,
+            manifest_sha256=manifest_sha256,
+            trust_context=trust_context,
+        )
         for event in events:
             if event.sequence != len(ledger._events) + 1:
                 raise BudgetDenied("event_sequence")
@@ -242,21 +278,62 @@ class BudgetLedger:
                     raise BudgetDenied("event_transition")
                 ledger._used_templates.add(event.template_id)
             else:
-                if (event.previous_state != prior.state or event.reserved_input != prior.reserved_input
-                        or event.reserved_output != prior.reserved_output
-                        or (prior.state is ReservationState.RESERVED and event.state is not ReservationState.DISPATCHED)
-                        or (prior.state is ReservationState.DISPATCHED and event.state not in {ReservationState.SETTLED, ReservationState.RETAINED})
-                        or prior.state in {ReservationState.SETTLED, ReservationState.RETAINED}):
+                if (
+                    event.previous_state != prior.state
+                    or event.reserved_input != prior.reserved_input
+                    or event.reserved_output != prior.reserved_output
+                    or (
+                        prior.state is ReservationState.RESERVED
+                        and event.state is not ReservationState.DISPATCHED
+                    )
+                    or (
+                        prior.state is ReservationState.DISPATCHED
+                        and event.state not in {ReservationState.SETTLED, ReservationState.RETAINED}
+                    )
+                    or prior.state in {ReservationState.SETTLED, ReservationState.RETAINED}
+                ):
                     raise BudgetDenied("event_transition")
-            core = {"sequence": event.sequence, "ticket_id": event.ticket_id, "template_id": event.template_id,
-                    "previous_state": None if event.previous_state is None else event.previous_state.value,
-                    "new_state": event.state.value, "reserved_input": event.reserved_input, "reserved_output": event.reserved_output,
-                    "settled_usage": event.settled_usage, "retained_reason": event.retained_reason,
-                    "previous_event_sha256": event.previous_event_sha256}
+            core = {
+                "sequence": event.sequence,
+                "ticket_id": event.ticket_id,
+                "template_id": event.template_id,
+                "previous_state": None
+                if event.previous_state is None
+                else event.previous_state.value,
+                "new_state": event.state.value,
+                "reserved_input": event.reserved_input,
+                "reserved_output": event.reserved_output,
+                "settled_usage": event.settled_usage,
+                "retained_reason": event.retained_reason,
+                "previous_event_sha256": event.previous_event_sha256,
+            }
             if event.event_sha256 != canonical_sha256("budget-ledger-event", core):
                 raise BudgetDenied("event_hash")
-            reservation = Reservation(event.ticket_id, event.template_id, event.reserved_input, event.reserved_output,
-                                      event.state, event.sequence, event.settled_usage, event.retained_reason)
+            if event.reserved_input <= 0 or event.reserved_output <= 0:
+                raise BudgetDenied("event_reservation")
+            if event.state in {ReservationState.RESERVED, ReservationState.DISPATCHED} and (
+                event.settled_usage is not None or event.retained_reason is not None
+            ):
+                raise BudgetDenied("event_terminal")
+            if event.state is ReservationState.SETTLED and (
+                event.settled_usage is None or event.retained_reason is not None
+            ):
+                raise BudgetDenied("event_terminal")
+            if event.state is ReservationState.RETAINED and (
+                event.settled_usage is not None
+                or event.retained_reason not in ALLOWED_RETAIN_REASONS
+            ):
+                raise BudgetDenied("event_terminal")
+            reservation = Reservation(
+                event.ticket_id,
+                event.template_id,
+                event.reserved_input,
+                event.reserved_output,
+                event.state,
+                event.sequence,
+                event.settled_usage,
+                event.retained_reason,
+            )
             ledger._events = ledger._events + (event,)
             ledger._reservations[event.ticket_id] = reservation
         return ledger
@@ -264,10 +341,14 @@ class BudgetLedger:
     def _append(self, reservation: Reservation) -> Reservation:
         previous = self._reservations.get(reservation.ticket_id)
         core = {
-            "sequence": len(self._events) + 1, "ticket_id": reservation.ticket_id,
-            "template_id": reservation.template_id, "previous_state": None if previous is None else previous.state.value,
-            "new_state": reservation.state.value, "reserved_input": reservation.reserved_input,
-            "reserved_output": reservation.reserved_output, "settled_usage": reservation.settled_usage,
+            "sequence": len(self._events) + 1,
+            "ticket_id": reservation.ticket_id,
+            "template_id": reservation.template_id,
+            "previous_state": None if previous is None else previous.state.value,
+            "new_state": reservation.state.value,
+            "reserved_input": reservation.reserved_input,
+            "reserved_output": reservation.reserved_output,
+            "settled_usage": reservation.settled_usage,
             "retained_reason": reservation.retained_reason,
             "previous_event_sha256": "" if not self._events else self._events[-1].event_sha256,
         }
@@ -277,8 +358,10 @@ class BudgetLedger:
             state=reservation.state,
             reserved_input=reservation.reserved_input,
             reserved_output=reservation.reserved_output,
-            template_id=reservation.template_id, previous_state=None if previous is None else previous.state,
-            settled_usage=reservation.settled_usage, retained_reason=reservation.retained_reason,
+            template_id=reservation.template_id,
+            previous_state=None if previous is None else previous.state,
+            settled_usage=reservation.settled_usage,
+            retained_reason=reservation.retained_reason,
             previous_event_sha256="" if not self._events else self._events[-1].event_sha256,
             event_sha256=canonical_sha256("budget-ledger-event", core),
         )
@@ -312,29 +395,41 @@ class BudgetLedger:
             core = lease.core
             if (
                 not self._trust_context.signature_verifier(lease)
-                or core.issuer_id != self._trust_context.issuer_id or core.key_id != self._trust_context.key_id
-                or core.issue_sequence > current or current > core.expires_at_sequence
+                or core.issuer_id != self._trust_context.issuer_id
+                or core.key_id != self._trust_context.key_id
+                or core.issue_sequence > current
+                or current > core.expires_at_sequence
             ):
                 raise BudgetDenied("lease_sequence")
             if ticket_id not in core.issued_ticket_ids:
                 raise BudgetDenied("lease_ticket")
-            if core.manifest_sha256 != self._manifest_sha256 or ticket.manifest_sha256 != self._manifest_sha256:
+            if (
+                core.manifest_sha256 != self._manifest_sha256
+                or ticket.manifest_sha256 != self._manifest_sha256
+            ):
                 raise BudgetDenied("manifest")
             if requester_role != ticket.allowed_role or core.role != ticket.allowed_role:
                 raise BudgetDenied("role")
             bindings = (
-                (core.campaign_id, ticket.campaign_id), (core.configuration_id, ticket.configuration_id),
-                (core.execution_phase_owner, ticket.execution_phase_owner), (core.project_id, ticket.project_id),
-                (core.task_id, ticket.task_id), (core.worker, ticket.worker),
-                (core.matrix_user_id, ticket.matrix_user_id), (core.request_class, ticket.effective_request_class),
+                (core.campaign_id, ticket.campaign_id),
+                (core.configuration_id, ticket.configuration_id),
+                (core.execution_phase_owner, ticket.execution_phase_owner),
+                (core.project_id, ticket.project_id),
+                (core.task_id, ticket.task_id),
+                (core.worker, ticket.worker),
+                (core.matrix_user_id, ticket.matrix_user_id),
+                (core.request_class, ticket.effective_request_class),
             )
             if any(left != right for left, right in bindings):
                 raise BudgetDenied("lease_binding")
-            if (template.allowed_role != ticket.allowed_role
-                    or (template.retry_owner is None and template.request_class != ticket.effective_request_class)):
+            if template.allowed_role != ticket.allowed_role or (
+                template.retry_owner is None
+                and template.request_class != ticket.effective_request_class
+            ):
                 raise BudgetDenied("template_binding")
-            if ((template.problem_id is not None and template.problem_id != core.problem_id)
-                    or (template.turn is not None and template.turn != core.turn)):
+            if (template.problem_id is not None and template.problem_id != core.problem_id) or (
+                template.turn is not None and template.turn != core.turn
+            ):
                 raise BudgetDenied("template_row")
             estimated = tokenizer_estimate + calibrated_positive_error + 512
             byte_bound = len(serialized_model_visible_bytes) + 1_024
@@ -356,17 +451,35 @@ class BudgetLedger:
             ):
                 raise BudgetDenied("campaign_reservation")
             self._used_templates.add(ticket.template_id)
-            return self._append(Reservation(ticket_id, ticket.template_id, reserved_input, reserved_output,
-                                            ReservationState.RESERVED, 0))
+            return self._append(
+                Reservation(
+                    ticket_id,
+                    ticket.template_id,
+                    reserved_input,
+                    reserved_output,
+                    ReservationState.RESERVED,
+                    0,
+                )
+            )
 
     def mark_dispatched(self, ticket_id: str) -> Reservation:
         with self._lock:
             value = self._require(ticket_id, ReservationState.RESERVED)
-            return self._append(Reservation(**{**value.__dict__, "state": ReservationState.DISPATCHED}))
+            return self._append(
+                Reservation(**{**value.__dict__, "state": ReservationState.DISPATCHED})
+            )
 
-    def reserve_retry(self, retry_ticket_id: str, original_ticket_id: str, lease: SignedTaskLease, *,
-                      requester_role: str, tokenizer_estimate: int, calibrated_positive_error: int,
-                      serialized_model_visible_bytes: bytes) -> Reservation:
+    def reserve_retry(
+        self,
+        retry_ticket_id: str,
+        original_ticket_id: str,
+        lease: SignedTaskLease,
+        *,
+        requester_role: str,
+        tokenizer_estimate: int,
+        calibrated_positive_error: int,
+        serialized_model_visible_bytes: bytes,
+    ) -> Reservation:
         """Consume one preloaded, owner-bound retry ticket after a retained transient original."""
         with self._lock:
             original = self._reservations.get(original_ticket_id)
@@ -394,27 +507,54 @@ class BudgetLedger:
                 or retry_ticket.max_output_tokens != original_ticket.max_output_tokens
             ):
                 raise BudgetDenied("retry_binding")
-            return self.reserve(retry_ticket_id, lease, requester_role=requester_role,
-                                tokenizer_estimate=tokenizer_estimate,
-                                calibrated_positive_error=calibrated_positive_error,
-                                serialized_model_visible_bytes=serialized_model_visible_bytes)
+            return self.reserve(
+                retry_ticket_id,
+                lease,
+                requester_role=requester_role,
+                tokenizer_estimate=tokenizer_estimate,
+                calibrated_positive_error=calibrated_positive_error,
+                serialized_model_visible_bytes=serialized_model_visible_bytes,
+            )
 
     def retain(self, ticket_id: str, reason: str) -> Reservation:
         with self._lock:
+            if reason not in ALLOWED_RETAIN_REASONS:
+                raise BudgetDenied("retain_reason")
             value = self._require(ticket_id, ReservationState.DISPATCHED)
-            return self._append(Reservation(**{**value.__dict__, "state": ReservationState.RETAINED,
-                                                "retained_reason": reason}))
+            return self._append(
+                Reservation(
+                    **{
+                        **value.__dict__,
+                        "state": ReservationState.RETAINED,
+                        "retained_reason": reason,
+                    }
+                )
+            )
 
     def settle(self, ticket_id: str, raw_usage: RawUsage) -> SettledUsage:
         with self._lock:
             value = self._require(ticket_id, ReservationState.DISPATCHED)
-            if raw_usage.input_tokens > value.reserved_input or raw_usage.output_tokens > value.reserved_output:
+            if (
+                raw_usage.input_tokens > value.reserved_input
+                or raw_usage.output_tokens > value.reserved_output
+            ):
                 raise BudgetDenied("contradictory_usage")
-            settled = SettledUsage(raw_usage=raw_usage, budget_input=raw_usage.input_tokens,
-                                  budget_output=raw_usage.output_tokens, comparable_input=raw_usage.input_tokens,
-                                  comparable_output=raw_usage.output_tokens)
-            self._append(Reservation(**{**value.__dict__, "state": ReservationState.SETTLED,
-                                        "settled_usage": settled}))
+            settled = SettledUsage(
+                raw_usage=raw_usage,
+                budget_input=raw_usage.input_tokens,
+                budget_output=raw_usage.output_tokens,
+                comparable_input=raw_usage.input_tokens,
+                comparable_output=raw_usage.output_tokens,
+            )
+            self._append(
+                Reservation(
+                    **{
+                        **value.__dict__,
+                        "state": ReservationState.SETTLED,
+                        "settled_usage": settled,
+                    }
+                )
+            )
             return settled
 
     def _require(self, ticket_id: str, *allowed: ReservationState) -> Reservation:
