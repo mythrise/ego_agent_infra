@@ -19,14 +19,25 @@ from .contracts import (
     WorkLevel,
     WorkNode,
 )
+from .guardian import EgoGuardian, build_guardian_decision
+from .safety import (
+    ApprovalReceipt,
+    SystemRiskClassifier,
+    build_approval_receipt,
+    campaign_binding_sha256,
+    evaluate_effect_safety,
+    validate_approval_receipt,
+)
 
 __all__ = [
     "ApprovalDisclosure",
+    "ApprovalReceipt",
     "AttentionFactRef",
     "AttentionPacket",
     "CampaignBinding",
     "CanonicalEffect",
     "EnforcementMode",
+    "EgoGuardian",
     "GuardianDecision",
     "JsonValue",
     "RiskAssessment",
@@ -35,9 +46,15 @@ __all__ = [
     "RiskStage",
     "SafetyDecision",
     "SafetyVerdict",
+    "SystemRiskClassifier",
     "UserMessageMode",
     "UserStatusProjection",
     "WorkHierarchy",
     "WorkLevel",
     "WorkNode",
+    "build_approval_receipt",
+    "build_guardian_decision",
+    "campaign_binding_sha256",
+    "evaluate_effect_safety",
+    "validate_approval_receipt",
 ]
