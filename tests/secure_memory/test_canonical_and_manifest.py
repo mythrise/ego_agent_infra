@@ -755,6 +755,7 @@ def test_exported_schemas_publish_expressible_canonical_constraints() -> None:
 def test_every_exported_schema_requires_the_canonical_semantic_validator() -> None:
     for filename in (
         "run-manifest-v2.schema.json",
+        "channel-envelope-v2.schema.json",
         "model-request-v1.schema.json",
         "model-response-v1.schema.json",
         "ticket-template-v1.schema.json",
@@ -987,6 +988,9 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     assert "Requires-Python: >=3.9" in metadata
     assert "rxp-bench = benchmarks.runner:main" in entry_points
     assert "benchmarks/secure_memory/models.py" in names
+    assert "benchmarks/secure_memory/substrate/channel.py" in names
+    assert "benchmarks/secure_memory/substrate/candidate_rpc.py" in names
+    assert "benchmarks/secure_memory/schemas/channel-envelope-v2.schema.json" in names
     assert "benchmarks/secure_memory/schemas/run-manifest-v2.schema.json" in names
 
     environment = dict(os.environ)
