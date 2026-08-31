@@ -528,6 +528,59 @@ def test_owned_transient_retry_uses_second_ticket_and_exact_same_body(failure):
     assert ledger.reservation_for("retry-ticket").state.value == "SETTLED"
 
 
+def test_owned_retry_rechecks_capability_expiry_after_backoff_before_paid_work():
+    current = {"value": 1}
+    authority = CampaignCapabilityAuthority(
+        _capability(expires_at_sequence=1),
+        signature_verifier=lambda _value: True,
+        current_sequence=lambda: current["value"],
+        expected_campaign_id="campaign",
+        expected_project_id="official-calibration-project",
+        expected_issuer_id="capability-control",
+        expected_key_id="capability-key",
+    )
+    ledger, lease = _retry_ledger()
+
+    class RetryTransport(FakeTransport):
+        def __init__(self):
+            self.calls = []
+
+        def send(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise ProviderTransportFailure.timeout()
+            return ProviderReply(
+                raw_usage={"input_tokens": 1, "output_tokens": 1},
+                output_text="unexpected-retry",
+            )
+
+    transport = RetryTransport()
+    broker = ProviderBroker(
+        ledger=ledger,
+        capability_authority=authority,
+        transport=transport,
+        signature_verifier=lambda _value: True,
+        secret_handoff=None,
+    )
+
+    def expire_during_backoff(_kind):
+        current["value"] = 2
+
+    with pytest.raises(BrokerDenied, match="capability_expired"):
+        broker.dispatch(
+            _request(lease=lease),
+            lease=lease,
+            requester_role="Worker",
+            retry_ticket_id="retry-ticket",
+            backoff_observer=expire_during_backoff,
+        )
+    assert len(transport.calls) == 1
+    assert ledger.reservation_for("ticket-1").retained_reason == "timeout"
+    assert ledger.reservation_for("retry-ticket") is None
+    assert ledger.totals.requests == 1
+    assert len(ledger.events) == 3
+
+
 def test_nontransient_4xx_retains_original_and_leaves_retry_unused():
     ledger, lease = _retry_ledger()
 

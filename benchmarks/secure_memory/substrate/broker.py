@@ -311,14 +311,28 @@ class ProviderBroker:
             self._ledger.retain(request.ticket_id, failure.kind)
             if retry_ticket_id is not None and failure.kind in {"429", "5xx", "timeout"}:
                 backoff_observer(failure.kind)
+                retry_capability = self._capability_authority.record()
+                if retry_capability.state is BrokerState.FROZEN:
+                    raise BrokerDenied("capability_frozen")
+                if not retry_capability.usable():
+                    self._capability_authority.freeze()
+                    raise BrokerDenied("capability")
+                if (
+                    retry_capability.calibrated_positive_error
+                    != self._ledger.calibrated_positive_error
+                ):
+                    self._capability_authority.freeze()
+                    raise BrokerDenied("capability_calibration")
                 self._ledger.reserve_retry(retry_ticket_id, request.ticket_id, lease,
                                            requester_role=requester_role, tokenizer_estimate=self._tokenizer(visible),
-                                           calibrated_positive_error=capability.calibrated_positive_error,
+                                           calibrated_positive_error=retry_capability.calibrated_positive_error,
                                            serialized_model_visible_bytes=visible)
                 self._ledger.mark_dispatched(retry_ticket_id)
                 try:
-                    reply = self._transport.send(base_url=request.provider_base_url, method=capability.method,
-                                                 endpoint=capability.endpoint, body=body, api_key=self._api_key,
+                    reply = self._transport.send(base_url=request.provider_base_url,
+                                                 method=retry_capability.method,
+                                                 endpoint=retry_capability.endpoint,
+                                                 body=body, api_key=self._api_key,
                                                  allow_redirects=False, tls_verified=True)
                 except Exception:
                     self._ledger.retain(retry_ticket_id, "provider_failure")
