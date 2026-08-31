@@ -9,15 +9,24 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from pydantic import Field, model_validator
 
+from ..canonical import canonical_sha256
 from ..models import IssuedBudgetTicket, RequestClass, SignedTaskLease, StrictModel, TicketTemplate
 
 
 class BudgetDenied(ValueError):
     """A trusted budget invariant prevented a provider dispatch."""
+
+
+@dataclass(frozen=True)
+class BudgetTrustContext:
+    issuer_id: str
+    key_id: str
+    current_sequence: Callable[[], int]
+    signature_verifier: Callable[[object], bool]
 
 
 @dataclass(frozen=True)
@@ -111,6 +120,7 @@ class BudgetLedger:
         templates: Iterable[TicketTemplate],
         tickets: Iterable[IssuedBudgetTicket],
         manifest_sha256: str,
+        trust_context: BudgetTrustContext,
     ) -> None:
         template_items = tuple(templates)
         ticket_items = tuple(tickets)
@@ -131,6 +141,8 @@ class BudgetLedger:
         if any(ticket.manifest_sha256 != manifest_sha256 for ticket in self._tickets.values()):
             raise BudgetDenied("manifest")
         self._manifest_sha256 = manifest_sha256
+        self._trust_context = trust_context
+        current = trust_context.current_sequence()
         self._reservation_cap = CAMPAIGN_RESERVATION
         self._absolute_cap = CAMPAIGN_ABSOLUTE
         self._reservations: Dict[str, Reservation] = {}
@@ -139,6 +151,17 @@ class BudgetLedger:
         self._lock = threading.RLock()
         for ticket in ticket_items:
             template = self._templates[ticket.template_id]
+            ticket_core = {
+                key: value for key, value in ticket.model_dump(mode="python").items()
+                if key not in {"ticket_sha256", "signature_base64"}
+            }
+            if (
+                ticket.ticket_sha256 != canonical_sha256("issued-budget-ticket", ticket_core)
+                or not trust_context.signature_verifier(ticket)
+                or ticket.issuer_id != trust_context.issuer_id or ticket.key_id != trust_context.key_id
+                or ticket.issue_sequence > current or current > ticket.expires_at_sequence
+            ):
+                raise BudgetDenied("ticket_sequence")
             if (
                 ticket.execution_phase_owner != template.execution_phase_owner
                 or ticket.configuration_id != template.configuration_id
@@ -212,6 +235,13 @@ class BudgetLedger:
             if ticket.template_id in self._used_templates or ticket_id in self._reservations:
                 raise BudgetDenied("ticket_consumed")
             core = lease.core
+            current = self._trust_context.current_sequence()
+            if (
+                not self._trust_context.signature_verifier(lease)
+                or core.issuer_id != self._trust_context.issuer_id or core.key_id != self._trust_context.key_id
+                or core.issue_sequence > current or current > core.expires_at_sequence
+            ):
+                raise BudgetDenied("lease_sequence")
             if ticket_id not in core.issued_ticket_ids:
                 raise BudgetDenied("lease_ticket")
             if core.manifest_sha256 != self._manifest_sha256 or ticket.manifest_sha256 != self._manifest_sha256:

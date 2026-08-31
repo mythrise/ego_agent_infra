@@ -18,6 +18,7 @@ from benchmarks.secure_memory.substrate.budget import (
     CAMPAIGN_RESERVATION,
     BudgetDenied,
     BudgetLedger,
+    BudgetTrustContext,
     RawUsage,
     ReservationState,
 )
@@ -58,13 +59,30 @@ def _ticket(template_id="template-1", ticket_id="ticket-1", **overrides):
                   max_output_tokens=1500, expires_at_sequence=10, issuer_id="control", key_id="k",
                   issue_sequence=1, ticket_sha256=SHA, signature_base64="c2ln")
     values.update(overrides)
+    core = {key: value for key, value in values.items() if key not in {"ticket_sha256", "signature_base64"}}
+    values["ticket_sha256"] = canonical_sha256("issued-budget-ticket", core)
     return IssuedBudgetTicket(**values)
 
 
 def _ledger(template=None, ticket=None):
     template = template or _template()
     ticket = ticket or _ticket(template.template_id)
-    return BudgetLedger(templates=(template,), tickets=(ticket,), manifest_sha256=SHA), _lease(ticket.ticket_id)
+    context = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
+                                 signature_verifier=lambda _value: True)
+    return BudgetLedger(templates=(template,), tickets=(ticket,), manifest_sha256=SHA, trust_context=context), _lease(ticket.ticket_id)
+
+
+def _trust():
+    return BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
+                              signature_verifier=lambda _value: True)
+
+
+def test_trusted_context_rejects_stale_ticket_before_reservation():
+    ticket = _ticket(expires_at_sequence=0)
+    context = BudgetTrustContext(issuer_id="control", key_id="k", current_sequence=lambda: 1,
+                                 signature_verifier=lambda _value: True)
+    with pytest.raises(BudgetDenied, match="sequence"):
+        BudgetLedger(templates=(_template(),), tickets=(ticket,), manifest_sha256=SHA, trust_context=context)
 
 
 def test_frozen_caps_and_four_request_margin_are_exact():
@@ -161,16 +179,16 @@ def test_caps_are_frozen_and_duplicate_trusted_inputs_fail_closed():
         BudgetLedger(templates=(template,), tickets=(ticket,), manifest_sha256=SHA,
                      reservation_cap=CAMPAIGN_ABSOLUTE)
     with pytest.raises(BudgetDenied, match="duplicate_template"):
-        BudgetLedger(templates=(template, template), tickets=(ticket,), manifest_sha256=SHA)
+        BudgetLedger(templates=(template, template), tickets=(ticket,), manifest_sha256=SHA, trust_context=_trust())
     with pytest.raises(BudgetDenied, match="template_ticket"):
-        BudgetLedger(templates=(template,), tickets=(ticket, _ticket(ticket_id="ticket-2", issue_sequence=2)), manifest_sha256=SHA)
+        BudgetLedger(templates=(template,), tickets=(ticket, _ticket(ticket_id="ticket-2", issue_sequence=2)), manifest_sha256=SHA, trust_context=_trust())
 
 
 def test_ticket_template_bindings_and_state_machine_are_exact():
     template = _template(max_input_tokens=1200, max_output_tokens=10)
     escalated = _ticket(max_input_tokens=10_000, max_output_tokens=1500)
     with pytest.raises(BudgetDenied, match="template_binding"):
-        BudgetLedger(templates=(template,), tickets=(escalated,), manifest_sha256=SHA)
+        BudgetLedger(templates=(template,), tickets=(escalated,), manifest_sha256=SHA, trust_context=_trust())
     ledger, lease = _ledger()
     ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
                    calibrated_positive_error=0, serialized_model_visible_bytes=b"")
