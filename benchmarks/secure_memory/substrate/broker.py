@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping, Optional, Protocol
 
-from ..canonical import canonical_bytes
+from ..canonical import canonical_bytes, canonical_sha256
 from ..models import ModelRequest, SignedTaskLease
 from .budget import BudgetDenied, BudgetLedger, RawUsage, SettledUsage
 from .clock import Clock, SystemMonotonicClock
@@ -32,6 +32,9 @@ class ProviderRequestShape(str, Enum):
 @dataclass(frozen=True)
 class ProviderCapabilityRecord:
     state: BrokerState
+    campaign_id: str
+    project_id: str
+    base_url: str
     endpoint: str
     method: str
     body_shape: ProviderRequestShape
@@ -42,6 +45,16 @@ class ProviderCapabilityRecord:
     streaming_semantics: bool
     zero_background_calls: bool
     calibrated_positive_error: int = 0
+    temperature_present: bool = True
+    top_p_present: bool = True
+    matrix_cases: tuple[str, ...] = ()
+    matrix_digest: str = ""
+    issuer_id: str = ""
+    key_id: str = ""
+    issue_sequence: int = 0
+    expires_at_sequence: int = 0
+    record_sha256: str = ""
+    signature_base64: str = ""
 
     def usable(self) -> bool:
         return self.state is BrokerState.QUALIFIED and all((
@@ -55,8 +68,17 @@ class ProviderCapabilityRecord:
 class CampaignCapabilityAuthority:
     """One lock-protected capability state shared by every campaign broker."""
 
-    def __init__(self, record: ProviderCapabilityRecord, *, signature_verifier: Callable[[object], bool]) -> None:
-        if not signature_verifier(record):
+    def __init__(self, record: ProviderCapabilityRecord, *, signature_verifier: Callable[[object], bool],
+                 current_sequence: Callable[[], int], expected_campaign_id: str) -> None:
+        core = {key: value for key, value in record.__dict__.items() if key not in {"record_sha256", "signature_base64"}}
+        expected_matrix = canonical_sha256("agentteams-capability-matrix", record.matrix_cases)
+        if (
+            not signature_verifier(record) or record.record_sha256 != canonical_sha256("provider-capability-record", core)
+            or record.matrix_cases != tuple("case-%02d" % value for value in range(1, 17))
+            or record.matrix_digest != expected_matrix or record.campaign_id != expected_campaign_id
+            or record.project_id != "official-calibration-project" or not record.issuer_id or not record.key_id
+            or record.issue_sequence > current_sequence() or current_sequence() > record.expires_at_sequence
+        ):
             raise BrokerDenied("capability_signature")
         self._record = record
         self._lock = threading.RLock()
@@ -174,7 +196,7 @@ class ProviderBroker:
         if capability_authority is None:
             if capability is None:
                 raise BrokerDenied("capability_required")
-            capability_authority = CampaignCapabilityAuthority(capability, signature_verifier=lambda _record: True)
+            raise BrokerDenied("capability_authority_required")
         self._capability_authority = capability_authority
         self._transport = transport
         self._signature_verifier = signature_verifier
@@ -201,10 +223,16 @@ class ProviderBroker:
             raise BrokerDenied("qualified_request")
         if request.request_class != ticket.effective_request_class or request.campaign_id != ticket.campaign_id:
             raise BrokerDenied("trusted_binding")
+        if request.provider_base_url != capability.base_url:
+            raise BrokerDenied("qualified_request")
         body = {
             "model": request.provider_model, "messages": list(request.messages), "max_tokens": request.max_output_tokens,
             "temperature": request.temperature, "top_p": request.top_p, "stream": request.stream, "tools": list(request.tools),
         }
+        if not capability.temperature_present:
+            body.pop("temperature")
+        if not capability.top_p_present:
+            body.pop("top_p")
         visible = canonical_bytes(body)
         if not self._scanner(visible):
             raise BrokerDenied("model_bytes_rejected")
