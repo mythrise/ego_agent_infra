@@ -253,6 +253,9 @@ def validate_wire_document(
     try:
         value = parse_json_bytes(raw)
         document = model.model_validate(value)
+        if isinstance(document, ChannelEnvelope):
+            if document.payload_sha256 != canonical_sha256("channel-payload", document.payload):
+                raise SemanticValidationError("channel payload_sha256 does not match canonical payload")
         if isinstance(document, SignedTaskLease):
             if manifest is None or lease_context is None:
                 raise SemanticValidationError(

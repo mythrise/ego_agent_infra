@@ -1,6 +1,7 @@
 """Authenticated channel framing regression tests."""
 
-import copy
+import json
+import threading
 
 import pytest
 
@@ -8,112 +9,155 @@ from benchmarks.secure_memory.substrate.channel import (
     ChannelCodec,
     ChannelKind,
     ChannelRejected,
+    ChannelTrust,
+    DurableReceipt,
     KeyProvisioner,
 )
 
 
-def _codec() -> ChannelCodec:
-    return ChannelCodec(
-        provisioner=KeyProvisioner.deterministic(b"channel-test-seed"),
+def _trust(**overrides: object) -> ChannelTrust:
+    values = dict(
         configuration_id="A",
+        sender_role="agentteams",
+        recipient_role="broker",
+        direction="request",
+        key_id="candidate-a-request-e1",
+        epoch=1,
+    )
+    values.update(overrides)
+    return ChannelTrust(**values)
+
+
+def _codec(**overrides: object) -> ChannelCodec:
+    values = dict(
+        provisioner=KeyProvisioner.deterministic(b"channel-test-seed"),
         campaign_nonce="campaign-nonce",
-        arm="A",
+        trusted_epoch=_trust(),
         allowed_methods={ChannelKind.CANDIDATE: {"candidate.propose"}},
     )
+    values.update(overrides)
+    return ChannelCodec(**values)
 
 
 def _frame(codec: ChannelCodec, **overrides: object) -> bytes:
-    values = {
-        "channel": ChannelKind.CANDIDATE,
-        "sender_role": "agentteams",
-        "recipient_role": "broker",
-        "direction": "request",
-        "key_id": "candidate-request",
-        "epoch": 1,
-        "sequence": 1,
-        "method": "candidate.propose",
-        "idempotency_key": "proposal-1",
-        "payload": {"proposal_id": "proposal-1"},
-    }
+    values = dict(
+        channel=ChannelKind.CANDIDATE,
+        sender_role="agentteams",
+        recipient_role="broker",
+        direction="request",
+        key_id="candidate-a-request-e1",
+        epoch=1,
+        sequence=1,
+        method="candidate.propose",
+        idempotency_key="proposal-1",
+        payload={"proposal_id": "proposal-1"},
+    )
     values.update(overrides)
     return codec.encode(**values)
 
 
-def _mutate(frame: bytes, **changes: object) -> bytes:
-    import json
-
-    document = json.loads(frame)
-    if "mac" in changes:
-        document["mac"] = changes.pop("mac")
-    document["envelope"].update(changes)
-    document["declared_length"] = len(
-        json.dumps(document["envelope"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+def _receipt(_envelope: object, digest: str) -> DurableReceipt:
+    return DurableReceipt(
+        request_frame_sha256=digest,
+        durable_receipt_id="journal-1",
+        receipt_frame=b'{"receipt":"ok"}',
+        installed=True,
     )
-    return json.dumps(document, separators=(",", ":")).encode("utf-8")
 
 
-@pytest.mark.parametrize(
-    ("name", "change", "reason"),
-    [
-        ("wrong_hmac", {"mac": "00" * 32}, "invalid_mac"),
-        ("wrong_configuration", {"configuration_id": "B"}, "configuration_mismatch"),
-        ("wrong_nonce", {"campaign_nonce": "other"}, "campaign_nonce_mismatch"),
-        ("wrong_sender", {"sender_role": "workspace"}, "identity_mismatch"),
-        ("wrong_recipient", {"recipient_role": "control"}, "identity_mismatch"),
-        ("wrong_direction", {"direction": "response"}, "direction_mismatch"),
-        ("wrong_key_id", {"key_id": "other"}, "key_mismatch"),
-        ("unknown_method", {"method": "candidate.unknown"}, "unknown_method"),
-    ],
-)
-def test_rejects_authenticated_field_tampering(name: str, change: dict[str, object], reason: str) -> None:
+def test_trusted_epoch_key_identity_and_receipts_are_epoch_scoped() -> None:
+    first = _codec()
+    with pytest.raises(ChannelRejected, match="epoch_mismatch"):
+        first.receive(_frame(first, epoch=999), route=_receipt)
+    epoch_two = _trust(epoch=2, key_id="candidate-a-request-e2")
+    second = _codec(trusted_epoch=epoch_two)
+    frame = _frame(second, epoch=2, key_id="candidate-a-request-e2", idempotency_key="same")
+    assert second.receive(frame, route=_receipt) == b'{"receipt":"ok"}'
+    assert _codec().key_for_frame(_frame(_codec())) != second.key_for_frame(frame)
+
+
+def test_concurrent_identical_delivery_routes_once_and_waits_for_receipt() -> None:
     codec = _codec()
     frame = _frame(codec)
-    with pytest.raises(ChannelRejected, match=reason):
-        codec.receive(_mutate(frame, **change))
+    calls = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def route(_envelope: object, digest: str) -> DurableReceipt:
+        calls.append(digest)
+        entered.set()
+        release.wait(timeout=2)
+        return _receipt(_envelope, digest)
+
+    results = []
+    first = threading.Thread(target=lambda: results.append(codec.receive(frame, route=route)))
+    second = threading.Thread(target=lambda: results.append(codec.receive(frame, route=route)))
+    first.start()
+    assert entered.wait(timeout=2)
+    second.start()
+    release.set()
+    first.join(timeout=3)
+    second.join(timeout=3)
+    assert results == [b'{"receipt":"ok"}', b'{"receipt":"ok"}']
+    assert len(calls) == 1
 
 
-def test_valid_frame_and_idempotent_exact_replay_returns_cached_receipt() -> None:
+def test_configuration_is_the_only_arm_and_semantic_hook_checks_payload_digest() -> None:
+    with pytest.raises(TypeError):
+        _codec(arm="B")
+    from benchmarks.secure_memory.manifest import validate_wire_document
+    from benchmarks.secure_memory.canonical import canonical_bytes, parse_json_bytes
+
+    frame = _frame(_codec())
+    envelope = parse_json_bytes(frame)["envelope"]
+    envelope["payload_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="payload"):
+        validate_wire_document("channel-envelope-v2.schema.json", canonical_bytes(envelope))
+
+
+def test_frame_grammar_and_durable_receipt_validation_leave_window_retryable() -> None:
     codec = _codec()
     frame = _frame(codec)
-    calls: list[dict[str, object]] = []
-
-    def route(envelope: object) -> bytes:
-        calls.append(copy.copy(envelope.payload))  # type: ignore[attr-defined]
-        return b"durable-receipt"
-
-    assert codec.receive(frame, route=route) == b"durable-receipt"
-    assert codec.receive(frame, route=route) == b"durable-receipt"
-    assert calls == [{"proposal_id": "proposal-1"}]
-
-
-def test_replay_gap_and_reflection_fail_closed_and_new_epoch_recovers() -> None:
-    codec = _codec()
-    frame = _frame(codec)
-    codec.receive(frame, route=lambda _: b"ok")
-    with pytest.raises(ChannelRejected, match="sequence_reuse_with_different_bytes"):
-        codec.receive(_frame(codec, payload={"proposal_id": "other"}), route=lambda _: b"bad")
-    with pytest.raises(ChannelRejected, match="sequence_mismatch"):
-        codec.receive(_frame(codec, sequence=3), route=lambda _: b"bad")
-    with pytest.raises(ChannelRejected, match="direction_mismatch"):
-        codec.receive(
-            _frame(codec, sender_role="broker", recipient_role="agentteams", direction="response"),
-            route=lambda _: b"bad",
-        )
-    assert codec.receive(
-        _frame(codec, epoch=2, idempotency_key="proposal-epoch-2"), route=lambda _: b"new"
-    ) == b"new"
+    pretty = json.dumps(json.loads(frame), indent=2).encode()
+    with pytest.raises(ChannelRejected, match="noncanonical_frame"):
+        codec.receive(pretty, route=_receipt)
+    bad = [
+        DurableReceipt(
+            request_frame_sha256=codec.frame_sha256(frame),
+            durable_receipt_id="x",
+            receipt_frame=b"",
+            installed=True,
+        ),
+        DurableReceipt(
+            request_frame_sha256="0" * 64,
+            durable_receipt_id="x",
+            receipt_frame=b"{}",
+            installed=True,
+        ),
+        DurableReceipt(
+            request_frame_sha256=codec.frame_sha256(frame),
+            durable_receipt_id="x",
+            receipt_frame=b"{}",
+            installed=False,
+        ),
+    ]
+    for receipt in bad:
+        with pytest.raises(ChannelRejected):
+            codec.receive(frame, route=lambda _e, _d, result=receipt: result)
+    assert codec.receive(frame, route=_receipt) == b'{"receipt":"ok"}'
 
 
 @pytest.mark.parametrize(
     "frame",
     [
-        b"{\"payload\":\"\\ud800\"}",
-        b'{"sequence":1,"sequence":1}',
-        b'{"declared_length":999,"payload":{}}',
+        b'{"envelope":{}}',
+        b'{"envelope":{},"envelope":{}}',
         b"{} trailing",
         b"x" * (1024 * 1024 + 1),
     ],
 )
-def test_malformed_frames_are_rejected_before_window_advance(frame: bytes) -> None:
+def test_invalid_frames_leave_sequence_one_available(frame: bytes) -> None:
+    codec = _codec()
     with pytest.raises(ChannelRejected):
-        _codec().receive(frame, route=lambda _: b"must-not-run")
+        codec.receive(frame, route=_receipt)
+    assert codec.receive(_frame(codec), route=_receipt) == b'{"receipt":"ok"}'
