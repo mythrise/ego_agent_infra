@@ -19,6 +19,12 @@ from apps.agentteams_bridge.models import (
 )
 from apps.agentteams_bridge.postgres_store import PostgresBridgeStore
 from apps.agentteams_bridge.store import build_bridge_store
+from tests.agentteams.test_bridge_extension_replay import (
+    _binding,
+    _populate_complete_authority,
+    _run as _extension_run,
+    _system_high,
+)
 
 
 def _run(run_id: str = "bridge_run_pg") -> BridgeRun:
@@ -118,7 +124,7 @@ def test_bridge_store_restarts_from_jsonb_checkpoint_and_replays_migration_once(
             """,
             (run.id,),
         ).fetchone()
-    assert migration_count == 1
+    assert migration_count == 2
     assert (task_graph_type, checkpoint_type) == ("jsonb", "jsonb")
 
 
@@ -135,7 +141,10 @@ def test_concurrent_bridge_store_initialization_replays_one_migration(
         rows = connection.execute(
             "SELECT version FROM bridge_schema_migrations ORDER BY version"
         ).fetchall()
-    assert rows == [("001_bridge_control_plane.sql",)]
+    assert rows == [
+        ("001_bridge_control_plane.sql",),
+        ("002_campaign_safety_attention.sql",),
+    ]
 
 
 def test_bridge_run_optimistic_update_allows_one_concurrent_winner(postgres_url: str) -> None:
@@ -453,3 +462,104 @@ def test_bridge_runtime_role_cannot_mutate_ledgers_or_disable_triggers(
     )
     assert runtime_store.events(run.id)["chain_valid"] is True
     assert runtime_store.receipts(run.id)["chain_valid"] is True
+
+
+def test_postgres_campaign_extension_authority_restarts_with_sqlite_parity(
+    postgres_url: str,
+) -> None:
+    first = PostgresBridgeStore(postgres_url)
+    run = first.create_run(_extension_run())
+    _populate_complete_authority(first, run)
+
+    before = first.replay_extension_authority(
+        run.id,
+        project_id=run.agentteams_project_id,
+        configuration_id="D",
+    )
+    restarted = PostgresBridgeStore(postgres_url)
+    after = restarted.replay_extension_authority(
+        run.id,
+        project_id=run.agentteams_project_id,
+        configuration_id="D",
+    )
+
+    assert after == before
+    assert after["events"]["total"] == 7
+    assert after["events"]["chain_valid"] is True
+    assert len(after["task_leases"]) == 1
+    assert len(after["evaluator_bindings"]) == 1
+    assert len(after["guardian_decisions"]) == 1
+    assert len(after["safety_decisions"]) == 1
+    assert after["projection"]["event_type"] == "USER_STATUS_PROJECTION"
+
+    for project_id, configuration_id in (
+        ("another-project", "D"),
+        (run.agentteams_project_id, "E"),
+    ):
+        with pytest.raises(BridgeError) as mismatch:
+            restarted.replay_extension_authority(
+                run.id,
+                project_id=project_id,
+                configuration_id=configuration_id,
+            )
+        assert mismatch.value.code == "campaign_binding_not_found"
+
+
+def test_concurrent_postgres_extension_replay_uses_one_per_run_chain(
+    postgres_url: str,
+) -> None:
+    writer_count = 8
+    stores = [PostgresBridgeStore(postgres_url) for _ in range(writer_count)]
+    run = stores[0].create_run(_extension_run())
+    stores[0].bind_campaign(run.id, _binding())
+    barrier = Barrier(writer_count)
+
+    def append(store: PostgresBridgeStore) -> Dict[str, Any]:
+        barrier.wait()
+        return store.append_extension_event(
+            run.id,
+            event_type="SYSTEM_RISK_ASSESSMENT",
+            event=_system_high(),
+            idempotency_key="risk:concurrent",
+            memory_watermark=7,
+        )
+
+    with ThreadPoolExecutor(max_workers=writer_count) as executor:
+        results = list(executor.map(append, stores))
+
+    assert len({item["event_hash"] for item in results}) == 1
+    assert sum(not item["idempotent_replay"] for item in results) == 1
+    replay = stores[0].extension_events(
+        run.id,
+        project_id=run.agentteams_project_id,
+        configuration_id="D",
+    )
+    assert replay["total"] == 1
+    assert replay["chain_valid"] is True
+
+
+def test_postgres_extension_history_rejects_update_delete_and_truncate(
+    postgres_url: str,
+) -> None:
+    store = PostgresBridgeStore(postgres_url)
+    run = store.create_run(_extension_run())
+    _populate_complete_authority(store, run)
+
+    statements = (
+        "UPDATE bridge_runs SET campaign_id='changed' WHERE id=%s",
+        "UPDATE bridge_extension_events SET event_type='changed' WHERE run_id=%s",
+        "DELETE FROM bridge_extension_events WHERE run_id=%s",
+        "TRUNCATE bridge_extension_events CASCADE",
+        "UPDATE bridge_task_leases SET key_id='changed' WHERE run_id=%s",
+        "DELETE FROM bridge_task_leases WHERE run_id=%s",
+        "TRUNCATE bridge_task_leases CASCADE",
+        "UPDATE bridge_evaluator_bindings SET key_id='changed' WHERE run_id=%s",
+        "DELETE FROM bridge_evaluator_bindings WHERE run_id=%s",
+        "TRUNCATE bridge_evaluator_bindings CASCADE",
+    )
+    for statement in statements:
+        parameters = () if statement.startswith("TRUNCATE") else (run.id,)
+        with psycopg.connect(postgres_url, autocommit=True) as connection:
+            with pytest.raises(psycopg.Error) as raised:
+                connection.execute(statement, parameters)
+        assert raised.value.sqlstate == "23000"
