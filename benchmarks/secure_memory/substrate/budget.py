@@ -105,6 +105,12 @@ class BudgetEvent:
     state: ReservationState
     reserved_input: int
     reserved_output: int
+    template_id: str = ""
+    previous_state: Optional[ReservationState] = None
+    settled_usage: Optional[SettledUsage] = None
+    retained_reason: Optional[str] = None
+    previous_event_sha256: str = ""
+    event_sha256: str = ""
 
 
 class BudgetLedger:
@@ -198,6 +204,10 @@ class BudgetLedger:
             return self._events
 
     @property
+    def state_digest(self) -> str:
+        return canonical_sha256("budget-ledger-state", tuple(event.event_sha256 for event in self._events))
+
+    @property
     def totals(self) -> BudgetTriple:
         with self._lock:
             return BudgetTriple(
@@ -213,13 +223,64 @@ class BudgetLedger:
         with self._lock:
             return self._reservations.get(ticket_id)
 
+    @classmethod
+    def replay(cls, *, templates: Iterable[TicketTemplate], tickets: Iterable[IssuedBudgetTicket], manifest_sha256: str,
+               trust_context: BudgetTrustContext, events: Iterable[BudgetEvent]) -> "BudgetLedger":
+        ledger = cls(templates=templates, tickets=tickets, manifest_sha256=manifest_sha256, trust_context=trust_context)
+        for event in events:
+            if event.sequence != len(ledger._events) + 1:
+                raise BudgetDenied("event_sequence")
+            previous = "" if not ledger._events else ledger._events[-1].event_sha256
+            if event.previous_event_sha256 != previous:
+                raise BudgetDenied("event_chain")
+            ticket = ledger._tickets.get(event.ticket_id)
+            if ticket is None or ticket.template_id != event.template_id:
+                raise BudgetDenied("event_ticket")
+            prior = ledger._reservations.get(event.ticket_id)
+            if prior is None:
+                if event.previous_state is not None or event.state is not ReservationState.RESERVED:
+                    raise BudgetDenied("event_transition")
+                ledger._used_templates.add(event.template_id)
+            else:
+                if (event.previous_state != prior.state or event.reserved_input != prior.reserved_input
+                        or event.reserved_output != prior.reserved_output
+                        or (prior.state is ReservationState.RESERVED and event.state is not ReservationState.DISPATCHED)
+                        or (prior.state is ReservationState.DISPATCHED and event.state not in {ReservationState.SETTLED, ReservationState.RETAINED})
+                        or prior.state in {ReservationState.SETTLED, ReservationState.RETAINED}):
+                    raise BudgetDenied("event_transition")
+            core = {"sequence": event.sequence, "ticket_id": event.ticket_id, "template_id": event.template_id,
+                    "previous_state": None if event.previous_state is None else event.previous_state.value,
+                    "new_state": event.state.value, "reserved_input": event.reserved_input, "reserved_output": event.reserved_output,
+                    "settled_usage": event.settled_usage, "retained_reason": event.retained_reason,
+                    "previous_event_sha256": event.previous_event_sha256}
+            if event.event_sha256 != canonical_sha256("budget-ledger-event", core):
+                raise BudgetDenied("event_hash")
+            reservation = Reservation(event.ticket_id, event.template_id, event.reserved_input, event.reserved_output,
+                                      event.state, event.sequence, event.settled_usage, event.retained_reason)
+            ledger._events = ledger._events + (event,)
+            ledger._reservations[event.ticket_id] = reservation
+        return ledger
+
     def _append(self, reservation: Reservation) -> Reservation:
+        previous = self._reservations.get(reservation.ticket_id)
+        core = {
+            "sequence": len(self._events) + 1, "ticket_id": reservation.ticket_id,
+            "template_id": reservation.template_id, "previous_state": None if previous is None else previous.state.value,
+            "new_state": reservation.state.value, "reserved_input": reservation.reserved_input,
+            "reserved_output": reservation.reserved_output, "settled_usage": reservation.settled_usage,
+            "retained_reason": reservation.retained_reason,
+            "previous_event_sha256": "" if not self._events else self._events[-1].event_sha256,
+        }
         event = BudgetEvent(
             sequence=len(self._events) + 1,
             ticket_id=reservation.ticket_id,
             state=reservation.state,
             reserved_input=reservation.reserved_input,
             reserved_output=reservation.reserved_output,
+            template_id=reservation.template_id, previous_state=None if previous is None else previous.state,
+            settled_usage=reservation.settled_usage, retained_reason=reservation.retained_reason,
+            previous_event_sha256="" if not self._events else self._events[-1].event_sha256,
+            event_sha256=canonical_sha256("budget-ledger-event", core),
         )
         updated = Reservation(**{**reservation.__dict__, "sequence": event.sequence})
         self._events = self._events + (event,)

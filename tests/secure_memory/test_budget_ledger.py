@@ -201,3 +201,16 @@ def test_ticket_template_bindings_and_state_machine_are_exact():
                    calibrated_positive_error=0, serialized_model_visible_bytes=b"")
     with pytest.raises(BudgetDenied, match="already_terminal"):
         ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
+
+
+def test_events_are_hash_chained_and_replayable():
+    ledger, lease = _ledger()
+    ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
+                   calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+    ledger.mark_dispatched("ticket-1")
+    ledger.settle("ticket-1", RawUsage(input_tokens=1, output_tokens=1))
+    assert len(ledger.events) == 3
+    assert ledger.events[-1].event_sha256
+    replayed = BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
+                                   trust_context=_trust(), events=ledger.events)
+    assert replayed.totals == ledger.totals
