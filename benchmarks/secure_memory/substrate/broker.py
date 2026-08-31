@@ -29,6 +29,14 @@ class ProviderRequestShape(str, Enum):
     CHAT_COMPLETIONS = "chat_completions/v1"
 
 
+QUALIFICATION_CASES = (
+    "basic_nonstream_body", "stream_first_content", "tool_call_id", "tool_result_continuation",
+    "hard_output_boundary", "context_overlimit_refusal", "authoritative_total_usage",
+    "cached_input_subset", "reasoning_output_subset", "429_retry", "5xx_retry", "timeout",
+    "redirect", "tls", "multi_role_attribution", "idle_window_zero_background_call",
+)
+
+
 @dataclass(frozen=True)
 class ProviderCapabilityRecord:
     state: BrokerState
@@ -69,15 +77,18 @@ class CampaignCapabilityAuthority:
     """One lock-protected capability state shared by every campaign broker."""
 
     def __init__(self, record: ProviderCapabilityRecord, *, signature_verifier: Callable[[object], bool],
-                 current_sequence: Callable[[], int], expected_campaign_id: str) -> None:
+                 current_sequence: Callable[[], int], expected_campaign_id: str,
+                 expected_project_id: str, expected_issuer_id: str, expected_key_id: str) -> None:
+        sequence = current_sequence()
         core = {key: value for key, value in record.__dict__.items() if key not in {"record_sha256", "signature_base64"}}
         expected_matrix = canonical_sha256("agentteams-capability-matrix", record.matrix_cases)
         if (
             not signature_verifier(record) or record.record_sha256 != canonical_sha256("provider-capability-record", core)
-            or record.matrix_cases != tuple("case-%02d" % value for value in range(1, 17))
+            or record.matrix_cases != QUALIFICATION_CASES
             or record.matrix_digest != expected_matrix or record.campaign_id != expected_campaign_id
-            or record.project_id != "official-calibration-project" or not record.issuer_id or not record.key_id
-            or record.issue_sequence > current_sequence() or current_sequence() > record.expires_at_sequence
+            or record.project_id != expected_project_id or record.issuer_id != expected_issuer_id
+            or record.key_id != expected_key_id or record.state is not BrokerState.QUALIFIED
+            or record.calibrated_positive_error < 0 or record.issue_sequence > sequence or sequence > record.expires_at_sequence
         ):
             raise BrokerDenied("capability_signature")
         self._record = record
@@ -229,10 +240,10 @@ class ProviderBroker:
             "model": request.provider_model, "messages": list(request.messages), "max_tokens": request.max_output_tokens,
             "temperature": request.temperature, "top_p": request.top_p, "stream": request.stream, "tools": list(request.tools),
         }
-        if not capability.temperature_present:
-            body.pop("temperature")
-        if not capability.top_p_present:
-            body.pop("top_p")
+        if capability.temperature_present != (request.temperature is not None):
+            raise BrokerDenied("qualified_request")
+        if capability.top_p_present != (request.top_p is not None):
+            raise BrokerDenied("qualified_request")
         visible = canonical_bytes(body)
         if not self._scanner(visible):
             raise BrokerDenied("model_bytes_rejected")
