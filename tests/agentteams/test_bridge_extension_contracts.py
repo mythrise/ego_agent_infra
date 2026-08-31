@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import importlib
+import json
+import shutil
+from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict, Optional
 
 import pytest
@@ -25,11 +31,59 @@ from apps.agentteams_bridge.extensions import (
     WorkNode,
 )
 from benchmarks.secure_memory.canonical import canonical_sha256
+from benchmarks.secure_memory.manifest import (
+    DEFAULT_DIGEST_INDEX,
+    DEFAULT_SCHEMA_ROOT,
+    SchemaContractError,
+    verify_schema_contract,
+)
 from benchmarks.secure_memory.models import ExecutionPhaseOwner, MeasuredConfigurationId
 
 
 SHA = "a" * 64
 OTHER_SHA = "b" * 64
+
+AGENTTEAMS_SCHEMA_MODELS = {
+    "attention-packet.schema.json": AttentionPacket,
+    "campaign-envelope.schema.json": CampaignBinding,
+    "guardian-decision.schema.json": GuardianDecision,
+    "safety-decision.schema.json": SafetyDecision,
+    "user-status-projection.schema.json": UserStatusProjection,
+}
+SECURE_SCHEMA_NAMES = {
+    "campaign-event-v1.schema.json",
+    "candidate-proposal-v1.schema.json",
+    "channel-envelope-v2.schema.json",
+    "checkpoint-v1.schema.json",
+    "issued-budget-ticket-v1.schema.json",
+    "model-request-v1.schema.json",
+    "model-response-v1.schema.json",
+    "run-manifest-v2.schema.json",
+    "signed-task-lease-v1.schema.json",
+    "ticket-template-v1.schema.json",
+    "trusted-fact-v1.schema.json",
+    "trusted-relation-v1.schema.json",
+}
+
+
+def _schema_contract_module() -> ModuleType:
+    try:
+        return importlib.import_module("apps.agentteams_bridge.extensions.schema_contract")
+    except ModuleNotFoundError:
+        pytest.fail("the deterministic AgentTeams schema contract exporter is missing")
+
+
+def _copy_schema_contract(tmp_path: Path) -> tuple[Path, Path, Path]:
+    secure_root = tmp_path / "secure-schemas"
+    external_root = tmp_path / "agentteams-schemas"
+    index_path = tmp_path / "contract-digests.json"
+    shutil.copytree(DEFAULT_SCHEMA_ROOT, secure_root)
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "integrations/agentteams",
+        external_root,
+    )
+    shutil.copy2(DEFAULT_DIGEST_INDEX, index_path)
+    return secure_root, external_root, index_path
 
 
 def _effect_payload(**overrides: Any) -> Dict[str, Any]:
@@ -481,3 +535,80 @@ def test_attention_fact_ref_forbids_secret_or_capability_material() -> None:
 
     with pytest.raises(ValueError, match="capability_token"):
         AttentionFactRef.model_validate(payload)
+
+
+def test_committed_agentteams_schemas_are_canonical_model_exports() -> None:
+    schema_contract = _schema_contract_module()
+    schema_root = Path(__file__).resolve().parents[2] / "integrations/agentteams"
+
+    assert schema_contract.SCHEMA_MODELS == AGENTTEAMS_SCHEMA_MODELS
+    for filename, model in AGENTTEAMS_SCHEMA_MODELS.items():
+        expected = schema_contract.schema_bytes(filename)
+        assert (schema_root / filename).read_bytes() == expected
+        schema = json.loads(expected)
+        assert schema["title"] == model.__name__
+        assert schema["x-canonical-semantic-validator"] == (
+            "apps.agentteams_bridge.extensions.schema_contract.validate_wire_document"
+        )
+        assert schema["x-semantic-validation-required"] is True
+        assert expected.endswith(b"\n")
+
+
+def test_combined_digest_index_has_exactly_seventeen_file_digests() -> None:
+    schema_root = Path(__file__).resolve().parents[2] / "integrations/agentteams"
+    expected_names = SECURE_SCHEMA_NAMES | set(AGENTTEAMS_SCHEMA_MODELS)
+    index = json.loads(DEFAULT_DIGEST_INDEX.read_bytes())
+
+    assert len(expected_names) == 17
+    assert set(index["schemas"]) == expected_names
+    expected_digests = {
+        filename: hashlib.sha256(
+            (
+                DEFAULT_SCHEMA_ROOT / filename
+                if filename in SECURE_SCHEMA_NAMES
+                else schema_root / filename
+            ).read_bytes()
+        ).hexdigest()
+        for filename in expected_names
+    }
+    assert index == {
+        "schema_version": "secure-agent-contract-digests/v1",
+        "schemas": dict(sorted(expected_digests.items())),
+    }
+
+
+def test_schema_check_rejects_changed_external_schema_and_index(tmp_path: Path) -> None:
+    schema_contract = _schema_contract_module()
+    secure_root, external_root, index_path = _copy_schema_contract(tmp_path)
+
+    external_schema = external_root / "campaign-envelope.schema.json"
+    external_schema.write_bytes(external_schema.read_bytes() + b" ")
+    with pytest.raises((schema_contract.SchemaContractError, SchemaContractError), match="changed"):
+        verify_schema_contract(
+            schema_root=secure_root,
+            agentteams_schema_root=external_root,
+            index_path=index_path,
+        )
+
+    external_schema.write_bytes(schema_contract.schema_bytes(external_schema.name))
+    index = json.loads(index_path.read_bytes())
+    index["schemas"][external_schema.name] = "0" * 64
+    index_path.write_text(
+        json.dumps(index, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaContractError, match="digest"):
+        verify_schema_contract(
+            schema_root=secure_root,
+            agentteams_schema_root=external_root,
+            index_path=index_path,
+        )
+
+
+def test_agentteams_schema_check_rejects_unknown_orphan_name(tmp_path: Path) -> None:
+    schema_contract = _schema_contract_module()
+    schema_contract.export_schema_contract(schema_root=tmp_path)
+    (tmp_path / "orphan.schema.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(schema_contract.SchemaContractError, match="orphan"):
+        schema_contract.verify_schema_contract(schema_root=tmp_path)

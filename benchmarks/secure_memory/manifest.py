@@ -28,6 +28,7 @@ from .substrate.channel import ChannelEnvelope
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCHEMA_ROOT = PACKAGE_ROOT / "schemas"
+DEFAULT_AGENTTEAMS_SCHEMA_ROOT = REPOSITORY_ROOT / "integrations/agentteams"
 DEFAULT_DIGEST_INDEX = REPOSITORY_ROOT / "docs/contracts/secure-agent/v2/contract-digests.json"
 
 SCHEMA_MODELS: Mapping[str, Type[StrictModel]] = {
@@ -44,6 +45,16 @@ SCHEMA_MODELS: Mapping[str, Type[StrictModel]] = {
     "trusted-fact-v1.schema.json": TrustedFactCore,
     "trusted-relation-v1.schema.json": TrustedRelationCore,
 }
+
+AGENTTEAMS_SCHEMA_NAMES = frozenset(
+    {
+        "attention-packet.schema.json",
+        "campaign-envelope.schema.json",
+        "guardian-decision.schema.json",
+        "safety-decision.schema.json",
+        "user-status-projection.schema.json",
+    }
+)
 
 
 class SchemaContractError(ValueError):
@@ -165,8 +176,11 @@ def _digest_index_bytes(digests: Mapping[str, str]) -> bytes:
 def export_schema_contract(
     *,
     schema_root: Path = DEFAULT_SCHEMA_ROOT,
+    agentteams_schema_root: Path = DEFAULT_AGENTTEAMS_SCHEMA_ROOT,
     index_path: Path = DEFAULT_DIGEST_INDEX,
 ) -> None:
+    from apps.agentteams_bridge.extensions import schema_contract as agentteams_schema_contract
+
     schema_root.mkdir(parents=True, exist_ok=True)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     digests: Dict[str, str] = {}
@@ -174,18 +188,45 @@ def export_schema_contract(
         payload = _schema_bytes(filename, model)
         (schema_root / filename).write_bytes(payload)
         digests[filename] = hashlib.sha256(payload).hexdigest()
+    agentteams_digests = agentteams_schema_contract.export_schema_contract(
+        schema_root=agentteams_schema_root
+    )
+    if set(agentteams_schema_contract.SCHEMA_MODELS) != AGENTTEAMS_SCHEMA_NAMES:
+        raise SchemaContractError("AgentTeams schema model registry has unexpected schema names")
+    if set(agentteams_digests) != AGENTTEAMS_SCHEMA_NAMES:
+        raise SchemaContractError("AgentTeams schema exporter returned unexpected schema names")
+    if set(digests).intersection(agentteams_digests):
+        raise SchemaContractError("secure-memory and AgentTeams schema names overlap")
+    digests.update(agentteams_digests)
     index_path.write_bytes(_digest_index_bytes(digests))
 
 
 def verify_schema_contract(
     *,
     schema_root: Path = DEFAULT_SCHEMA_ROOT,
+    agentteams_schema_root: Path = DEFAULT_AGENTTEAMS_SCHEMA_ROOT,
     index_path: Path = DEFAULT_DIGEST_INDEX,
 ) -> None:
-    expected_names = set(SCHEMA_MODELS)
-    actual_names = {path.name for path in schema_root.glob("*.schema.json") if path.is_file()}
-    missing_files = sorted(expected_names - actual_names)
-    orphan_files = sorted(actual_names - expected_names)
+    from apps.agentteams_bridge.extensions import schema_contract as agentteams_schema_contract
+
+    secure_names = set(SCHEMA_MODELS)
+    if set(agentteams_schema_contract.SCHEMA_MODELS) != AGENTTEAMS_SCHEMA_NAMES:
+        raise SchemaContractError("AgentTeams schema model registry has unexpected schema names")
+    if secure_names.intersection(AGENTTEAMS_SCHEMA_NAMES):
+        raise SchemaContractError("secure-memory and AgentTeams schema names overlap")
+    expected_names = secure_names | AGENTTEAMS_SCHEMA_NAMES
+    actual_secure_names = {
+        path.name for path in schema_root.glob("*.schema.json") if path.is_file()
+    }
+    missing_files = sorted(secure_names - actual_secure_names)
+    orphan_files = sorted(actual_secure_names - secure_names)
+
+    try:
+        agentteams_digests = agentteams_schema_contract.verify_schema_contract(
+            schema_root=agentteams_schema_root
+        )
+    except agentteams_schema_contract.SchemaContractError as exc:
+        raise SchemaContractError(str(exc)) from exc
 
     try:
         index = parse_json_bytes(index_path.read_bytes())
@@ -212,21 +253,28 @@ def verify_schema_contract(
     if extra_index:
         problems.append("extra schema digests: " + ", ".join(extra_index))
 
+    actual_digests: Dict[str, str] = {}
     for filename, model in sorted(SCHEMA_MODELS.items()):
         path = schema_root / filename
-        if not path.is_file() or filename not in indexed:
+        if not path.is_file():
             continue
         payload = path.read_bytes()
+        actual_digests[filename] = hashlib.sha256(payload).hexdigest()
         expected_payload = _schema_bytes(filename, model)
         if payload != expected_payload:
             problems.append(f"changed schema: {filename}")
+
+    actual_digests.update(agentteams_digests)
+    for filename in sorted(expected_names):
+        if filename not in indexed or filename not in actual_digests:
+            continue
         recorded_digest = indexed[filename]
         try:
             validate_sha256_digest(recorded_digest)
         except (TypeError, ValueError):
             problems.append(f"invalid schema digest: {filename}")
             continue
-        if recorded_digest != hashlib.sha256(payload).hexdigest():
+        if recorded_digest != actual_digests[filename]:
             problems.append(f"changed schema digest: {filename}")
 
     canonical_index = _digest_index_bytes(
