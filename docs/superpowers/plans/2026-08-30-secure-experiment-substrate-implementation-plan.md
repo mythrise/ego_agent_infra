@@ -840,8 +840,10 @@ secure-memory-bench verify-journal --journal /absolute/campaign/events.jsonl --m
 ```
 
 `init` is the sole owner of campaign-root creation and manifest materialization.
-It freezes an independent randomization seed, derives the schedule, freezes the
-ticket-template set, then hashes the final manifest; issued tickets occur later.
+It accepts only the owner-only frozen configuration produced by campaign Task 10,
+recomputes and verifies the manifest, template-set, and derived-schedule digests,
+then copies those bytes into a new empty campaign root. It must never regenerate a
+seed, schedule, template set, or alternate manifest; issued tickets occur later.
 `capability-probe` must require all mock/VM preflight receipts and exact
 campaign-root modes before it may launch the broker. The CLI/controller may
 convey the configured key path only to the sandboxed
