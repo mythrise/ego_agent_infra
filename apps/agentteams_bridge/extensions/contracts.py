@@ -250,7 +250,7 @@ class CanonicalEffect(StrictModel):
     workspace_checkpoint_sha256: Digest
     policy_sha256: Digest
     reversibility: str = Field(min_length=1)
-    recovery_plan: str = Field(min_length=1)
+    recovery_plan: str
     effect_sha256: Digest
 
     @field_validator("final_arguments", mode="before")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 from pathlib import Path
@@ -8,7 +9,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from egoagentos_mcp.common import StructuredToolError
+from egoagentos_mcp.common import StructuredToolError, canonical_json
+
+
+MAPPING_VERSION = "agentteams-workspace-adapter/2026-09-01"
+SOURCE_EFFECT_SHA256 = "b" * 64
+SAFETY_DECISION_SHA256 = "c" * 64
 
 
 def _workspace_modules() -> tuple[Any, Any]:
@@ -62,9 +68,36 @@ def _effect(
             "mode": recovery_mode,
             "backup_path": backup_path,
         },
+        "source_effect_sha256": SOURCE_EFFECT_SHA256,
+        "safety_decision_sha256": SAFETY_DECISION_SHA256,
     }
+    projection_core = {
+        "mapping_version": MAPPING_VERSION,
+        **{
+            key: core[key]
+            for key in (
+                "source_effect_sha256",
+                "safety_decision_sha256",
+                "operation",
+                "final_arguments",
+                "target",
+                "affected_scope",
+                "project_id",
+                "task_id",
+                "workspace_checkpoint_sha256",
+                "policy_sha256",
+                "decision",
+                "reversibility",
+                "recovery",
+            )
+        },
+    }
+    prefix = b"egoagentos:agentteams-workspace-wire-projection:v1\x00"
+    core["projection_sha256"] = hashlib.sha256(
+        prefix + canonical_json(projection_core).encode("utf-8")
+    ).hexdigest()
     return contract.WorkspaceEffect.model_validate(
-        {**core, "effect_sha256": contract.workspace_effect_sha256(core)}
+        {**core, "effect_sha256": contract.canonical_sha256(core)}
     )
 
 
@@ -91,7 +124,41 @@ def test_write_text_is_atomic_and_returns_content_free_deterministic_receipt(
     assert receipt["before_checkpoint_sha256"] == effect.workspace_checkpoint_sha256
     assert receipt["after_checkpoint_sha256"] != receipt["before_checkpoint_sha256"]
     assert receipt["artifact_sha256"]
+    assert receipt["source_effect_sha256"] == SOURCE_EFFECT_SHA256
+    assert receipt["safety_decision_sha256"] == SAFETY_DECISION_SHA256
+    assert receipt["projection_sha256"] == effect.projection_sha256
     assert "bounded workspace output" not in repr(receipt)
+
+
+def test_cross_binding_fields_are_mandatory_and_projection_digest_is_recomputed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _project = _workspace(tmp_path, monkeypatch)
+    contract, _executor = _workspace_modules()
+    effect = _effect(root)
+
+    assert contract.workspace_projection_sha256(effect) == effect.projection_sha256
+    for field in (
+        "source_effect_sha256",
+        "safety_decision_sha256",
+        "projection_sha256",
+    ):
+        missing = effect.model_dump(mode="json")
+        missing.pop(field)
+        with pytest.raises(ValidationError):
+            contract.WorkspaceEffect.model_validate(missing)
+
+    stale_projection = effect.model_dump(mode="json")
+    stale_projection["source_effect_sha256"] = "d" * 64
+    stale_projection["effect_sha256"] = contract.canonical_sha256(
+        {
+            key: value
+            for key, value in stale_projection.items()
+            if key != "effect_sha256"
+        }
+    )
+    with pytest.raises(ValidationError, match="projection"):
+        contract.WorkspaceEffect.model_validate(stale_projection)
 
 
 @pytest.mark.parametrize(
@@ -410,3 +477,310 @@ def test_failed_overwrite_removes_its_recovery_backup_and_restores_checkpoint(
     assert executor.workspace_checkpoint_sha256(root, "project-alpha") == (
         effect.workspace_checkpoint_sha256
     )
+
+
+def _inject_fsync_failure(
+    executor: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    call: int,
+) -> None:
+    original_fsync = executor.os.fsync
+    calls = 0
+
+    def fail_selected_fsync(descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == call:
+            raise OSError("post-mutation directory fsync failed")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(executor.os, "fsync", fail_selected_fsync)
+
+
+def _assert_no_workspace_temporary(project: Path) -> None:
+    assert list(project.rglob(".egoagentos-tmp-*")) == []
+
+
+def test_new_write_parent_fsync_failure_rolls_back_exact_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    notes = project / "notes"
+    notes.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(root)
+    _inject_fsync_failure(executor, monkeypatch, call=2)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    assert failed.value.code == "atomic_write_failed"
+    assert not (notes / "result.txt").exists()
+    assert executor.workspace_checkpoint_sha256(root, "project-alpha") == (
+        effect.workspace_checkpoint_sha256
+    )
+    _assert_no_workspace_temporary(project)
+
+
+def test_overwrite_parent_fsync_failure_restores_old_bytes_and_removes_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    notes = project / "notes"
+    notes.mkdir()
+    target = notes / "result.txt"
+    target.write_text("old bytes", encoding="utf-8")
+    recovery = project / ".recovery"
+    recovery.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        final_arguments={"operation": "WRITE_TEXT", "content_utf8": "new bytes"},
+        recovery_mode="RESTORE_BACKUP",
+        backup_path="project-alpha/.recovery/result.bak",
+    )
+    _inject_fsync_failure(executor, monkeypatch, call=4)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    assert failed.value.code == "atomic_write_failed"
+    assert target.read_bytes() == b"old bytes"
+    assert not (recovery / "result.bak").exists()
+    assert executor.workspace_checkpoint_sha256(root, "project-alpha") == (
+        effect.workspace_checkpoint_sha256
+    )
+    _assert_no_workspace_temporary(project)
+
+
+def test_mkdir_parent_fsync_failure_removes_created_directory_and_restores_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        operation="MAKE_DIRECTORY",
+        target="project-alpha/generated",
+        final_arguments={"operation": "MAKE_DIRECTORY"},
+    )
+    _inject_fsync_failure(executor, monkeypatch, call=1)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    assert failed.value.code == "directory_create_failed"
+    assert not (project / "generated").exists()
+    assert executor.workspace_checkpoint_sha256(root, "project-alpha") == (
+        effect.workspace_checkpoint_sha256
+    )
+    _assert_no_workspace_temporary(project)
+
+
+def test_delete_parent_fsync_failure_restores_target_and_removes_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    target = project / "delete-me.txt"
+    target.write_text("old bytes", encoding="utf-8")
+    recovery = project / ".recovery"
+    recovery.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        operation="DELETE_FILE",
+        target="project-alpha/delete-me.txt",
+        final_arguments={"operation": "DELETE_FILE"},
+        recovery_mode="RESTORE_BACKUP",
+        backup_path="project-alpha/.recovery/delete-me.bak",
+    )
+    _inject_fsync_failure(executor, monkeypatch, call=1)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    assert failed.value.code == "recoverable_delete_failed"
+    assert target.read_bytes() == b"old bytes"
+    assert not (recovery / "delete-me.bak").exists()
+    assert executor.workspace_checkpoint_sha256(root, "project-alpha") == (
+        effect.workspace_checkpoint_sha256
+    )
+    _assert_no_workspace_temporary(project)
+
+
+def _assert_partial_effect(
+    error: StructuredToolError,
+    *,
+    operation: str,
+    before_checkpoint_sha256: str,
+    recovery_mode: str,
+    recovery_path: str,
+) -> None:
+    assert error.code == "partial_effect"
+    assert error.details["status"] == "PARTIAL_EFFECT"
+    assert error.details["operation"] == operation
+    assert error.details["rollback"] == "FAILED"
+    assert error.details["before_checkpoint_sha256"] == before_checkpoint_sha256
+    assert error.details["actual_checkpoint_sha256"] != before_checkpoint_sha256
+    assert error.details["recovery"] == {
+        "mode": recovery_mode,
+        "path": recovery_path,
+    }
+
+
+def test_new_write_rollback_failure_reports_partial_effect_and_preserves_created_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    notes = project / "notes"
+    notes.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(root)
+    original_unlink = executor.os.unlink
+
+    def fail_target_unlink(path: str, *args: object, **kwargs: object) -> None:
+        if path == "result.txt":
+            raise OSError("rollback unlink failed")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(executor.os, "unlink", fail_target_unlink)
+    _inject_fsync_failure(executor, monkeypatch, call=2)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    _assert_partial_effect(
+        failed.value,
+        operation="WRITE_TEXT",
+        before_checkpoint_sha256=effect.workspace_checkpoint_sha256,
+        recovery_mode="REMOVE_CREATED_PATH",
+        recovery_path="project-alpha/notes/result.txt",
+    )
+    assert (notes / "result.txt").read_text(encoding="utf-8") == (
+        "bounded workspace output\n"
+    )
+    _assert_no_workspace_temporary(project)
+
+
+def test_overwrite_rollback_failure_reports_partial_effect_and_preserves_unique_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    notes = project / "notes"
+    notes.mkdir()
+    target = notes / "result.txt"
+    target.write_text("old bytes", encoding="utf-8")
+    recovery = project / ".recovery"
+    recovery.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        final_arguments={"operation": "WRITE_TEXT", "content_utf8": "new bytes"},
+        recovery_mode="RESTORE_BACKUP",
+        backup_path="project-alpha/.recovery/result.bak",
+    )
+    original_replace = executor.os.replace
+    target_replaces = 0
+
+    def fail_backup_restore(source: str, destination: str, **kwargs: object) -> None:
+        nonlocal target_replaces
+        if destination == "result.txt" and source.startswith(".egoagentos-tmp-"):
+            target_replaces += 1
+            if target_replaces == 2:
+                raise OSError("rollback restore failed")
+        original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(executor.os, "replace", fail_backup_restore)
+    _inject_fsync_failure(executor, monkeypatch, call=4)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    _assert_partial_effect(
+        failed.value,
+        operation="WRITE_TEXT",
+        before_checkpoint_sha256=effect.workspace_checkpoint_sha256,
+        recovery_mode="RESTORE_BACKUP",
+        recovery_path="project-alpha/.recovery/result.bak",
+    )
+    assert target.read_bytes() == b"new bytes"
+    assert (recovery / "result.bak").read_bytes() == b"old bytes"
+    _assert_no_workspace_temporary(project)
+
+
+def test_mkdir_rollback_failure_reports_partial_effect_and_preserves_created_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        operation="MAKE_DIRECTORY",
+        target="project-alpha/generated",
+        final_arguments={"operation": "MAKE_DIRECTORY"},
+    )
+    original_rmdir = executor.os.rmdir
+
+    def fail_created_rmdir(path: str, *args: object, **kwargs: object) -> None:
+        if path == "generated":
+            raise OSError("rollback rmdir failed")
+        original_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(executor.os, "rmdir", fail_created_rmdir)
+    _inject_fsync_failure(executor, monkeypatch, call=1)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    _assert_partial_effect(
+        failed.value,
+        operation="MAKE_DIRECTORY",
+        before_checkpoint_sha256=effect.workspace_checkpoint_sha256,
+        recovery_mode="REMOVE_CREATED_PATH",
+        recovery_path="project-alpha/generated",
+    )
+    assert (project / "generated").is_dir()
+    _assert_no_workspace_temporary(project)
+
+
+def test_delete_rollback_failure_reports_partial_effect_and_preserves_unique_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    target = project / "delete-me.txt"
+    target.write_text("old bytes", encoding="utf-8")
+    recovery = project / ".recovery"
+    recovery.mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(
+        root,
+        operation="DELETE_FILE",
+        target="project-alpha/delete-me.txt",
+        final_arguments={"operation": "DELETE_FILE"},
+        recovery_mode="RESTORE_BACKUP",
+        backup_path="project-alpha/.recovery/delete-me.bak",
+    )
+    original_replace = executor.os.replace
+
+    def fail_delete_restore(source: str, destination: str, **kwargs: object) -> None:
+        if destination == "delete-me.txt" and source.startswith(".egoagentos-tmp-"):
+            raise OSError("rollback restore failed")
+        original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(executor.os, "replace", fail_delete_restore)
+    _inject_fsync_failure(executor, monkeypatch, call=1)
+
+    with pytest.raises(StructuredToolError) as failed:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    _assert_partial_effect(
+        failed.value,
+        operation="DELETE_FILE",
+        before_checkpoint_sha256=effect.workspace_checkpoint_sha256,
+        recovery_mode="RESTORE_BACKUP",
+        recovery_path="project-alpha/.recovery/delete-me.bak",
+    )
+    assert not target.exists()
+    assert (recovery / "delete-me.bak").read_bytes() == b"old bytes"
+    _assert_no_workspace_temporary(project)

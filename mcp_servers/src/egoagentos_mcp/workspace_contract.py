@@ -2,15 +2,32 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Annotated, Any, Literal, Mapping, Union
 
 from pydantic import ConfigDict, Field, model_validator
 
-from .common import StrictModel, canonical_sha256
+from .common import StrictModel, canonical_json, canonical_sha256
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 MAX_WRITE_TEXT_BYTES = 1024 * 1024
+WORKSPACE_MAPPING_VERSION = "agentteams-workspace-adapter/2026-09-01"
+_PROJECTION_FIELDS = (
+    "source_effect_sha256",
+    "safety_decision_sha256",
+    "operation",
+    "final_arguments",
+    "target",
+    "affected_scope",
+    "project_id",
+    "task_id",
+    "workspace_checkpoint_sha256",
+    "policy_sha256",
+    "decision",
+    "reversibility",
+    "recovery",
+)
 
 
 class _WorkspaceModel(StrictModel):
@@ -59,6 +76,9 @@ class WorkspaceEffectCore(_WorkspaceModel):
     decision: Literal["ALLOW", "APPROVAL_REQUIRED", "DENY"]
     reversibility: Literal["REVERSIBLE"]
     recovery: RecoveryPlan
+    source_effect_sha256: str = Field(pattern=SHA256_PATTERN)
+    safety_decision_sha256: str = Field(pattern=SHA256_PATTERN)
+    projection_sha256: str = Field(pattern=SHA256_PATTERN)
 
     @model_validator(mode="after")
     def validate_exact_operation_binding(self) -> WorkspaceEffectCore:
@@ -83,6 +103,8 @@ class WorkspaceEffectCore(_WorkspaceModel):
             raise ValueError("RESTORE_BACKUP requires backup_path")
         if self.recovery.mode == "REMOVE_CREATED_PATH" and self.recovery.backup_path is not None:
             raise ValueError("REMOVE_CREATED_PATH cannot bind a backup_path")
+        if workspace_projection_sha256(self) != self.projection_sha256:
+            raise ValueError("projection digest does not match the exact mapped authority")
         return self
 
 
@@ -104,6 +126,21 @@ def workspace_effect_sha256(value: WorkspaceEffectCore | Mapping[str, Any]) -> s
     """Hash every authority-bearing effect field except the digest itself."""
 
     return canonical_sha256(_effect_core(value).model_dump(mode="json", by_alias=True))
+
+
+def workspace_projection_sha256(value: WorkspaceEffectCore | Mapping[str, Any]) -> str:
+    """Bind the fixed adapter mapping, source Safety authority, and projected fields."""
+
+    if isinstance(value, WorkspaceEffectCore):
+        payload = value.model_dump(mode="json", by_alias=True)
+    else:
+        payload = dict(value)
+    projection = {
+        "mapping_version": WORKSPACE_MAPPING_VERSION,
+        **{field: payload[field] for field in _PROJECTION_FIELDS},
+    }
+    prefix = b"egoagentos:agentteams-workspace-wire-projection:v1\x00"
+    return hashlib.sha256(prefix + canonical_json(projection).encode("utf-8")).hexdigest()
 
 
 def workspace_receipt_sha256(value: Mapping[str, Any]) -> str:

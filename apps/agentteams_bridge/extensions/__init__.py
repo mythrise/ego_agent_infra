@@ -28,6 +28,7 @@ from .safety import (
     evaluate_effect_safety,
     validate_approval_receipt,
 )
+from .workspace_adapter import WORKSPACE_MAPPING_VERSION, build_workspace_effect
 
 __all__ = [
     "ApprovalDisclosure",
@@ -52,8 +53,10 @@ __all__ = [
     "WorkHierarchy",
     "WorkLevel",
     "WorkNode",
+    "WORKSPACE_MAPPING_VERSION",
     "build_approval_receipt",
     "build_guardian_decision",
+    "build_workspace_effect",
     "campaign_binding_sha256",
     "evaluate_effect_safety",
     "validate_approval_receipt",

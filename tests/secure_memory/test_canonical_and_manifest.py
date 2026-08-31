@@ -998,7 +998,10 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
     required_d_authority_files = {
         "apps/agentteams_bridge/extensions/__init__.py",
         "apps/agentteams_bridge/extensions/contracts.py",
+        "apps/agentteams_bridge/extensions/guardian.py",
+        "apps/agentteams_bridge/extensions/safety.py",
         "apps/agentteams_bridge/extensions/schema_contract.py",
+        "apps/agentteams_bridge/extensions/workspace_adapter.py",
         "apps/agentteams_bridge/migrations/postgres/002_campaign_safety_attention.sql",
         "apps/api/trusted_memory/__init__.py",
         "apps/api/trusted_memory/models.py",
@@ -1035,7 +1038,10 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
             "\n".join(
                 (
                     "from importlib.resources import files",
-                    "from apps.agentteams_bridge.extensions import CampaignBinding",
+                    "from apps.agentteams_bridge.extensions import (",
+                    "    CampaignBinding, EgoGuardian, SystemRiskClassifier,",
+                    "    build_workspace_effect,",
+                    ")",
                     "from apps.agentteams_bridge.extensions.schema_contract import SCHEMA_MODELS",
                     "from apps.agentteams_bridge.postgres_store import PostgresBridgeStore",
                     "from apps.agentteams_bridge.store import BridgeStore",
@@ -1044,7 +1050,8 @@ def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Pa
                     "from apps.api.trusted_memory import TrustedFact",
                     "from apps.api.trusted_memory.models import LegacyMemoryView",
                     "from benchmarks.secure_memory.substrate import AdmissionGate, ContentScanner",
-                    "assert CampaignBinding and BridgeStore and PostgresBridgeStore",
+                    "assert CampaignBinding and EgoGuardian and SystemRiskClassifier",
+                    "assert build_workspace_effect and BridgeStore and PostgresBridgeStore",
                     "assert TrustedFact and LegacyMemoryView and SQLiteStore and PostgresStore",
                     "assert AdmissionGate and ContentScanner",
                     "assert len(SCHEMA_MODELS) == 5",

@@ -39,8 +39,20 @@ def _effect_payload(root: Path) -> dict[str, Any]:
         "decision": "ALLOW",
         "reversibility": "REVERSIBLE",
         "recovery": {"mode": "REMOVE_CREATED_PATH", "backup_path": None},
+        "source_effect_sha256": "c" * 64,
+        "safety_decision_sha256": "d" * 64,
+        "projection_sha256": "0" * 64,
     }
-    return {**core, "effect_sha256": contract.workspace_effect_sha256(core)}
+    payload = dict(core)
+    _redigest(contract, payload)
+    return payload
+
+
+def _redigest(contract: Any, payload: dict[str, Any]) -> None:
+    core = {key: value for key, value in payload.items() if key != "effect_sha256"}
+    core["projection_sha256"] = contract.workspace_projection_sha256(core)
+    payload["projection_sha256"] = core["projection_sha256"]
+    payload["effect_sha256"] = contract.workspace_effect_sha256(core)
 
 
 def test_workspace_server_registers_one_typed_mutating_gateway() -> None:
@@ -93,8 +105,7 @@ def test_server_failure_does_not_echo_secret_content(
     contract, _executor, server = _workspace_modules()
     payload = _effect_payload(root)
     payload["final_arguments"]["content_utf8"] = "api_key=server-secret-must-not-leak"
-    core = {key: value for key, value in payload.items() if key != "effect_sha256"}
-    payload["effect_sha256"] = contract.workspace_effect_sha256(core)
+    _redigest(contract, payload)
 
     async def call() -> object:
         async with Client(server.mcp) as client:
@@ -120,12 +131,19 @@ def test_embedded_server_injects_exact_approval_verifier(
     contract, _executor, server = _workspace_modules()
     payload = _effect_payload(root)
     payload["decision"] = "APPROVAL_REQUIRED"
-    core = {key: value for key, value in payload.items() if key != "effect_sha256"}
-    payload["effect_sha256"] = contract.workspace_effect_sha256(core)
-    calls: list[tuple[str, str]] = []
+    _redigest(contract, payload)
+    calls: list[tuple[str, str, str, str, str]] = []
 
     def verify(receipt: str, effect: Any) -> None:
-        calls.append((receipt, effect.effect_sha256))
+        calls.append(
+            (
+                receipt,
+                effect.effect_sha256,
+                effect.source_effect_sha256,
+                effect.safety_decision_sha256,
+                effect.projection_sha256,
+            )
+        )
         if receipt != "exact-approved-receipt":
             raise AssertionError("unexpected approval receipt")
 
@@ -140,5 +158,13 @@ def test_embedded_server_injects_exact_approval_verifier(
 
     response = asyncio.run(call())
     assert response.is_error is False
-    assert calls == [("exact-approved-receipt", payload["effect_sha256"])]
+    assert calls == [
+        (
+            "exact-approved-receipt",
+            payload["effect_sha256"],
+            payload["source_effect_sha256"],
+            payload["safety_decision_sha256"],
+            payload["projection_sha256"],
+        )
+    ]
     assert (project / "out/server.txt").exists()

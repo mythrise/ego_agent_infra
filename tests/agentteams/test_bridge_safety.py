@@ -135,7 +135,7 @@ def test_network_url_is_not_misclassified_as_a_filesystem_path_escape() -> None:
     effect = _effect(
         operation="workspace.network.send",
         final_arguments={"destination": "https://example.invalid/upload"},
-        target="https://example.invalid/upload",
+        target="workspace/network-request",
     )
 
     decision = evaluate_effect_safety(

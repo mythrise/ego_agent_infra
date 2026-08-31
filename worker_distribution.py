@@ -45,7 +45,10 @@ apps/agentteams_bridge/clients.py
 apps/agentteams_bridge/errors.py
 apps/agentteams_bridge/extensions/__init__.py
 apps/agentteams_bridge/extensions/contracts.py
+apps/agentteams_bridge/extensions/guardian.py
+apps/agentteams_bridge/extensions/safety.py
 apps/agentteams_bridge/extensions/schema_contract.py
+apps/agentteams_bridge/extensions/workspace_adapter.py
 apps/agentteams_bridge/main.py
 apps/agentteams_bridge/models.py
 apps/agentteams_bridge/postgres_store.py

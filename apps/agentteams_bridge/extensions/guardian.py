@@ -70,13 +70,16 @@ MANDATORY_CONSTRAINT_REGISTRY: Mapping[str, str] = {
 
 _DESTRUCTIVE_MARKERS = ("delete", "remove", "truncate", "overwrite", "reset", "wipe")
 _EGRESS_MARKERS = ("network", "send", "upload", "publish", "exfiltrate", "external")
-_EVIDENCE_MARKERS = (
-    "/evidence/",
-    "/receipts/",
-    "/trace/",
-    "decision-closure",
-    "requirement-ledger",
-    "trusted-memory",
+_EVIDENCE_ROOTS = (
+    "workspace/evidence",
+    "workspace/receipts",
+    "workspace/trace",
+    "workspace/decision-closure",
+    "workspace/requirement-ledger",
+    "workspace/trusted-memory",
+)
+_RECOVERABLE_DESTRUCTIVE_PLANS = (
+    "restore the bound workspace checkpoint",
 )
 _PATH_ARGUMENT_KEYS = frozenset(
     {
@@ -112,6 +115,14 @@ _SECRET_ARGUMENT_SUFFIXES = (
     "token",
 )
 _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
+_PRIVATE_KEY_VALUE = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY-----", re.IGNORECASE)
+_BEARER_VALUE = re.compile(r"\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
+_CREDENTIAL_ASSIGNMENT_VALUE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?:api[_-]?key|access[_-]?key[_-]?secret|"
+    r"secret[_-]?access[_-]?key|access[_-]?token|auth[_-]?token|"
+    r"client[_-]?secret|password|private[_-]?key|secret|token)"
+    r"(?![A-Za-z0-9_])\s*[:=]\s*[^\s,;]+"
+)
 
 
 def _walk_json(value: Any) -> Iterable[Tuple[str, Any]]:
@@ -124,6 +135,17 @@ def _walk_json(value: Any) -> Iterable[Tuple[str, Any]]:
             yield from _walk_json(item)
 
 
+def _walk_string_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _walk_string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_string_values(item)
+
+
 def _is_path_escape(path: str) -> bool:
     if not path or "\x00" in path or "\\" in path or _WINDOWS_DRIVE.match(path):
         return True
@@ -133,9 +155,17 @@ def _is_path_escape(path: str) -> bool:
     return "//" in path or path.endswith("/")
 
 
+def _is_canonical_workspace_target(path: str) -> bool:
+    if not path.startswith("workspace/") or _is_path_escape(path):
+        return False
+    candidate = PurePosixPath(path)
+    return len(candidate.parts) >= 2 and candidate.as_posix() == path
+
+
 def _has_path_escape(effect: CanonicalEffect) -> bool:
-    target = effect.target.lower()
-    candidates = [] if target.startswith(("http://", "https://")) else [effect.target]
+    if not _is_canonical_workspace_target(effect.target):
+        return True
+    candidates: list[str] = []
     candidates.extend(
         value
         for key, value in _walk_json(effect.final_arguments)
@@ -145,18 +175,15 @@ def _has_path_escape(effect: CanonicalEffect) -> bool:
 
 
 def _has_cross_project_target(effect: CanonicalEffect) -> bool:
-    expected_scope = f"project:{effect.project_id}"
-    project_scopes = {item for item in effect.affected_scope if item.startswith("project:")}
-    if project_scopes and project_scopes != {expected_scope}:
-        return True
-
-    lowered = effect.target.lower()
-    explicit_project_targets = (
-        f"project:{effect.project_id.lower()}",
-        f"projects/{effect.project_id.lower()}/",
+    expected_scope = tuple(
+        sorted(
+            (
+                f"project:{effect.project_id}",
+                f"task:{effect.task_id}",
+            )
+        )
     )
-    mentions_project = "project:" in lowered or "projects/" in lowered
-    return mentions_project and not any(marker in lowered for marker in explicit_project_targets)
+    return effect.affected_scope != expected_scope
 
 
 def _has_secret_material(value: Any) -> bool:
@@ -172,6 +199,13 @@ def _has_secret_material(value: Any) -> bool:
             item
         ).upper() in {"SECRET", "CREDENTIAL", "PRIVATE_KEY"}:
             return True
+    for item in _walk_string_values(value):
+        if (
+            _PRIVATE_KEY_VALUE.search(item)
+            or _BEARER_VALUE.search(item)
+            or _CREDENTIAL_ASSIGNMENT_VALUE.search(item)
+        ):
+            return True
     return False
 
 
@@ -184,20 +218,26 @@ def _is_secret_exfiltration(effect: CanonicalEffect) -> bool:
 def _is_irreversible_destruction(effect: CanonicalEffect) -> bool:
     operation = effect.operation.lower()
     destructive = any(marker in operation for marker in _DESTRUCTIVE_MARKERS)
-    irreversible = effect.reversibility.strip().upper() in {
-        "IRREVERSIBLE",
-        "NONE",
-        "NOT_REVERSIBLE",
-        "UNRECOVERABLE",
-    }
-    return destructive and irreversible
+    if not destructive:
+        return False
+    if effect.reversibility.strip().upper() != "REVERSIBLE":
+        return True
+    plan = effect.recovery_plan.strip()
+    if plan.lower() in _RECOVERABLE_DESTRUCTIVE_PLANS:
+        return False
+    if plan.startswith("RESTORE_BACKUP:"):
+        backup_path = plan.removeprefix("RESTORE_BACKUP:")
+        return not _is_canonical_workspace_target(backup_path)
+    return True
 
 
 def _is_evidence_tampering(effect: CanonicalEffect) -> bool:
     operation = effect.operation.lower()
     mutating = operation not in _LOW_OPERATIONS
-    target = f"/{effect.target.lower().strip('/')}"
-    protected_target = any(marker in target for marker in _EVIDENCE_MARKERS)
+    target = effect.target.lower()
+    protected_target = any(
+        target == root or target.startswith(root + "/") for root in _EVIDENCE_ROOTS
+    )
     return mutating and protected_target
 
 

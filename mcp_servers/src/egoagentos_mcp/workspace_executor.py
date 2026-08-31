@@ -9,7 +9,7 @@ import stat
 import uuid
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol
+from typing import Any, Callable as TypingCallable, Literal, NoReturn, Protocol
 
 from .common import (
     StructuredToolError,
@@ -161,6 +161,13 @@ def _write_all(descriptor: int, data: bytes) -> None:
         view = view[written:]
 
 
+class _AtomicWriteFailure(Exception):
+    def __init__(self, *, mutation_applied: bool, reason: str) -> None:
+        self.mutation_applied = mutation_applied
+        self.reason = reason
+        super().__init__(reason)
+
+
 def _atomic_write_bytes(parent_descriptor: int, name: str, data: bytes) -> None:
     temporary = ".egoagentos-tmp-%s" % uuid.uuid4().hex
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
@@ -173,13 +180,6 @@ def _atomic_write_bytes(parent_descriptor: int, name: str, data: bytes) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None
-        os.replace(
-            temporary,
-            name,
-            src_dir_fd=parent_descriptor,
-            dst_dir_fd=parent_descriptor,
-        )
-        os.fsync(parent_descriptor)
     except OSError as exc:
         if descriptor is not None:
             os.close(descriptor)
@@ -187,10 +187,32 @@ def _atomic_write_bytes(parent_descriptor: int, name: str, data: bytes) -> None:
             os.unlink(temporary, dir_fd=parent_descriptor)
         except OSError:
             pass
-        raise StructuredToolError(
-            "atomic_write_failed",
-            "The workspace file could not be replaced atomically",
-            {"reason": type(exc).__name__},
+        raise _AtomicWriteFailure(
+            mutation_applied=False,
+            reason=type(exc).__name__,
+        ) from exc
+    try:
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+    except OSError as exc:
+        try:
+            os.unlink(temporary, dir_fd=parent_descriptor)
+        except OSError:
+            pass
+        raise _AtomicWriteFailure(
+            mutation_applied=False,
+            reason=type(exc).__name__,
+        ) from exc
+    try:
+        os.fsync(parent_descriptor)
+    except OSError as exc:
+        raise _AtomicWriteFailure(
+            mutation_applied=True,
+            reason=type(exc).__name__,
         ) from exc
 
 
@@ -233,7 +255,13 @@ class WorkspaceExecutor:
         return normalised
 
     def _validate_authority(self, effect: WorkspaceEffect) -> tuple[str, str | None]:
-        actual_effect_sha256 = workspace_effect_sha256(effect)
+        try:
+            actual_effect_sha256 = workspace_effect_sha256(effect)
+        except ValueError as exc:
+            raise StructuredToolError(
+                "effect_digest_mismatch",
+                "The canonical effect fields changed after admission",
+            ) from exc
         if actual_effect_sha256 != effect.effect_sha256:
             raise StructuredToolError(
                 "effect_digest_mismatch", "The canonical effect fields changed after admission"
@@ -303,6 +331,83 @@ class WorkspaceExecutor:
             ) from exc
         return "CONSUMED"
 
+    def _raise_partial_effect(
+        self,
+        effect: WorkspaceEffect,
+        *,
+        recovery_mode: str,
+        recovery_path: str,
+        rollback_error: BaseException | None = None,
+        actual_checkpoint_sha256: str | None = None,
+    ) -> NoReturn:
+        if actual_checkpoint_sha256 is None:
+            try:
+                actual_checkpoint_sha256 = workspace_checkpoint_sha256(
+                    self.root.path, effect.project_id
+                )
+            except StructuredToolError:
+                actual_checkpoint_sha256 = "UNAVAILABLE"
+        details: dict[str, Any] = {
+            "status": "PARTIAL_EFFECT",
+            "operation": effect.operation,
+            "rollback": "FAILED",
+            "before_checkpoint_sha256": effect.workspace_checkpoint_sha256,
+            "actual_checkpoint_sha256": actual_checkpoint_sha256,
+            "recovery": {
+                "mode": recovery_mode,
+                "path": recovery_path,
+            },
+        }
+        if rollback_error is not None:
+            details["rollback_error"] = type(rollback_error).__name__
+        raise StructuredToolError(
+            "partial_effect",
+            "The workspace mutation could not be rolled back completely",
+            details,
+        )
+
+    def _rollback_or_raise_partial(
+        self,
+        effect: WorkspaceEffect,
+        *,
+        recovery_mode: str,
+        recovery_path: str,
+        rollback: TypingCallable[[], None],
+    ) -> None:
+        try:
+            rollback()
+        except Exception as exc:
+            self._raise_partial_effect(
+                effect,
+                recovery_mode=recovery_mode,
+                recovery_path=recovery_path,
+                rollback_error=exc,
+            )
+        try:
+            actual = workspace_checkpoint_sha256(self.root.path, effect.project_id)
+        except StructuredToolError as exc:
+            self._raise_partial_effect(
+                effect,
+                recovery_mode=recovery_mode,
+                recovery_path=recovery_path,
+                rollback_error=exc,
+            )
+        if actual != effect.workspace_checkpoint_sha256:
+            self._raise_partial_effect(
+                effect,
+                recovery_mode=recovery_mode,
+                recovery_path=recovery_path,
+                actual_checkpoint_sha256=actual,
+            )
+
+    @staticmethod
+    def _atomic_write_error(failure: _AtomicWriteFailure) -> StructuredToolError:
+        return StructuredToolError(
+            "atomic_write_failed",
+            "The workspace file could not be replaced atomically",
+            {"reason": failure.reason},
+        )
+
     def _execute_write(
         self, effect: WorkspaceEffect, target: str, backup: str | None
     ) -> tuple[str, dict[str, Any]]:
@@ -316,6 +421,27 @@ class WorkspaceExecutor:
             )
         parent, name = _parent_and_name(target)
         created_backup: tuple[str, str, int, int] | None = None
+        old_bytes: bytes | None = None
+
+        def remove_created_backup() -> None:
+            if created_backup is None:
+                return
+            backup_parent, backup_name, expected_dev, expected_ino = created_backup
+            with self.root.open_directory_descriptor(backup_parent) as (
+                backup_descriptor,
+                _,
+            ):
+                current = _lstat_child(backup_descriptor, backup_name)
+                if current is None or (
+                    current.st_dev != expected_dev or current.st_ino != expected_ino
+                ):
+                    raise StructuredToolError(
+                        "filesystem_race_detected",
+                        "The recovery backup changed before rollback",
+                    )
+                os.unlink(backup_name, dir_fd=backup_descriptor)
+                os.fsync(backup_descriptor)
+
         with self.root.open_directory_descriptor(parent) as (parent_descriptor, _):
             metadata = _lstat_child(parent_descriptor, name)
             if metadata is None:
@@ -335,10 +461,11 @@ class WorkspaceExecutor:
                     parent_descriptor, name, expected=metadata, require_file=True
                 )
                 try:
-                    old_bytes = bytearray()
+                    old_buffer = bytearray()
                     os.lseek(opened, 0, os.SEEK_SET)
                     while chunk := os.read(opened, 1024 * 1024):
-                        old_bytes.extend(chunk)
+                        old_buffer.extend(chunk)
+                    old_bytes = bytes(old_buffer)
                     old_digest = hashlib.sha256(old_bytes).hexdigest()
                 finally:
                     os.close(opened)
@@ -351,7 +478,22 @@ class WorkspaceExecutor:
                         raise StructuredToolError(
                             "recovery_backup_exists", "Recovery backup paths are single-use"
                         )
-                    _atomic_write_bytes(backup_descriptor, backup_name, bytes(old_bytes))
+                    try:
+                        _atomic_write_bytes(backup_descriptor, backup_name, old_bytes)
+                    except _AtomicWriteFailure as failure:
+                        if failure.mutation_applied:
+
+                            def rollback_backup_creation() -> None:
+                                os.unlink(backup_name, dir_fd=backup_descriptor)
+                                os.fsync(backup_descriptor)
+
+                            self._rollback_or_raise_partial(
+                                effect,
+                                recovery_mode="REMOVE_CREATED_PATH",
+                                recovery_path=backup,
+                                rollback=rollback_backup_creation,
+                            )
+                        raise self._atomic_write_error(failure) from failure
                     backup_metadata = _lstat_child(backup_descriptor, backup_name)
                     if backup_metadata is None or not stat.S_ISREG(backup_metadata.st_mode):
                         raise StructuredToolError(
@@ -371,23 +513,58 @@ class WorkspaceExecutor:
                 }
             try:
                 _atomic_write_bytes(parent_descriptor, name, data)
-            except StructuredToolError:
-                if created_backup is not None:
-                    backup_parent, backup_name, expected_dev, expected_ino = created_backup
-                    with self.root.open_directory_descriptor(backup_parent) as (
-                        backup_descriptor,
-                        _,
-                    ):
-                        current = _lstat_child(backup_descriptor, backup_name)
-                        if current is not None and (
-                            current.st_dev == expected_dev and current.st_ino == expected_ino
-                        ):
+            except _AtomicWriteFailure as failure:
+                if created_backup is None:
+                    if failure.mutation_applied:
+
+                        def rollback_created_file() -> None:
+                            os.unlink(name, dir_fd=parent_descriptor)
+                            os.fsync(parent_descriptor)
+
+                        self._rollback_or_raise_partial(
+                            effect,
+                            recovery_mode="REMOVE_CREATED_PATH",
+                            recovery_path=target,
+                            rollback=rollback_created_file,
+                        )
+                else:
+                    assert old_bytes is not None
+                    assert backup is not None
+
+                    if failure.mutation_applied:
+
+                        def rollback_overwrite() -> None:
+                            _atomic_write_bytes(parent_descriptor, name, old_bytes)
                             try:
-                                os.unlink(backup_name, dir_fd=backup_descriptor)
-                                os.fsync(backup_descriptor)
+                                remove_created_backup()
                             except OSError:
-                                pass
-                raise
+                                backup_parent, backup_name, _dev, _ino = created_backup
+                                with self.root.open_directory_descriptor(backup_parent) as (
+                                    backup_descriptor,
+                                    _,
+                                ):
+                                    if _lstat_child(backup_descriptor, backup_name) is None:
+                                        _atomic_write_bytes(
+                                            backup_descriptor,
+                                            backup_name,
+                                            old_bytes,
+                                        )
+                                raise
+
+                        self._rollback_or_raise_partial(
+                            effect,
+                            recovery_mode="RESTORE_BACKUP",
+                            recovery_path=backup,
+                            rollback=rollback_overwrite,
+                        )
+                    else:
+                        self._rollback_or_raise_partial(
+                            effect,
+                            recovery_mode="RESTORE_BACKUP",
+                            recovery_path=backup,
+                            rollback=remove_created_backup,
+                        )
+                raise self._atomic_write_error(failure) from failure
         return hashlib.sha256(data).hexdigest(), recovery
 
     def _execute_mkdir(
@@ -405,10 +582,24 @@ class WorkspaceExecutor:
         with self.root.open_directory_descriptor(parent) as (parent_descriptor, _):
             if _lstat_child(parent_descriptor, name) is not None:
                 raise StructuredToolError("path_already_exists", "Directory target already exists")
+            created = False
             try:
                 os.mkdir(name, 0o755, dir_fd=parent_descriptor)
+                created = True
                 os.fsync(parent_descriptor)
             except OSError as exc:
+                if created:
+
+                    def rollback_created_directory() -> None:
+                        os.rmdir(name, dir_fd=parent_descriptor)
+                        os.fsync(parent_descriptor)
+
+                    self._rollback_or_raise_partial(
+                        effect,
+                        recovery_mode="REMOVE_CREATED_PATH",
+                        recovery_path=target,
+                        rollback=rollback_created_directory,
+                    )
                 raise StructuredToolError(
                     "directory_create_failed",
                     "The workspace directory could not be created",
@@ -440,7 +631,12 @@ class WorkspaceExecutor:
                 target_descriptor, target_name, expected=metadata, require_file=True
             )
             try:
-                digest = descriptor_sha256(opened)
+                old_buffer = bytearray()
+                os.lseek(opened, 0, os.SEEK_SET)
+                while chunk := os.read(opened, 1024 * 1024):
+                    old_buffer.extend(chunk)
+                old_bytes = bytes(old_buffer)
+                digest = hashlib.sha256(old_bytes).hexdigest()
             finally:
                 os.close(opened)
             with self.root.open_directory_descriptor(backup_parent) as (backup_descriptor, _):
@@ -448,6 +644,7 @@ class WorkspaceExecutor:
                     raise StructuredToolError(
                         "recovery_backup_exists", "Recovery backup paths are single-use"
                     )
+                moved = False
                 try:
                     os.replace(
                         target_name,
@@ -455,10 +652,37 @@ class WorkspaceExecutor:
                         src_dir_fd=target_descriptor,
                         dst_dir_fd=backup_descriptor,
                     )
+                    moved = True
                     os.fsync(target_descriptor)
                     if backup_descriptor != target_descriptor:
                         os.fsync(backup_descriptor)
                 except OSError as exc:
+                    if moved:
+
+                        def rollback_delete() -> None:
+                            _atomic_write_bytes(
+                                target_descriptor,
+                                target_name,
+                                old_bytes,
+                            )
+                            try:
+                                os.unlink(backup_name, dir_fd=backup_descriptor)
+                                os.fsync(backup_descriptor)
+                            except OSError:
+                                if _lstat_child(backup_descriptor, backup_name) is None:
+                                    _atomic_write_bytes(
+                                        backup_descriptor,
+                                        backup_name,
+                                        old_bytes,
+                                    )
+                                raise
+
+                        self._rollback_or_raise_partial(
+                            effect,
+                            recovery_mode="RESTORE_BACKUP",
+                            recovery_path=backup,
+                            rollback=rollback_delete,
+                        )
                     raise StructuredToolError(
                         "recoverable_delete_failed",
                         "The file could not be moved to its recovery backup",
@@ -489,6 +713,9 @@ class WorkspaceExecutor:
             "schema": "egoagentos.workspace-effect-receipt.v1",
             "status": "APPLIED",
             "effect_sha256": effect.effect_sha256,
+            "source_effect_sha256": effect.source_effect_sha256,
+            "safety_decision_sha256": effect.safety_decision_sha256,
+            "projection_sha256": effect.projection_sha256,
             "operation": effect.operation,
             "target": target,
             "affected_scope": effect.affected_scope,
