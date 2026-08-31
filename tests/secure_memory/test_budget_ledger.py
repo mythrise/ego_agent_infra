@@ -214,3 +214,15 @@ def test_events_are_hash_chained_and_replayable():
     replayed = BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
                                    trust_context=_trust(), events=ledger.events)
     assert replayed.totals == ledger.totals
+
+
+def test_replay_rejects_event_hash_tamper():
+    ledger, lease = _ledger()
+    ledger.reserve("ticket-1", lease, requester_role="Worker", tokenizer_estimate=1,
+                   calibrated_positive_error=0, serialized_model_visible_bytes=b"")
+    bad = list(ledger.events)
+    from dataclasses import replace
+    bad[0] = replace(bad[0], event_sha256="0" * 64)
+    with pytest.raises(BudgetDenied, match="event_hash"):
+        BudgetLedger.replay(templates=(_template(),), tickets=(_ticket(),), manifest_sha256=SHA,
+                            trust_context=_trust(), events=bad)
