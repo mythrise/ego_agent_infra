@@ -1,8 +1,9 @@
 """Persistence contract shared by the SQLite and PostgreSQL control-plane stores."""
 
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 from .models import (
     ApprovalRecord,
@@ -13,6 +14,94 @@ from .models import (
     Stage,
     TaskRecord,
 )
+from .trusted_memory.models import (
+    CandidateFact,
+    ConflictRecord,
+    LegacyMemoryView,
+    LifecycleTransition,
+    MemoryState,
+    RevocationRecord,
+    SupersessionRecord,
+    TrustedFact,
+)
+from benchmarks.secure_memory.canonical import canonical_sha256
+
+
+TrustedMemoryRecord = Union[
+    CandidateFact,
+    TrustedFact,
+    LifecycleTransition,
+    ConflictRecord,
+    SupersessionRecord,
+    RevocationRecord,
+]
+
+
+def trusted_memory_record_type(record: TrustedMemoryRecord) -> str:
+    if isinstance(record, CandidateFact):
+        return "candidate"
+    if isinstance(record, TrustedFact):
+        return "trusted_fact"
+    if isinstance(record, LifecycleTransition):
+        return "lifecycle"
+    if isinstance(record, ConflictRecord):
+        return "conflict"
+    if isinstance(record, SupersessionRecord):
+        return "supersession"
+    if isinstance(record, RevocationRecord):
+        return "revocation"
+    raise TypeError("unsupported trusted-memory record")
+
+
+def trusted_memory_event_hash(
+    *,
+    tenant_id: str,
+    project_id: str,
+    lineage_id: str,
+    sequence: int,
+    event_type: str,
+    record_sha256: str,
+    previous_hash: str,
+) -> str:
+    return canonical_sha256(
+        "trusted-memory-history-event",
+        {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "lineage_id": lineage_id,
+            "sequence": sequence,
+            "event_type": event_type,
+            "record_sha256": record_sha256,
+            "previous_hash": previous_hash,
+        },
+    )
+
+
+@dataclass(frozen=True)
+class TrustedMemoryEvent:
+    tenant_id: str
+    project_id: str
+    lineage_id: str
+    sequence: int
+    event_type: str
+    record_bytes: bytes
+    record_sha256: str
+    previous_hash: str
+    event_hash: str
+
+
+@dataclass(frozen=True)
+class TrustedMemoryCurrent:
+    tenant_id: str
+    project_id: str
+    lineage_id: str
+    revision_id: str
+    revision: int
+    fact_digest: str
+    state: MemoryState
+    fact_bytes: bytes
+    fact_event_hash: str
+    projection_event_hash: str
 
 
 class ResearchStore(Protocol):
@@ -53,13 +142,75 @@ class ResearchStore(Protocol):
 
     def add_memory_candidate(self, record: MemoryCandidate) -> None: ...
 
-    def list_memory_candidates(
-        self, task_id: str, generation: str
-    ) -> List[MemoryCandidate]: ...
+    def list_memory_candidates(self, task_id: str, generation: str) -> List[MemoryCandidate]: ...
 
     def add_memory(self, record: MemoryRecord) -> None: ...
 
     def list_memories(self, task_id: str, generation: str) -> List[MemoryRecord]: ...
+
+    def append_trusted_memory_record(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        record: TrustedMemoryRecord,
+        idempotency_key: str,
+        expected_current_event_hash: Optional[str] = None,
+    ) -> TrustedMemoryEvent: ...
+
+    def get_trusted_memory_event(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        event_hash: str,
+    ) -> TrustedMemoryEvent: ...
+
+    def list_trusted_memory_history(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        after_sequence: int = 0,
+        limit: int = 1000,
+    ) -> List[TrustedMemoryEvent]: ...
+
+    def get_current_trusted_fact(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> Optional[TrustedMemoryCurrent]: ...
+
+    def get_trusted_memory_stream_root(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> str: ...
+
+    def verify_trusted_memory_stream(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> bool: ...
+
+    def list_legacy_memory_views(
+        self,
+        *,
+        task_id: str,
+        generation: str,
+        tenant_id: str,
+        project_id: str,
+        version: str,
+    ) -> List[LegacyMemoryView]: ...
 
     def append_event(
         self,

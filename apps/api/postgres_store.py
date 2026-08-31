@@ -18,6 +18,8 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from benchmarks.secure_memory.canonical import canonical_bytes
+
 from .errors import ConflictError, NotFoundError
 from .models import (
     ApprovalRecord,
@@ -30,9 +32,27 @@ from .models import (
     utc_now,
 )
 from .provenance import canonical_sha256
+from .store_contract import (
+    TrustedMemoryCurrent,
+    TrustedMemoryEvent,
+    TrustedMemoryRecord,
+    trusted_memory_event_hash,
+    trusted_memory_record_type,
+)
+from .trusted_memory.models import (
+    CandidateFact,
+    ConflictRecord,
+    LegacyMemoryView,
+    LifecycleTransition,
+    MemoryState,
+    RevocationRecord,
+    SupersessionRecord,
+    TrustedFact,
+)
 
 
 STAGE_EVENT_CHANNEL = "ego_stage_events"
+TRUSTED_MEMORY_EVENT_CHANNEL = "ego_trusted_memory_events"
 ZERO_HASH = "0" * 64
 
 
@@ -82,9 +102,9 @@ class PostgresStore:
             raise ValueError("EGO_TENANT_ID must contain between 1 and 128 characters")
         self._lock = threading.RLock()
         self._transaction_local = threading.local()
-        self.migration_mode = migration_mode or os.getenv(
-            "EGO_DATABASE_MIGRATION_MODE", "apply"
-        ).strip()
+        self.migration_mode = (
+            migration_mode or os.getenv("EGO_DATABASE_MIGRATION_MODE", "apply").strip()
+        )
         if self.migration_mode not in {"apply", "verify"}:
             raise ValueError("EGO_DATABASE_MIGRATION_MODE must be apply or verify")
         self.initialize()
@@ -531,9 +551,7 @@ class PostgresStore:
         finally:
             self._close(connection)
 
-    def list_memory_candidates(
-        self, task_id: str, generation: str
-    ) -> List[MemoryCandidate]:
+    def list_memory_candidates(self, task_id: str, generation: str) -> List[MemoryCandidate]:
         connection = self._connect()
         try:
             rows = connection.execute(
@@ -585,6 +603,542 @@ class PostgresStore:
         finally:
             self._close(connection)
         return [MemoryRecord.model_validate(_json_object(row["record_json"])) for row in rows]
+
+    @staticmethod
+    def _trusted_memory_event_from_row(row: Mapping[str, Any]) -> TrustedMemoryEvent:
+        return TrustedMemoryEvent(
+            tenant_id=str(row["tenant_id"]),
+            project_id=str(row["project_id"]),
+            lineage_id=str(row["lineage_id"]),
+            sequence=int(row["sequence"]),
+            event_type=str(row["event_type"]),
+            record_bytes=bytes(row["record_bytes"]),
+            record_sha256=str(row["record_sha256"]),
+            previous_hash=str(row["previous_hash"]),
+            event_hash=str(row["event_hash"]),
+        )
+
+    def append_trusted_memory_record(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        record: TrustedMemoryRecord,
+        idempotency_key: str,
+        expected_current_event_hash: Optional[str] = None,
+    ) -> TrustedMemoryEvent:
+        if tenant_id != self.tenant_id:
+            raise ValueError("trusted-memory tenant_id does not match store tenant")
+        closure_digests: Tuple[str, ...]
+        if isinstance(record, (CandidateFact, TrustedFact)):
+            record_scope = record.scope
+            record_lineage_matches = record.lineage_id == lineage_id
+            closure_digests = (
+                (record.provenance.decision_closure_digest,)
+                if isinstance(record, TrustedFact)
+                else ()
+            )
+        elif isinstance(record, LifecycleTransition):
+            record_scope = record.core.scope
+            record_lineage_matches = record.core.lineage_id == lineage_id
+            closure_digests = (
+                (record.core.decision_closure_digest,)
+                if record.core.decision_closure_digest is not None
+                else ()
+            )
+        elif isinstance(record, ConflictRecord):
+            record_scope = record.group.scope
+            record_lineage_matches = any(
+                member.lineage_id == lineage_id for member in record.group.members
+            )
+            closure_digests = record.group.decision_closure_digests
+        elif isinstance(record, SupersessionRecord):
+            record_scope = record.core.scope
+            record_lineage_matches = record.core.lineage_id == lineage_id
+            closure_digests = (record.core.decision_closure_digest,)
+        elif isinstance(record, RevocationRecord):
+            record_scope = record.core.scope
+            record_lineage_matches = record.core.lineage_id == lineage_id
+            closure_digests = (record.core.decision_closure_digest,)
+        else:
+            raise TypeError("unsupported trusted-memory record")
+        if (
+            record_scope.tenant_id != tenant_id
+            or record_scope.project_id != project_id
+            or not record_lineage_matches
+        ):
+            raise ValueError("trusted-memory append scope does not match record scope")
+        if not idempotency_key:
+            raise ValueError("trusted-memory idempotency_key must not be empty")
+        if isinstance(record, CandidateFact) and expected_current_event_hash is not None:
+            raise ConflictError(
+                "trusted_memory_candidate_promotion",
+                "A candidate cannot update the trusted current projection",
+                {"lineage_id": lineage_id},
+            )
+
+        record_bytes = canonical_bytes(record)
+        record_sha256 = hashlib.sha256(record_bytes).hexdigest()
+        event_type = trusted_memory_record_type(record)
+        with self.transaction():
+            connection = self._connect()
+            connection.execute(
+                """
+                SELECT pg_advisory_xact_lock(
+                    hashtextextended(%s || chr(31) || %s || chr(31) || %s, 0)
+                )
+                """,
+                (tenant_id, project_id, lineage_id),
+            )
+            existing = connection.execute(
+                """
+                SELECT * FROM trusted_memory_history
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                   AND idempotency_key=%s
+                """,
+                (tenant_id, project_id, lineage_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if bytes(existing["record_bytes"]) != record_bytes:
+                    raise ConflictError(
+                        "trusted_memory_idempotency_conflict",
+                        "Trusted-memory idempotency key has different canonical bytes",
+                        {"idempotency_key": idempotency_key},
+                    )
+                return self._trusted_memory_event_from_row(existing)
+
+            current = connection.execute(
+                """
+                SELECT * FROM trusted_memory_current
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                 FOR UPDATE
+                """,
+                (tenant_id, project_id, lineage_id),
+            ).fetchone()
+            if isinstance(record, TrustedFact):
+                if current is None:
+                    if expected_current_event_hash is not None or record.revision != 1:
+                        raise ConflictError(
+                            "trusted_memory_projection_conflict",
+                            "Trusted-memory compare-and-swap does not match current projection",
+                            {"lineage_id": lineage_id},
+                        )
+                elif (
+                    expected_current_event_hash != current["projection_event_hash"]
+                    or record.revision != int(current["revision"]) + 1
+                ):
+                    raise ConflictError(
+                        "trusted_memory_projection_conflict",
+                        "Trusted-memory compare-and-swap does not match current projection",
+                        {"lineage_id": lineage_id},
+                    )
+            elif not isinstance(record, CandidateFact):
+                if (
+                    current is None
+                    or expected_current_event_hash != current["projection_event_hash"]
+                ):
+                    raise ConflictError(
+                        "trusted_memory_projection_conflict",
+                        "Trusted-memory compare-and-swap does not match current projection",
+                        {"lineage_id": lineage_id},
+                    )
+                if isinstance(record, LifecycleTransition):
+                    projection_matches = (
+                        record.core.fact_digest == current["fact_digest"]
+                        and record.core.from_revision == int(current["revision"])
+                        and record.core.from_state.value == current["state"]
+                    )
+                elif isinstance(record, ConflictRecord):
+                    projection_matches = any(
+                        member.lineage_id == lineage_id
+                        and member.revision_id == current["revision_id"]
+                        and member.revision == int(current["revision"])
+                        and member.fact_digest == current["fact_digest"]
+                        for member in record.group.members
+                    )
+                elif isinstance(record, SupersessionRecord):
+                    projection_matches = record.core.superseded_revision_id == current[
+                        "revision_id"
+                    ] and record.core.superseded_revision == int(current["revision"])
+                else:
+                    projection_matches = (
+                        record.core.revision_id == current["revision_id"]
+                        and record.core.revision == int(current["revision"])
+                        and record.core.expected_revision == int(current["revision"])
+                        and record.core.fact_digest == current["fact_digest"]
+                    )
+                if not projection_matches:
+                    raise ConflictError(
+                        "trusted_memory_projection_conflict",
+                        "Trusted-memory event does not match the current fact projection",
+                        {"lineage_id": lineage_id},
+                    )
+
+            stream = connection.execute(
+                """
+                SELECT sequence, stream_root FROM trusted_memory_streams
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                 FOR UPDATE
+                """,
+                (tenant_id, project_id, lineage_id),
+            ).fetchone()
+            sequence = int(stream["sequence"]) + 1 if stream else 1
+            previous_hash = str(stream["stream_root"]) if stream else ZERO_HASH
+            event_hash = trusted_memory_event_hash(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                lineage_id=lineage_id,
+                sequence=sequence,
+                event_type=event_type,
+                record_sha256=record_sha256,
+                previous_hash=previous_hash,
+            )
+            connection.execute(
+                """
+                INSERT INTO trusted_memory_history(
+                    tenant_id, project_id, lineage_id, sequence, event_type,
+                    record_bytes, record_sha256, previous_hash, event_hash,
+                    idempotency_key
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    tenant_id,
+                    project_id,
+                    lineage_id,
+                    sequence,
+                    event_type,
+                    record_bytes,
+                    record_sha256,
+                    previous_hash,
+                    event_hash,
+                    idempotency_key,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO trusted_memory_streams(
+                    tenant_id, project_id, lineage_id, sequence, stream_root
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT(tenant_id, project_id, lineage_id) DO UPDATE SET
+                    sequence=excluded.sequence,
+                    stream_root=excluded.stream_root
+                """,
+                (tenant_id, project_id, lineage_id, sequence, event_hash),
+            )
+            for closure_digest in closure_digests:
+                connection.execute(
+                    """
+                    INSERT INTO trusted_memory_closures(
+                        tenant_id, project_id, lineage_id, event_hash, closure_digest
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (tenant_id, project_id, lineage_id, event_hash, closure_digest),
+                )
+            if isinstance(record, TrustedFact):
+                if current is None:
+                    connection.execute(
+                        """
+                        INSERT INTO trusted_memory_current(
+                            tenant_id, project_id, lineage_id, revision_id, revision,
+                            fact_digest, state, eligible, fact_bytes, fact_event_hash,
+                            projection_event_hash
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, true, %s, %s, %s)
+                        """,
+                        (
+                            tenant_id,
+                            project_id,
+                            lineage_id,
+                            record.revision_id,
+                            record.revision,
+                            record.trusted_fact_digest,
+                            record.state.value,
+                            record_bytes,
+                            event_hash,
+                            event_hash,
+                        ),
+                    )
+                else:
+                    cursor = connection.execute(
+                        """
+                        UPDATE trusted_memory_current SET
+                            revision_id=%s, revision=%s, fact_digest=%s, state=%s,
+                            eligible=true, fact_bytes=%s, fact_event_hash=%s,
+                            projection_event_hash=%s
+                         WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                           AND projection_event_hash=%s
+                        """,
+                        (
+                            record.revision_id,
+                            record.revision,
+                            record.trusted_fact_digest,
+                            record.state.value,
+                            record_bytes,
+                            event_hash,
+                            event_hash,
+                            tenant_id,
+                            project_id,
+                            lineage_id,
+                            expected_current_event_hash,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ConflictError(
+                            "trusted_memory_projection_conflict",
+                            "Trusted-memory compare-and-swap lost a concurrent update",
+                            {"lineage_id": lineage_id},
+                        )
+            elif not isinstance(record, CandidateFact):
+                if isinstance(record, LifecycleTransition):
+                    projected_state = record.core.to_state
+                elif isinstance(record, ConflictRecord):
+                    projected_state = MemoryState.CONFLICTED
+                elif isinstance(record, SupersessionRecord):
+                    projected_state = MemoryState.SUPERSEDED
+                else:
+                    projected_state = MemoryState.REVOKED
+                cursor = connection.execute(
+                    """
+                    UPDATE trusted_memory_current SET
+                        state=%s, eligible=%s, projection_event_hash=%s
+                     WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                       AND projection_event_hash=%s
+                    """,
+                    (
+                        projected_state.value,
+                        projected_state is MemoryState.VALIDATED,
+                        event_hash,
+                        tenant_id,
+                        project_id,
+                        lineage_id,
+                        expected_current_event_hash,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConflictError(
+                        "trusted_memory_projection_conflict",
+                        "Trusted-memory compare-and-swap lost a concurrent update",
+                        {"lineage_id": lineage_id},
+                    )
+            outbox_payload = {
+                "event_hash": event_hash,
+                "event_type": event_type,
+                "lineage_id": lineage_id,
+                "project_id": project_id,
+                "record_sha256": record_sha256,
+                "sequence": sequence,
+                "stream_root": event_hash,
+                "tenant_id": tenant_id,
+            }
+            connection.execute(
+                """
+                INSERT INTO trusted_memory_outbox(
+                    tenant_id, project_id, lineage_id, sequence, event_hash, payload_json
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    tenant_id,
+                    project_id,
+                    lineage_id,
+                    sequence,
+                    event_hash,
+                    Jsonb(outbox_payload),
+                ),
+            )
+        return TrustedMemoryEvent(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            lineage_id=lineage_id,
+            sequence=sequence,
+            event_type=event_type,
+            record_bytes=record_bytes,
+            record_sha256=record_sha256,
+            previous_hash=previous_hash,
+            event_hash=event_hash,
+        )
+
+    def get_trusted_memory_event(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        event_hash: str,
+    ) -> TrustedMemoryEvent:
+        if tenant_id != self.tenant_id:
+            raise NotFoundError("trusted_memory_event", event_hash)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM trusted_memory_history
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s AND event_hash=%s
+                """,
+                (tenant_id, project_id, lineage_id, event_hash),
+            ).fetchone()
+        finally:
+            self._close(connection)
+        if row is None:
+            raise NotFoundError("trusted_memory_event", event_hash)
+        return self._trusted_memory_event_from_row(row)
+
+    def list_trusted_memory_history(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+        after_sequence: int = 0,
+        limit: int = 1000,
+    ) -> List[TrustedMemoryEvent]:
+        if tenant_id != self.tenant_id:
+            return []
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM trusted_memory_history
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s AND sequence>%s
+                 ORDER BY sequence LIMIT %s
+                """,
+                (tenant_id, project_id, lineage_id, after_sequence, limit),
+            ).fetchall()
+        finally:
+            self._close(connection)
+        return [self._trusted_memory_event_from_row(row) for row in rows]
+
+    def get_current_trusted_fact(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> Optional[TrustedMemoryCurrent]:
+        if tenant_id != self.tenant_id:
+            return None
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM trusted_memory_current
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s AND eligible IS TRUE
+                """,
+                (tenant_id, project_id, lineage_id),
+            ).fetchone()
+        finally:
+            self._close(connection)
+        if row is None:
+            return None
+        return TrustedMemoryCurrent(
+            tenant_id=str(row["tenant_id"]),
+            project_id=str(row["project_id"]),
+            lineage_id=str(row["lineage_id"]),
+            revision_id=str(row["revision_id"]),
+            revision=int(row["revision"]),
+            fact_digest=str(row["fact_digest"]),
+            state=MemoryState(str(row["state"])),
+            fact_bytes=bytes(row["fact_bytes"]),
+            fact_event_hash=str(row["fact_event_hash"]),
+            projection_event_hash=str(row["projection_event_hash"]),
+        )
+
+    def get_trusted_memory_stream_root(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> str:
+        if tenant_id != self.tenant_id:
+            return ZERO_HASH
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT stream_root FROM trusted_memory_streams
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                """,
+                (tenant_id, project_id, lineage_id),
+            ).fetchone()
+        finally:
+            self._close(connection)
+        return str(row["stream_root"]) if row else ZERO_HASH
+
+    def verify_trusted_memory_stream(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        lineage_id: str,
+    ) -> bool:
+        if tenant_id != self.tenant_id:
+            return False
+        previous_hash = ZERO_HASH
+        last_sequence = 0
+        while True:
+            events = self.list_trusted_memory_history(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                lineage_id=lineage_id,
+                after_sequence=last_sequence,
+                limit=1000,
+            )
+            if not events:
+                break
+            for event in events:
+                if event.sequence != last_sequence + 1:
+                    return False
+                if hashlib.sha256(event.record_bytes).hexdigest() != event.record_sha256:
+                    return False
+                expected_hash = trusted_memory_event_hash(
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    lineage_id=lineage_id,
+                    sequence=event.sequence,
+                    event_type=event.event_type,
+                    record_sha256=event.record_sha256,
+                    previous_hash=previous_hash,
+                )
+                if event.previous_hash != previous_hash or event.event_hash != expected_hash:
+                    return False
+                previous_hash = event.event_hash
+                last_sequence = event.sequence
+
+        connection = self._connect()
+        try:
+            stream = connection.execute(
+                """
+                SELECT sequence, stream_root FROM trusted_memory_streams
+                 WHERE tenant_id=%s AND project_id=%s AND lineage_id=%s
+                """,
+                (tenant_id, project_id, lineage_id),
+            ).fetchone()
+        finally:
+            self._close(connection)
+        if stream is None:
+            return last_sequence == 0 and previous_hash == ZERO_HASH
+        return int(stream["sequence"]) == last_sequence and stream["stream_root"] == previous_hash
+
+    def list_legacy_memory_views(
+        self,
+        *,
+        task_id: str,
+        generation: str,
+        tenant_id: str,
+        project_id: str,
+        version: str,
+    ) -> List[LegacyMemoryView]:
+        if tenant_id != self.tenant_id:
+            return []
+        return [
+            LegacyMemoryView.from_memory_record(
+                record,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                version=version,
+            )
+            for record in self.list_memories(task_id, generation)
+        ]
 
     def append_event(
         self,
@@ -868,10 +1422,17 @@ class PostgresStore:
             self._close(connection)
         if row is None:
             raise RuntimeError("PostgreSQL did not return store counts")
-        return {name: int(row[name]) for name in (
-            "tasks", "approvals", "evidence", "memory_candidates", "events",
-            "validated_memories"
-        )}
+        return {
+            name: int(row[name])
+            for name in (
+                "tasks",
+                "approvals",
+                "evidence",
+                "memory_candidates",
+                "events",
+                "validated_memories",
+            )
+        }
 
     @contextmanager
     def stage_event_listener(self) -> Iterator[Connection[Dict[str, Any]]]:
