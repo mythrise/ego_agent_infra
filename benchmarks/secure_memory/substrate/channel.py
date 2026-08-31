@@ -162,8 +162,15 @@ class InMemoryReceiptStore:
                 self._condition.wait()
             head = self._heads.get(window)
             if head is not None:
-                if sequence == head[0]:
-                    return ("replay", head[2]) if head[1] == digest else ("conflict", None)
+                if sequence <= head[0]:
+                    historical = self._records.get(window + (sequence,))
+                    if historical is None or historical.identity != window + (sequence,):
+                        return "inconsistent", None
+                    return (
+                        ("replay", historical)
+                        if historical.request_frame_sha256 == digest
+                        else ("conflict", None)
+                    )
                 if sequence != head[0] + 1:
                     return "mismatch", None
             elif sequence != 1:
@@ -304,6 +311,8 @@ class ChannelCodec:
             return existing.receipt_frame  # type: ignore[union-attr]
         if state == "conflict":
             raise ChannelRejected("sequence_reuse_with_different_bytes")
+        if state == "inconsistent":
+            raise ChannelRejected("historical_receipt_inconsistent")
         if state == "mismatch":
             raise ChannelRejected("sequence_mismatch")
         try:
