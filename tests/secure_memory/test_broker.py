@@ -267,6 +267,22 @@ def test_broker_rejects_malformed_temp_descriptor_handoff_before_transport():
         os.unlink(path)
 
 
+def test_provisioner_uses_exact_safe_open_flags():
+    fd, path = tempfile.mkstemp()
+    calls = []
+    try:
+        os.write(fd, b"fake")
+        def opener(value, flags):
+            calls.append(flags)
+            return os.open(value, flags)
+        handoff = provision_secret_descriptor(path, expected_uid=os.getuid(), opener=opener)
+        assert calls == [os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC]
+        os.close(handoff.fd)
+    finally:
+        os.close(fd)
+        os.unlink(path)
+
+
 def test_request_lease_digest_usage_breach_and_null_timestamps_freeze_campaign():
     ledger, lease = _ledger()
     bad = _request(lease_sha256="b" * 64)
