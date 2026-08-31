@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import base64
-import binascii
 from enum import Enum
-from typing import Annotated, Any, Dict, Literal, Optional, Tuple
+from typing import Annotated, Any, Dict, Literal, Mapping, Optional, Tuple
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .canonical import (
     canonical_bytes,
     canonical_sha256,
+    validate_canonical_utf8_base64,
     validate_guest_artifact_path,
     validate_sha256_digest,
 )
@@ -21,10 +20,23 @@ Digest = Annotated[
     AfterValidator(validate_sha256_digest),
 ]
 GuestArtifactPath = Annotated[str, AfterValidator(validate_guest_artifact_path)]
+CanonicalUtf8Base64 = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(validate_canonical_utf8_base64),
+]
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
+
+    @model_validator(mode="after")
+    def validate_canonical_json_value(self) -> "StrictModel":
+        try:
+            canonical_bytes(self)
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class MeasuredConfigurationId(str, Enum):
@@ -54,6 +66,25 @@ class RequestClass(str, Enum):
     MAIN = "main"
     AUXILIARY = "auxiliary"
     REVIEW = "review"
+
+
+REQUEST_CLASS_TOKEN_CEILINGS: Mapping[RequestClass, Tuple[int, int]] = {
+    RequestClass.MAIN: (10_000, 1_500),
+    RequestClass.AUXILIARY: (6_000, 750),
+    RequestClass.REVIEW: (8_000, 1_000),
+}
+
+
+def _validate_request_class_ceiling(
+    request_class: RequestClass,
+    max_input_tokens: int,
+    max_output_tokens: int,
+) -> None:
+    input_ceiling, output_ceiling = REQUEST_CLASS_TOKEN_CEILINGS[request_class]
+    if max_input_tokens > input_ceiling or max_output_tokens > output_ceiling:
+        raise ValueError(
+            f"{request_class.value} request exceeds {input_ceiling}/{output_ceiling} token ceilings"
+        )
 
 
 def _sorted_unique(values: Tuple[str, ...], field_name: str) -> Tuple[str, ...]:
@@ -194,6 +225,15 @@ class ModelRequest(StrictModel):
         canonical_bytes(values)
         return values
 
+    @model_validator(mode="after")
+    def validate_class_ceiling(self) -> "ModelRequest":
+        _validate_request_class_ceiling(
+            self.request_class,
+            self.max_input_tokens,
+            self.max_output_tokens,
+        )
+        return self
+
 
 class ModelResponse(StrictModel):
     schema_version: Literal["secure-memory-model-response/v1"]
@@ -242,6 +282,11 @@ class TicketTemplate(StrictModel):
         elif self.execution_phase_owner in {ExecutionPhaseOwner.QUALIFICATION, ExecutionPhaseOwner.OPTIMIZER}:
             if self.configuration_id is not None:
                 raise ValueError("qualification/optimizer templates cannot bind a configuration")
+        _validate_request_class_ceiling(
+            self.request_class,
+            self.max_input_tokens,
+            self.max_output_tokens,
+        )
         return self
 
 
@@ -268,6 +313,15 @@ class IssuedBudgetTicket(StrictModel):
     issue_sequence: int = Field(ge=0)
     ticket_sha256: Digest
     signature_base64: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_class_ceiling(self) -> "IssuedBudgetTicket":
+        _validate_request_class_ceiling(
+            self.effective_request_class,
+            self.max_input_tokens,
+            self.max_output_tokens,
+        )
+        return self
 
 
 class SignedTaskLeaseCore(StrictModel):
@@ -336,23 +390,13 @@ class CandidateProposal(StrictModel):
     task_id: str = Field(min_length=1)
     generation: int = Field(ge=1)
     claimed_fact_id: Optional[str]
-    statement_utf8_base64: str = Field(min_length=1)
+    statement_utf8_base64: CanonicalUtf8Base64
     memory_type: Literal["semantic", "episodic", "procedural"]
     component: str = Field(min_length=1)
     outcome_claim: Literal["KEEP", "DROP", "INCONCLUSIVE"]
     applicability_scope: FactScope
     source_refs: Tuple[SourceRef, ...]
     support_digest_claims: Tuple[Digest, ...]
-
-    @field_validator("statement_utf8_base64")
-    @classmethod
-    def validate_statement(cls, value: str) -> str:
-        try:
-            decoded = base64.b64decode(value, validate=True)
-            decoded.decode("utf-8", errors="strict")
-        except (binascii.Error, UnicodeDecodeError) as exc:
-            raise ValueError("statement_utf8_base64 must encode canonical UTF-8 bytes") from exc
-        return value
 
     @field_validator("support_digest_claims")
     @classmethod
@@ -369,7 +413,7 @@ class TrustedFactCore(StrictModel):
     schema_version: Literal["secure-memory-trusted-fact/v1"]
     fact_id: str = Field(min_length=1)
     fact_kind: str = Field(min_length=1)
-    statement_utf8_base64: str = Field(min_length=1)
+    statement_utf8_base64: CanonicalUtf8Base64
     outcome: Literal["KEEP", "DROP", "INCONCLUSIVE"]
     applicability_scope: FactScope
     source_refs: Tuple[SourceRef, ...]
@@ -509,7 +553,9 @@ def validate_task_lease_core(
     current_memory_watermark: Optional[int] = None,
     verified_post_selection_extension_sha256: Optional[str] = None,
     selected_original_configuration_id: Optional[MeasuredConfigurationId] = None,
+    qualification_case_index: Optional[int] = None,
     optimizer_input_sha256: Optional[str] = None,
+    optimizer_proposal_index: Optional[int] = None,
     gpu_selected_configuration_id: Optional[MeasuredConfigurationId] = None,
     gpu_authorization_core_sha256: Optional[str] = None,
 ) -> SignedTaskLeaseCore:
@@ -588,6 +634,9 @@ def validate_task_lease_core(
             and core.problem_id == "__qualification__"
             and core.turn == 1
             and 1 <= core.generation <= 16
+            and qualification_case_index is not None
+            and 1 <= qualification_case_index <= 16
+            and core.generation == qualification_case_index
             and core.requirement_ledger_sha256
             == manifest.core.provider_qualification_matrix_sha256
             and core.workspace_checkpoint_sha256 == NO_WORKSPACE_CHECKPOINT_SHA256
@@ -602,6 +651,9 @@ def validate_task_lease_core(
             and core.problem_id == "__optimizer__"
             and core.turn == 1
             and 1 <= core.generation <= 6
+            and optimizer_proposal_index is not None
+            and 1 <= optimizer_proposal_index <= 6
+            and core.generation == optimizer_proposal_index
             and optimizer_input_sha256 is not None
             and core.requirement_ledger_sha256 == optimizer_input_sha256
             and core.workspace_checkpoint_sha256 == NO_WORKSPACE_CHECKPOINT_SHA256

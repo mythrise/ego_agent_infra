@@ -44,6 +44,11 @@ include = [
   "skill_runtime*",
   "skills*",
 ]
+exclude = [
+  "*.evaluator*",
+  "*.hidden*",
+  "*.sealed*",
+]
 namespaces = true
 
 [tool.setuptools.package-data]

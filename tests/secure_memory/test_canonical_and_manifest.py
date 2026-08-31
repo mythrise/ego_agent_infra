@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -25,14 +29,17 @@ from benchmarks.secure_memory.models import (
     ExecutionPhaseOwner,
     FactScope,
     ImageBinding,
+    IssuedBudgetTicket,
     MeasuredConfigurationId,
     ModelRequest,
+    ModelResponse,
     RequestClass,
     RunManifest,
     RunManifestCore,
     SignedTaskLeaseCore,
     SourceRef,
     TicketTemplate,
+    TrustedFactCore,
     validate_task_lease_core,
 )
 
@@ -424,10 +431,10 @@ def test_qualification_and_optimizer_lease_sentinels_are_exact() -> None:
         workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
         memory_watermark=0,
     )
-    assert _validate_lease(qualification).generation == 16
+    assert _validate_lease(qualification, qualification_case_index=16).generation == 16
     qualification["generation"] = 17
     with pytest.raises(ValueError):
-        _validate_lease(qualification)
+        _validate_lease(qualification, qualification_case_index=16)
 
     optimizer = lease_data("OPTIMIZER")
     optimizer.update(
@@ -438,10 +445,21 @@ def test_qualification_and_optimizer_lease_sentinels_are_exact() -> None:
         workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
         memory_watermark=0,
     )
-    assert _validate_lease(optimizer, optimizer_input_sha256=SHA["optimizer-input"]).generation == 6
+    assert (
+        _validate_lease(
+            optimizer,
+            optimizer_input_sha256=SHA["optimizer-input"],
+            optimizer_proposal_index=6,
+        ).generation
+        == 6
+    )
     optimizer["workspace_checkpoint_sha256"] = SHA["checkpoint"]
     with pytest.raises(ValueError):
-        _validate_lease(optimizer, optimizer_input_sha256=SHA["optimizer-input"])
+        _validate_lease(
+            optimizer,
+            optimizer_input_sha256=SHA["optimizer-input"],
+            optimizer_proposal_index=6,
+        )
 
 
 @pytest.mark.parametrize("configuration_id", ["C", "F"])
@@ -520,3 +538,434 @@ def test_schema_digest_index_covers_every_public_schema_and_rejects_incomplete_i
     )
     with pytest.raises(SchemaContractError, match="missing"):
         verify_schema_contract(index_path=incomplete)
+
+
+def test_qualification_requires_exact_authoritative_case_index() -> None:
+    qualification = lease_data("QUALIFICATION")
+    qualification.update(
+        problem_id="__qualification__",
+        turn=1,
+        generation=8,
+        requirement_ledger_sha256=SHA["qualification-matrix"],
+        workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
+        memory_watermark=0,
+    )
+    with pytest.raises(ValueError):
+        _validate_lease(qualification)
+    with pytest.raises(ValueError):
+        _validate_lease(qualification, qualification_case_index=7)
+    assert _validate_lease(qualification, qualification_case_index=8).generation == 8
+
+
+def test_optimizer_requires_exact_authoritative_proposal_index() -> None:
+    optimizer = lease_data("OPTIMIZER")
+    optimizer.update(
+        problem_id="__optimizer__",
+        turn=1,
+        generation=4,
+        requirement_ledger_sha256=SHA["optimizer-input"],
+        workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
+        memory_watermark=0,
+    )
+    context = {"optimizer_input_sha256": SHA["optimizer-input"]}
+    with pytest.raises(ValueError):
+        _validate_lease(optimizer, **context)
+    with pytest.raises(ValueError):
+        _validate_lease(optimizer, optimizer_proposal_index=3, **context)
+    assert (
+        _validate_lease(optimizer, optimizer_proposal_index=4, **context).generation == 4
+    )
+
+
+def model_request_data(request_class: str, max_input: int, max_output: int) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-model-request/v1",
+        "request_id": "request-limits",
+        "campaign_id": "campaign-test",
+        "lease_sha256": SHA["contract"],
+        "ticket_id": "ticket-limits",
+        "request_class": request_class,
+        "provider_base_url": "https://apihub.agnes-ai.com/v1",
+        "provider_model": "agnes-2.5-pro",
+        "runtime": "agentteams",
+        "messages": ({"role": "user", "content": "fake fixture"},),
+        "max_input_tokens": max_input,
+        "max_output_tokens": max_output,
+        "temperature": 0,
+        "top_p": 1,
+        "stream": False,
+        "tools": (),
+    }
+
+
+def ticket_template_data(request_class: str, max_input: int, max_output: int) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-ticket-template/v1",
+        "template_id": "template-limits",
+        "purpose": "initial-runtime",
+        "execution_phase_owner": "A",
+        "configuration_id": "A",
+        "problem_id": "problem-1",
+        "turn": 1,
+        "allowed_role": "Runtime",
+        "request_class": request_class,
+        "usage_phase": "architecture",
+        "slot_id": "runtime-1",
+        "attempt_group": "initial",
+        "retry_owner": None,
+        "max_input_tokens": max_input,
+        "max_output_tokens": max_output,
+    }
+
+
+def issued_ticket_data(request_class: str, max_input: int, max_output: int) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-issued-budget-ticket/v1",
+        "ticket_id": "ticket-limits",
+        "template_id": "template-limits",
+        "campaign_id": "campaign-test",
+        "manifest_sha256": SHA["contract"],
+        "execution_phase_owner": "A",
+        "configuration_id": "A",
+        "project_id": "project-1",
+        "task_id": "task-1",
+        "worker": "worker-1",
+        "matrix_user_id": "@worker-1:matrix.test",
+        "allowed_role": "Runtime",
+        "effective_request_class": request_class,
+        "usage_phase": "architecture",
+        "max_input_tokens": max_input,
+        "max_output_tokens": max_output,
+        "expires_at_sequence": 20,
+        "issuer_id": "control",
+        "key_id": "control-key-1",
+        "issue_sequence": 10,
+        "ticket_sha256": SHA["templates"],
+        "signature_base64": "ZmFrZS1zaWduYXR1cmU=",
+    }
+
+
+@pytest.mark.parametrize(
+    ("model", "factory", "request_class", "allowed", "prohibited"),
+    [
+        (ModelRequest, model_request_data, "main", (10_000, 1_500), (10_001, 1_501)),
+        (ModelRequest, model_request_data, "auxiliary", (6_000, 750), (6_001, 751)),
+        (ModelRequest, model_request_data, "review", (8_000, 1_000), (8_001, 1_001)),
+        (TicketTemplate, ticket_template_data, "main", (10_000, 1_500), (10_001, 1_501)),
+        (TicketTemplate, ticket_template_data, "auxiliary", (6_000, 750), (6_001, 751)),
+        (TicketTemplate, ticket_template_data, "review", (8_000, 1_000), (8_001, 1_001)),
+        (IssuedBudgetTicket, issued_ticket_data, "main", (10_000, 1_500), (10_001, 1_501)),
+        (IssuedBudgetTicket, issued_ticket_data, "auxiliary", (6_000, 750), (6_001, 751)),
+        (IssuedBudgetTicket, issued_ticket_data, "review", (8_000, 1_000), (8_001, 1_001)),
+    ],
+)
+def test_request_class_controls_every_request_and_ticket_ceiling(
+    model: Any,
+    factory: Any,
+    request_class: str,
+    allowed: Any,
+    prohibited: Any,
+) -> None:
+    assert model.model_validate(factory(request_class, *allowed)).max_output_tokens == allowed[1]
+    assert_invalid_model(model, factory(request_class, prohibited[0], allowed[1]))
+    assert_invalid_model(model, factory(request_class, allowed[0], prohibited[1]))
+
+
+def _schema(filename: str) -> Dict[str, Any]:
+    path = Path("benchmarks/secure_memory/schemas") / filename
+    value = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    return value
+
+
+def test_exported_schemas_publish_expressible_canonical_constraints() -> None:
+    manifest_schema = _schema("run-manifest-v2.schema.json")
+    arms = manifest_schema["$defs"]["RunManifestCore"]["properties"]["arms"]
+    assert arms["const"] == ["A", "B", "C", "D", "E"]
+
+    lease_schema = _schema("signed-task-lease-v1.schema.json")
+    lease_core = lease_schema["$defs"]["SignedTaskLeaseCore"]["properties"]
+    for field in ("allowed_skills", "allowed_tools", "issued_ticket_ids"):
+        assert lease_core[field]["uniqueItems"] is True
+        assert lease_core[field]["x-canonical-order"] == "ascending"
+
+    checkpoint_schema = _schema("checkpoint-v1.schema.json")
+    path_schema = checkpoint_schema["properties"]["workspace_overlay_path"]
+    assert path_schema["format"] == "canonical-relative-posix-path"
+    assert "pattern" in path_schema
+
+    for filename, definition in (
+        ("candidate-proposal-v1.schema.json", None),
+        ("trusted-fact-v1.schema.json", None),
+    ):
+        schema = _schema(filename)
+        properties = schema["properties"] if definition is None else schema["$defs"][definition]
+        statement = properties["statement_utf8_base64"]
+        assert statement["contentEncoding"] == "base64"
+        assert statement["contentMediaType"] == "text/plain; charset=utf-8"
+        assert "pattern" in statement
+
+    for filename, class_field in (
+        ("model-request-v1.schema.json", "request_class"),
+        ("ticket-template-v1.schema.json", "request_class"),
+        ("issued-budget-ticket-v1.schema.json", "effective_request_class"),
+    ):
+        conditions = _schema(filename)["allOf"]
+        observed = {
+            item["if"]["properties"][class_field]["const"]: (
+                item["then"]["properties"]["max_input_tokens"]["maximum"],
+                item["then"]["properties"]["max_output_tokens"]["maximum"],
+            )
+            for item in conditions
+        }
+        assert observed == {
+            "main": (10_000, 1_500),
+            "auxiliary": (6_000, 750),
+            "review": (8_000, 1_000),
+        }
+
+
+def test_every_exported_schema_requires_the_canonical_semantic_validator() -> None:
+    for filename in (
+        "run-manifest-v2.schema.json",
+        "model-request-v1.schema.json",
+        "model-response-v1.schema.json",
+        "ticket-template-v1.schema.json",
+        "issued-budget-ticket-v1.schema.json",
+        "signed-task-lease-v1.schema.json",
+        "candidate-proposal-v1.schema.json",
+        "trusted-fact-v1.schema.json",
+        "trusted-relation-v1.schema.json",
+        "checkpoint-v1.schema.json",
+        "campaign-event-v1.schema.json",
+    ):
+        schema = _schema(filename)
+        assert schema["x-canonical-semantic-validator"] == (
+            "benchmarks.secure_memory.manifest.validate_wire_document"
+        )
+
+
+def test_schema_semantic_entry_point_rejects_cross_field_and_digest_bypasses() -> None:
+    from benchmarks.secure_memory import manifest as manifest_module
+
+    validator = getattr(manifest_module, "validate_wire_document")
+    bad_core = manifest_core_data()
+    bad_core["arms"] = ["A", "B", "C", "D", "F"]
+    raw = canonical_bytes(
+        {
+            "core": bad_core,
+            "manifest_sha256": _domain_digest("run-manifest", bad_core),
+        }
+    )
+    with pytest.raises(ValueError):
+        validator("run-manifest-v2.schema.json", raw)
+
+    valid_core = manifest_core_data()
+    with pytest.raises(ValueError):
+        validator(
+            "run-manifest-v2.schema.json",
+            canonical_bytes(
+                {"core": valid_core, "manifest_sha256": SHA["contract"]}
+            ),
+        )
+
+    with pytest.raises(ValueError):
+        validator(
+            "candidate-proposal-v1.schema.json",
+            canonical_bytes(candidate_proposal_data("Zh==")),
+        )
+
+    checkpoint = {
+        "schema_version": "secure-memory-checkpoint/v1",
+        "campaign_id": "campaign-test",
+        "configuration_id": "A",
+        "problem_id": "problem-1",
+        "turn": 1,
+        "generation": 1,
+        "source_seed_sha256": SHA["contract"],
+        "workspace_overlay_path": "../workspace-overlay.qcow2",
+        "workspace_overlay_sha256": SHA["checkpoint"],
+        "tree_sha256": SHA["schedule"],
+        "patch_sha256": SHA["profiles"],
+        "requirement_ledger_sha256": SHA["requirement"],
+        "memory_watermark": 0,
+        "agentteams_project_id": "project-1",
+        "workflow_root_sha256": SHA["agentteams-role-dag"],
+        "room_root_sha256": SHA["agentteams-resources"],
+        "budget_state_sha256": SHA["templates"],
+        "channel_epochs_sha256": SHA["channel-keys"],
+        "previous_checkpoint_sha256": None,
+        "issue_sequence": 1,
+    }
+    with pytest.raises(ValueError):
+        validator("checkpoint-v1.schema.json", canonical_bytes(checkpoint))
+
+    qualification = lease_data("QUALIFICATION")
+    qualification.update(
+        problem_id="__qualification__",
+        turn=1,
+        generation=8,
+        requirement_ledger_sha256=SHA["qualification-matrix"],
+        workspace_checkpoint_sha256=NO_WORKSPACE_CHECKPOINT_SHA256,
+        memory_watermark=0,
+    )
+    signed = {
+        "core": qualification,
+        "core_sha256": _domain_digest("task-lease-core", qualification),
+        "signature_base64": "ZmFrZS1zaWduYXR1cmU=",
+    }
+    with pytest.raises(ValueError):
+        validator(
+            "signed-task-lease-v1.schema.json",
+            canonical_bytes(signed),
+            manifest=frozen_manifest(),
+            lease_context={},
+        )
+
+    qualification["allowed_tools"] = ("write", "read")
+    signed["core"] = qualification
+    signed["core_sha256"] = _domain_digest("task-lease-core", qualification)
+    with pytest.raises(ValueError):
+        validator(
+            "signed-task-lease-v1.schema.json",
+            canonical_bytes(signed),
+            manifest=frozen_manifest(),
+            lease_context={"qualification_case_index": 8},
+        )
+
+
+def candidate_proposal_data(statement: str) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-candidate/v1",
+        "proposal_id": "proposal-base64",
+        "task_id": "task-1",
+        "generation": 1,
+        "claimed_fact_id": "fact-1",
+        "statement_utf8_base64": statement,
+        "memory_type": "semantic",
+        "component": "bridge",
+        "outcome_claim": "KEEP",
+        "applicability_scope": {"project_id": "project-1", "component": "bridge"},
+        "source_refs": ({"kind": "test", "identifier": "case-1"},),
+        "support_digest_claims": (SHA["agentteams-resources"],),
+    }
+
+
+def trusted_fact_data(statement: str) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-trusted-fact/v1",
+        "fact_id": "fact-1",
+        "fact_kind": "test-result",
+        "statement_utf8_base64": statement,
+        "outcome": "KEEP",
+        "applicability_scope": {"project_id": "project-1", "component": "bridge"},
+        "source_refs": ({"kind": "test", "identifier": "case-1"},),
+        "support_digests": (SHA["agentteams-resources"],),
+    }
+
+
+@pytest.mark.parametrize(
+    ("model", "factory", "statement"),
+    [
+        (CandidateProposal, candidate_proposal_data, "Zh=="),
+        (CandidateProposal, candidate_proposal_data, "//8="),
+        (TrustedFactCore, trusted_fact_data, "not-base64"),
+        (TrustedFactCore, trusted_fact_data, "Zh=="),
+        (TrustedFactCore, trusted_fact_data, "//8="),
+    ],
+)
+def test_statement_bytes_require_exact_canonical_utf8_base64(
+    model: Any, factory: Any, statement: str
+) -> None:
+    assert_invalid_model(model, factory(statement))
+
+
+def test_canonical_utf8_base64_round_trips_exact_unicode_bytes() -> None:
+    statement = "5Y+v5L+h55qE6K+B5o2u"
+    proposal = CandidateProposal.model_validate(candidate_proposal_data(statement))
+    fact = TrustedFactCore.model_validate(trusted_fact_data(statement))
+    assert proposal.statement_utf8_base64 == statement
+    assert fact.statement_utf8_base64 == statement
+
+
+def model_response_data(tool_calls: Any) -> Dict[str, Any]:
+    return {
+        "schema_version": "secure-memory-model-response/v1",
+        "request_id": "request-1",
+        "response_id": "response-1",
+        "provider_model": "agnes-2.5-pro",
+        "output_text": "fake response",
+        "tool_calls": tool_calls,
+        "finish_reason": "stop",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cached_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_calls",
+    [
+        ({"name": "fake", "arguments": {"value": float("nan")}},),
+        ({"name": "fake", "arguments": {"value": float("inf")}},),
+        ({"name": "fake", "arguments": {1: "non-string-key"}},),
+        ({"name": "fake", "arguments": {"value": {"unsupported"}}},),
+        ({"name": "fake", "arguments": {"value": "\ud800"}},),
+    ],
+)
+def test_model_response_rejects_noncanonical_json_tool_calls(tool_calls: Any) -> None:
+    assert_invalid_model(ModelResponse, model_response_data(tool_calls))
+
+
+def test_offline_worker_wheel_contains_only_public_secure_contracts(tmp_path: Path) -> None:
+    result = subprocess.run(
+        ["uv", "build", "--offline", "--wheel", "--out-dir", str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    wheels = list(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        names = wheel.namelist()
+        metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        entry_points_name = next(
+            name for name in names if name.endswith(".dist-info/entry_points.txt")
+        )
+        metadata = wheel.read(metadata_name).decode("utf-8")
+        entry_points = wheel.read(entry_points_name).decode("utf-8")
+        extracted = tmp_path / "extracted"
+        wheel.extractall(extracted)
+
+    prohibited = []
+    for name in names:
+        parts = Path(name).parts
+        stem = Path(name).stem.lower()
+        if stem in {"evaluator", "sealed", "hidden"} or any(
+            part.lower() in {"evaluator", "sealed", "hidden"} for part in parts
+        ):
+            prohibited.append(name)
+    assert prohibited == []
+    assert "Requires-Python: >=3.9" in metadata
+    assert "rxp-bench = benchmarks.runner:main" in entry_points
+    assert "benchmarks/secure_memory/models.py" in names
+    assert "benchmarks/secure_memory/schemas/run-manifest-v2.schema.json" in names
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(extracted)
+    smoke = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from benchmarks.runner import main; main(['--help'])",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert smoke.returncode == 0, smoke.stderr
+    assert "versioned RXP benchmark corpus" in smoke.stdout

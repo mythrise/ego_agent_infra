@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -17,7 +19,7 @@ _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 def _json_value(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        return _json_value(value.model_dump(mode="json"))
+        return _json_value(value.model_dump(mode="python"))
     if isinstance(value, Enum):
         return _json_value(value.value)
     if value is None or isinstance(value, (str, bool, int)):
@@ -107,4 +109,19 @@ def validate_guest_artifact_path(value: str) -> str:
         raise ValueError("guest artifact path must not be absolute or traverse parents")
     if str(path) != value:
         raise ValueError("guest artifact path must already be canonical")
+    return value
+
+
+def validate_canonical_utf8_base64(value: str) -> str:
+    """Require exact RFC 4648 base64 spelling of valid UTF-8 bytes."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("canonical UTF-8 base64 must be a non-empty string")
+    try:
+        decoded = base64.b64decode(value, validate=True)
+        decoded.decode("utf-8", errors="strict")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise ValueError("value must be canonical base64 encoding valid UTF-8 bytes") from exc
+    if base64.b64encode(decoded).decode("ascii") != value:
+        raise ValueError("value is not the canonical base64 spelling")
     return value

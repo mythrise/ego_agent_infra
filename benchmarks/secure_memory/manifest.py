@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence, Type
+from typing import Any, Dict, Mapping, Optional, Sequence, Type
 
 from .canonical import canonical_bytes, canonical_sha256, parse_json_bytes, validate_sha256_digest
 from .models import (
@@ -20,6 +20,7 @@ from .models import (
     TicketTemplate,
     TrustedFactCore,
     TrustedRelationCore,
+    validate_task_lease_core,
 )
 
 
@@ -47,6 +48,10 @@ class SchemaContractError(ValueError):
     pass
 
 
+class SemanticValidationError(ValueError):
+    pass
+
+
 def freeze_manifest(core: RunManifestCore) -> RunManifest:
     """Freeze an already-complete manifest core without adding live identifiers."""
 
@@ -55,8 +60,94 @@ def freeze_manifest(core: RunManifestCore) -> RunManifest:
     return RunManifest(core=core, manifest_sha256=canonical_sha256("run-manifest", core))
 
 
-def _schema_bytes(model: Type[StrictModel]) -> bytes:
+def _request_class_conditions(class_field: str) -> Sequence[Dict[str, Any]]:
+    limits = {
+        "main": (10_000, 1_500),
+        "auxiliary": (6_000, 750),
+        "review": (8_000, 1_000),
+    }
+    return [
+        {
+            "if": {
+                "properties": {class_field: {"const": request_class}},
+                "required": [class_field],
+            },
+            "then": {
+                "properties": {
+                    "max_input_tokens": {"maximum": input_ceiling},
+                    "max_output_tokens": {"maximum": output_ceiling},
+                }
+            },
+        }
+        for request_class, (input_ceiling, output_ceiling) in limits.items()
+    ]
+
+
+def _mark_sorted_unique(properties: Mapping[str, Any], fields: Sequence[str]) -> None:
+    for field in fields:
+        properties[field]["uniqueItems"] = True
+        properties[field]["x-canonical-order"] = "ascending"
+
+
+def _augment_schema(filename: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+    schema["$comment"] = (
+        "Structural validation is necessary but not sufficient. Consumers MUST invoke the "
+        "named canonical semantic validator before trusting or hashing a document."
+    )
+    schema["x-canonical-semantic-validator"] = (
+        "benchmarks.secure_memory.manifest.validate_wire_document"
+    )
+    schema["x-semantic-validation-required"] = True
+
+    if filename == "run-manifest-v2.schema.json":
+        arms = schema["$defs"]["RunManifestCore"]["properties"]["arms"]
+        arms["const"] = ["A", "B", "C", "D", "E"]
+    elif filename == "signed-task-lease-v1.schema.json":
+        properties = schema["$defs"]["SignedTaskLeaseCore"]["properties"]
+        _mark_sorted_unique(
+            properties,
+            ("allowed_skills", "allowed_tools", "issued_ticket_ids"),
+        )
+        schema["x-semantic-context-required"] = ["manifest", "lease_context"]
+    elif filename == "checkpoint-v1.schema.json":
+        path_schema = schema["properties"]["workspace_overlay_path"]
+        path_schema["format"] = "canonical-relative-posix-path"
+        path_schema["pattern"] = (
+            r"^(?!/)(?![A-Za-z]:[\\/])(?!.*(?:^|/)\.{1,2}(?:/|$))"
+            r"(?!.*\\)(?!.*//)(?!.*\/$)[^\u0000]+$"
+        )
+    elif filename in {
+        "candidate-proposal-v1.schema.json",
+        "trusted-fact-v1.schema.json",
+    }:
+        statement = schema["properties"]["statement_utf8_base64"]
+        statement["contentEncoding"] = "base64"
+        statement["contentMediaType"] = "text/plain; charset=utf-8"
+        statement["pattern"] = (
+            r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        )
+        fields = (
+            ("source_refs", "support_digest_claims")
+            if filename == "candidate-proposal-v1.schema.json"
+            else ("source_refs", "support_digests")
+        )
+        _mark_sorted_unique(schema["properties"], fields)
+    elif filename == "trusted-relation-v1.schema.json":
+        _mark_sorted_unique(schema["properties"], ("source_refs", "support_digests"))
+
+    class_field = {
+        "model-request-v1.schema.json": "request_class",
+        "ticket-template-v1.schema.json": "request_class",
+        "issued-budget-ticket-v1.schema.json": "effective_request_class",
+    }.get(filename)
+    if class_field is not None:
+        schema["allOf"] = list(_request_class_conditions(class_field))
+    return schema
+
+
+def _schema_bytes(filename: str, model: Type[StrictModel]) -> bytes:
     schema = model.model_json_schema(mode="validation")
+    _augment_schema(filename, schema)
     return canonical_bytes(schema) + b"\n"
 
 
@@ -78,7 +169,7 @@ def export_schema_contract(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     digests: Dict[str, str] = {}
     for filename, model in sorted(SCHEMA_MODELS.items()):
-        payload = _schema_bytes(model)
+        payload = _schema_bytes(filename, model)
         (schema_root / filename).write_bytes(payload)
         digests[filename] = hashlib.sha256(payload).hexdigest()
     index_path.write_bytes(_digest_index_bytes(digests))
@@ -124,7 +215,7 @@ def verify_schema_contract(
         if not path.is_file() or filename not in indexed:
             continue
         payload = path.read_bytes()
-        expected_payload = _schema_bytes(model)
+        expected_payload = _schema_bytes(filename, model)
         if payload != expected_payload:
             problems.append(f"changed schema: {filename}")
         recorded_digest = indexed[filename]
@@ -143,6 +234,36 @@ def verify_schema_contract(
         problems.append("changed/non-canonical schema digest index")
     if problems:
         raise SchemaContractError("; ".join(problems))
+
+
+def validate_wire_document(
+    schema_filename: str,
+    raw: bytes,
+    *,
+    manifest: Optional[RunManifest] = None,
+    lease_context: Optional[Mapping[str, Any]] = None,
+) -> StrictModel:
+    """Parse and semantically validate bytes for one published wire schema."""
+
+    model = SCHEMA_MODELS.get(schema_filename)
+    if model is None:
+        raise SemanticValidationError(f"unknown public schema: {schema_filename}")
+    try:
+        value = parse_json_bytes(raw)
+        document = model.model_validate(value)
+        if isinstance(document, SignedTaskLease):
+            if manifest is None or lease_context is None:
+                raise SemanticValidationError(
+                    "signed task lease validation requires manifest and authoritative lease_context"
+                )
+            validate_task_lease_core(document.core, manifest, **dict(lease_context))
+        return document
+    except SemanticValidationError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise SemanticValidationError(
+            f"{schema_filename} failed canonical semantic validation: {exc}"
+        ) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
