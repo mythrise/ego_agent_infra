@@ -17,6 +17,7 @@ from apps.agentteams_bridge.focused_service import (
 )
 from apps.agentteams_bridge.models import (
     BridgeRun,
+    EnvelopeKind,
     ResearchTaskSpec,
     RunState,
     WorkflowResponse,
@@ -210,6 +211,14 @@ class _Provider:
         )
 
 
+def _task_request_envelope(
+    bridge: FocusedAgentTeamsBridge,
+    run: BridgeRun,
+):
+    body = bridge._task_request_body(run, _workflow())
+    return bridge._envelope(run, EnvelopeKind.TASK_REQUEST, body)
+
+
 def test_focus_source_and_context_are_deterministic_and_worker_readable() -> None:
     mandatory = _fact(
         SHA_A,
@@ -309,12 +318,17 @@ def test_focused_bridge_fetches_once_and_binds_per_task_contexts_into_task_reque
         focus_memory_source_max_items=32,
         focus_memory_scan_limit=128,
     )
+    run = _run()
 
-    body = bridge._task_request_body(_run(), _workflow())
+    first = _task_request_envelope(bridge, run)
+    second = _task_request_envelope(bridge, run)
 
     assert len(provider.calls) == 1
-    bundle = body["focus_memory"]
+    assert first.body_sha256 == canonical_sha256(first.body)
+    bundle = first.body["focus_memory"]
+    assert bundle == second.body["focus_memory"]
     assert bundle["status"] == "READY"
+    assert bundle["envelope_kind"] == EnvelopeKind.TASK_REQUEST.value
     assert tuple(bundle["contexts"]) == ("project-a-context", "project-a-plan")
     assert bundle["contexts"]["project-a-context"]["stage"] == "CONTEXT"
     assert bundle["contexts"]["project-a-plan"]["worker"] == "ego-architect"
@@ -323,6 +337,7 @@ def test_focused_bridge_fetches_once_and_binds_per_task_contexts_into_task_reque
     assert bundle["bundle_sha256"] == canonical_sha256(core)
     assert store.receipts[0]["source"] == "egoagentos"
     assert store.receipts[0]["kind"] == "trusted-memory-focus-source"
+    assert len(run.checkpoint["focus_memory_bundles"]) == 1
 
 
 def test_focus_memory_modes_are_explicit_and_required_mode_fails_closed() -> None:
@@ -335,9 +350,9 @@ def test_focus_memory_modes_are_explicit_and_required_mode_fails_closed() -> Non
         focus_memory_provider=disabled_provider,
         focus_memory_mode=FocusMemoryMode.DISABLED,
     )
-    disabled_body = disabled._task_request_body(_run(), _workflow())
+    disabled_envelope = _task_request_envelope(disabled, _run())
 
-    assert disabled_body["focus_memory"]["status"] == "DISABLED"
+    assert disabled_envelope.body["focus_memory"]["status"] == "DISABLED"
     assert disabled_provider.calls == []
 
     failure = BridgeError(
@@ -357,7 +372,7 @@ def test_focus_memory_modes_are_explicit_and_required_mode_fails_closed() -> Non
     )
 
     with pytest.raises(BridgeError) as caught:
-        required._task_request_body(_run(), _workflow())
+        _task_request_envelope(required, _run())
     assert caught.value.code == "focus_memory_required_unavailable"
 
 
@@ -401,7 +416,7 @@ def test_required_focus_memory_rejects_truncated_source_before_dispatch() -> Non
     )
 
     with pytest.raises(BridgeError) as caught:
-        required._task_request_body(_run(), _workflow())
+        _task_request_envelope(required, _run())
 
     assert caught.value.code == "focus_memory_required_unavailable"
     assert caught.value.details["cause_code"] == "trusted_memory_focus_source_truncated"
