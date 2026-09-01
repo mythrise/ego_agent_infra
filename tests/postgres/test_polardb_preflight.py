@@ -14,6 +14,12 @@ from apps.api.postgres_store import PostgresStore
 
 
 ROOT = Path(__file__).resolve().parents[2]
+EXPECTED_MIGRATIONS = [
+    "001_control_plane.sql",
+    "002_ledger_boundaries.sql",
+    "003_trusted_memory_core.sql",
+    "004_decision_closure_bytes.sql",
+]
 
 
 def _database_name(postgres_url: str) -> str:
@@ -138,9 +144,6 @@ def test_real_postgres_fresh_schema_replay_requires_and_preserves_all_gates(
     assert report["summary"]["status"] == "PASS"
     assert report["safety_gate"]["database_name"] == database_name
     assert report["result"]["security_roles_reapply_required"] is True
-    assert [row["version"] for row in report["result"]["migrations"]] == [
-        "001_control_plane.sql",
-        "002_ledger_boundaries.sql",
-    ]
+    assert [row["version"] for row in report["result"]["migrations"]] == EXPECTED_MIGRATIONS
     assert "audit_events" in report["result"]["tables"]
     assert report["truth_boundary"]["pitr_restore"] == "NOT_RUN"

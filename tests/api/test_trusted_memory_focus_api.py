@@ -57,6 +57,8 @@ def _source_fact(
 ) -> TrustedFocusFact:
     return TrustedFocusFact(
         fact_sha256=digest,
+        tenant_id="tenant-a",
+        project_id="project-a",
         lineage_id="lineage-%s" % digest[:8],
         revision_id="revision-%s" % digest[:8],
         revision=1,

@@ -25,6 +25,14 @@ from .contracts import (
     WorkLevel,
     WorkNode,
 )
+from .focus_memory import (
+    FocusMemoryBudgetExceeded,
+    FocusMemorySourceContext,
+    FocusedMemoryContext,
+    FocusedMemoryItem,
+    build_focused_memory_context,
+    deterministic_focus_memory_token_bound,
+)
 from .guardian import EgoGuardian, build_guardian_decision
 from .safety import (
     ApprovalReceipt,
@@ -54,8 +62,13 @@ __all__ = [
     "AttentionSourceContext",
     "CampaignBinding",
     "CanonicalEffect",
+    "ControlLedgerWorkspaceEffectVerifier",
     "EnforcementMode",
     "EgoGuardian",
+    "FocusMemoryBudgetExceeded",
+    "FocusMemorySourceContext",
+    "FocusedMemoryContext",
+    "FocusedMemoryItem",
     "GuardianDecision",
     "JsonValue",
     "RiskAssessment",
@@ -76,11 +89,12 @@ __all__ = [
     "WORKSPACE_MAPPING_VERSION",
     "build_approval_receipt",
     "build_attention_packet",
+    "build_focused_memory_context",
     "build_guardian_decision",
     "build_workspace_effect",
-    "ControlLedgerWorkspaceEffectVerifier",
     "campaign_binding_sha256",
     "deterministic_conservative_token_bound",
+    "deterministic_focus_memory_token_bound",
     "evaluate_effect_safety",
     "project_user_status",
     "validate_approval_receipt",

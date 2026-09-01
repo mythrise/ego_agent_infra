@@ -11,6 +11,11 @@ from fastapi.responses import JSONResponse
 
 from .clients import AgentTeamsClient, EgoClient, MatrixClient
 from .errors import BridgeError
+from .focused_service import (
+    EgoTrustedMemoryProvider,
+    FocusMemoryMode,
+    FocusedAgentTeamsBridge,
+)
 from .models import GrantRequest, StartRunRequest
 from .operator_auth import BridgeOperatorAuthenticator
 from .service import AgentTeamsBridge
@@ -27,7 +32,17 @@ def _require_bridge_operator(
 
 def build_service(settings: Optional[BridgeSettings] = None) -> AgentTeamsBridge:
     resolved = settings or BridgeSettings.from_env()
-    return AgentTeamsBridge(
+    focus_mode = FocusMemoryMode(resolved.focus_memory_mode)
+    focus_provider = (
+        EgoTrustedMemoryProvider(
+            resolved.ego_base_url,
+            service_token=resolved.focus_memory_service_token,
+            timeout=resolved.request_timeout_seconds,
+        )
+        if focus_mode is not FocusMemoryMode.DISABLED
+        else None
+    )
+    return FocusedAgentTeamsBridge(
         build_bridge_store(
             database_url=resolved.database_url,
             migration_database_url=resolved.migration_database_url,
@@ -48,6 +63,13 @@ def build_service(settings: Optional[BridgeSettings] = None) -> AgentTeamsBridge
             operator_key=resolved.ego_operator_key,
             timeout=resolved.request_timeout_seconds,
         ),
+        focus_memory_provider=focus_provider,
+        focus_memory_mode=focus_mode,
+        focus_memory_tenant_id=resolved.focus_memory_tenant_id,
+        focus_memory_token_budget=resolved.focus_memory_token_budget,
+        focus_memory_max_items=resolved.focus_memory_max_items,
+        focus_memory_source_max_items=resolved.focus_memory_source_max_items,
+        focus_memory_scan_limit=resolved.focus_memory_scan_limit,
     )
 
 
@@ -59,10 +81,11 @@ def create_app(
 ) -> FastAPI:
     application = FastAPI(
         title="EgoAgentOS AgentTeams Bridge",
-        version="0.3.0",
+        version="0.4.0",
         description=(
             "Durable bridge to the official AgentTeams Controller, TeamHarness workflow, "
-            "and Matrix delivery plane. Dry-run responses are never reported as live."
+            "Matrix delivery plane, and digest-bound trusted focus memory. Dry-run "
+            "responses are never reported as live."
         ),
     )
     application.state.bridge = service or build_service()
@@ -73,7 +96,9 @@ def create_app(
 
     @application.middleware("http")
     async def request_id(request: Request, call_next: Any) -> Any:
-        request.state.request_id = request.headers.get("X-Request-ID") or "req_%s" % uuid.uuid4().hex
+        request.state.request_id = (
+            request.headers.get("X-Request-ID") or "req_%s" % uuid.uuid4().hex
+        )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         return response

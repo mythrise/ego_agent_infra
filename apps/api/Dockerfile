@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY requirements-api.lock ./
 COPY apps/api ./apps/api
+COPY benchmarks ./benchmarks
 COPY contracts ./contracts
 COPY protocols ./protocols
 COPY skill_runtime ./skill_runtime
