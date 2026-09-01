@@ -2,10 +2,11 @@
 
 from .capsule import CapsuleItem, EvidenceCapsule, build_evidence_capsule
 from .focus_contracts import (
-    FocusEvidenceRef,
+    FocusEvidenceCommitment,
     FocusMemoryQuery,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
+    build_focus_evidence_commitment,
     build_trusted_memory_focus_source,
 )
 from .models import (
@@ -44,7 +45,7 @@ __all__ = [
     "EvidenceCapsule",
     "FactProvenance",
     "FactScope",
-    "FocusEvidenceRef",
+    "FocusEvidenceCommitment",
     "FocusMemoryQuery",
     "LegacyMemoryView",
     "LifecycleTransition",
@@ -65,6 +66,7 @@ __all__ = [
     "TrustedFocusFact",
     "TrustedMemoryFocusSource",
     "build_evidence_capsule",
+    "build_focus_evidence_commitment",
     "build_trusted_memory_focus_source",
     "retrieve_exact",
 ]
