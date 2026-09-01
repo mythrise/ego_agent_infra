@@ -43,9 +43,11 @@ apps/agentteams_bridge/__init__.py
 apps/agentteams_bridge/cli.py
 apps/agentteams_bridge/clients.py
 apps/agentteams_bridge/errors.py
+apps/agentteams_bridge/focused_service.py
 apps/agentteams_bridge/extensions/__init__.py
 apps/agentteams_bridge/extensions/contracts.py
 apps/agentteams_bridge/extensions/attention.py
+apps/agentteams_bridge/extensions/focus_memory.py
 apps/agentteams_bridge/extensions/guardian.py
 apps/agentteams_bridge/extensions/safety.py
 apps/agentteams_bridge/extensions/schema_contract.py
@@ -86,6 +88,8 @@ apps/api/migrations/postgres/003_trusted_memory_core.sql
 apps/api/migrations/postgres/004_decision_closure_bytes.sql
 apps/api/trusted_memory/__init__.py
 apps/api/trusted_memory/capsule.py
+apps/api/trusted_memory/focus_contracts.py
+apps/api/trusted_memory/focus_service.py
 apps/api/trusted_memory/lifecycle.py
 apps/api/trusted_memory/models.py
 apps/api/trusted_memory/retrieval.py
