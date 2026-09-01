@@ -16,10 +16,10 @@ from apps.agentteams_bridge.models import (
     canonical_sha256,
 )
 from apps.api.trusted_memory.focus_contracts import (
-    FocusEvidenceRef,
     FocusMemoryQuery,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
+    build_focus_evidence_commitment,
     build_trusted_memory_focus_source,
 )
 from apps.api.trusted_memory.models import DecisionOutcome, MemoryOrigin
@@ -92,8 +92,11 @@ def _source() -> TrustedMemoryFocusSource:
         version="v1",
         outcome=DecisionOutcome.KEEP,
         origin=MemoryOrigin.LOCAL_TRUSTED,
-        evidence=(FocusEvidenceRef(evidence_id="evidence-a", evidence_digest=SHA_D),),
-        closure_digest=SHA_C,
+        evidence_commitment=build_focus_evidence_commitment(
+            evidence_ids=("evidence-a",),
+            evidence_digests=(SHA_D,),
+            decision_closure_digest=SHA_C,
+        ),
         provenance_sha256=SHA_B,
         projection_event_hash=SHA_A,
     )
@@ -199,6 +202,11 @@ def test_approval_granted_binds_only_post_approval_contexts_and_reuses_frozen_bu
             }
         ).stage
         in {"EXECUTE", "OBSERVE", "EVALUATE", "VERIFY"}
+        for value in contexts.values()
+    )
+    assert all(
+        value["items"][0]["evidence_commitment"]["association"]
+        == "UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"
         for value in contexts.values()
     )
     assert len(run.checkpoint["focus_memory_bundles"]) == 1
