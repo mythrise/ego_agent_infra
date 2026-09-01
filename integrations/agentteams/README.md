@@ -20,6 +20,14 @@ AgentTeams run. A live run needs a non-synthetic EgoAgentOS task, an installed
 AgentTeams deployment, a real Matrix access token, and actual model/MCP
 credentials.
 
+### Model-plane acceptance without the official Controller
+
+`experiments/egolite_agentteam/` can connect the four planning/review roles to a
+real OpenAI-compatible model gateway and run the local approval-gated EgoLite
+replay. This proves live model HTTP calls and model-output contract handling only.
+It deliberately records official AgentTeams Controller, Matrix, and physical GPU
+as `NOT_RUN`; those labels cannot be promoted by a successful model response.
+
 ## Official contract pin
 
 Implementation was checked against only the official

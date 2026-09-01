@@ -65,14 +65,14 @@ test-agentteams:
 	$(UV) run --python 3.9 --extra dev pytest tests/agentteams
 
 check-agentteams:
-	$(UV) run --python 3.9 --extra dev ruff check apps/agentteams_bridge integrations/agentteams/benchmark_adapter.py tests/agentteams
-	$(UV) run --python 3.9 --extra dev mypy apps/agentteams_bridge integrations/agentteams/benchmark_adapter.py
+	$(UV) run --python 3.9 --extra dev ruff check apps/agentteams_bridge integrations/agentteams tests/agentteams
+	$(UV) run --python 3.9 --extra dev mypy apps/agentteams_bridge integrations/agentteams
 	$(PYTHON) integrations/agentteams/scripts/verify_official_contract.py --offline
 
 test-experiments:
 	$(UV) run --python 3.9 --extra dev pytest tests/experiments
 	$(UV) run --python 3.9 --extra dev ruff check experiments tests/experiments
-	$(UV) run --python 3.9 --extra dev mypy experiments/fashion_mnist_amp/contract.py experiments/fashion_mnist_amp/verify.py
+	$(UV) run --python 3.9 --extra dev mypy experiments/fashion_mnist_amp/contract.py experiments/fashion_mnist_amp/verify.py experiments/egolite_agentteam
 
 test-web:
 	npm --prefix apps/web test

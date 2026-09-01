@@ -28,6 +28,8 @@ ego-polardb-preflight = "apps.api.polardb_preflight:main"
 rxp-bench = "benchmarks.runner:main"
 rxp = "protocols.rxp.cli:main"
 ego-real-gpu-verify = "experiments.fashion_mnist_amp.verify:main"
+ego-egolite-agentteam-live = "experiments.egolite_agentteam.run:main"
+ego-egolite-agentteam-verify = "experiments.egolite_agentteam.verify:main"
 ego-semifinal-bundle = "semifinal_acceptance.cli:main"
 
 [tool.setuptools.packages.find]

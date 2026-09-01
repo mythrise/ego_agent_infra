@@ -135,7 +135,7 @@ INTAKE → CONTEXT → PLAN → PLAN_REVIEW → APPROVAL → EXECUTE → OBSERVE
 
 任务 stage 与 run status 分离；所有迁移只能经过 control plane。非法跳转、证据不足、过期/错 scope/重放 token 都会产生结构化错误并保留审计事实。
 
-设计详解：[architecture](docs/architecture.md) · [评委意见落实清单](docs/judge-feedback-implementation.md) · [PostgreSQL / recovery](docs/postgres-recovery-runbook.md) · [state machine](docs/state-machine.md) · [security](docs/security.md) · [observability](docs/observability.md) · [evaluation](docs/evaluation.md)
+项目的严格输入/输出见 [输入 / 输出合同](docs/input-output-contract.md)。设计详解：[architecture](docs/architecture.md) · [评委意见落实清单](docs/judge-feedback-implementation.md) · [PostgreSQL / recovery](docs/postgres-recovery-runbook.md) · [state machine](docs/state-machine.md) · [security](docs/security.md) · [observability](docs/observability.md) · [evaluation](docs/evaluation.md)
 
 ## 7 个 Agent Identity
 
