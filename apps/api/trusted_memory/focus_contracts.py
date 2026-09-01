@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional, Sequence, Tuple
 
 from pydantic import Field, field_validator, model_validator
 
-from benchmarks.secure_memory.canonical import canonical_bytes, canonical_sha256
+from benchmarks.secure_memory.canonical import canonical_sha256
 from benchmarks.secure_memory.models import Digest, StrictModel
 
 from .models import DecisionOutcome, MemoryOrigin
@@ -16,13 +16,78 @@ _TRUSTED_ORIGINS = {
     MemoryOrigin.ATTESTED_EXTERNAL,
     MemoryOrigin.LOCAL_TRUSTED,
 }
+_EVIDENCE_ASSOCIATION = "UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"
 
 
-class FocusEvidenceRef(StrictModel):
-    """One stable evidence ID/digest pair; parallel arrays are deliberately avoided."""
+class FocusEvidenceCommitment(StrictModel):
+    """Evidence sets bound by one closure without inventing index-wise pairings.
 
-    evidence_id: str = Field(min_length=1, max_length=200)
-    evidence_digest: Digest
+    Layer-1 provenance currently stores canonical sets of evidence IDs and evidence
+    digests. Their shared DecisionClosure commits to the original evidence bindings,
+    but the two public arrays do not preserve a positional relation. The Focus path
+    therefore exposes set membership only and directs exact-pair inspection to the
+    immutable closure.
+    """
+
+    schema_version: Literal["egoagentos-focus-evidence-commitment/v1"]
+    association: Literal["UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"]
+    decision_closure_digest: Digest
+    evidence_ids: Tuple[str, ...] = Field(min_length=1)
+    evidence_digests: Tuple[Digest, ...] = Field(min_length=1)
+    commitment_sha256: Digest
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def validate_evidence_ids(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        if any(not value or len(value) > 200 for value in values):
+            raise ValueError("focus evidence IDs must contain 1-200 characters")
+        if values != tuple(sorted(set(values))):
+            raise ValueError("focus evidence IDs must be sorted and unique")
+        return values
+
+    @field_validator("evidence_digests")
+    @classmethod
+    def validate_evidence_digests(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        if values != tuple(sorted(set(values))):
+            raise ValueError("focus evidence digests must be sorted and unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_commitment(self) -> "FocusEvidenceCommitment":
+        if len(self.evidence_ids) != len(self.evidence_digests):
+            raise ValueError("focus evidence ID and digest sets must have equal cardinality")
+        core = self.model_dump(mode="python", exclude={"commitment_sha256"})
+        expected = canonical_sha256("trusted-memory-focus-evidence-commitment", core)
+        if self.commitment_sha256 != expected:
+            raise ValueError("focus evidence commitment digest mismatch")
+        return self
+
+
+def build_focus_evidence_commitment(
+    *,
+    evidence_ids: Sequence[str],
+    evidence_digests: Sequence[str],
+    decision_closure_digest: str,
+) -> FocusEvidenceCommitment:
+    """Build a deterministic, non-pairing evidence commitment."""
+
+    ids = tuple(sorted(evidence_ids))
+    digests = tuple(sorted(evidence_digests))
+    values = {
+        "schema_version": "egoagentos-focus-evidence-commitment/v1",
+        "association": _EVIDENCE_ASSOCIATION,
+        "decision_closure_digest": decision_closure_digest,
+        "evidence_ids": ids,
+        "evidence_digests": digests,
+    }
+    return FocusEvidenceCommitment.model_validate(
+        {
+            **values,
+            "commitment_sha256": canonical_sha256(
+                "trusted-memory-focus-evidence-commitment", values
+            ),
+        }
+    )
 
 
 class FocusMemoryQuery(StrictModel):
@@ -63,20 +128,9 @@ class TrustedFocusFact(StrictModel):
     version: str = Field(min_length=1, max_length=120)
     outcome: DecisionOutcome
     origin: MemoryOrigin
-    evidence: Tuple[FocusEvidenceRef, ...] = Field(min_length=1)
-    closure_digest: Digest
+    evidence_commitment: FocusEvidenceCommitment
     provenance_sha256: Digest
     projection_event_hash: Digest
-
-    @field_validator("evidence")
-    @classmethod
-    def validate_evidence(
-        cls, values: Tuple[FocusEvidenceRef, ...]
-    ) -> Tuple[FocusEvidenceRef, ...]:
-        encoded = tuple(canonical_bytes(value) for value in values)
-        if encoded != tuple(sorted(encoded)) or len(encoded) != len(set(encoded)):
-            raise ValueError("focus evidence refs must be canonically sorted and unique")
-        return values
 
     @model_validator(mode="after")
     def validate_trusted_shape(self) -> "TrustedFocusFact":
@@ -192,9 +246,10 @@ def build_trusted_memory_focus_source(
 
 
 __all__ = [
-    "FocusEvidenceRef",
+    "FocusEvidenceCommitment",
     "FocusMemoryQuery",
     "TrustedFocusFact",
     "TrustedMemoryFocusSource",
+    "build_focus_evidence_commitment",
     "build_trusted_memory_focus_source",
 ]
