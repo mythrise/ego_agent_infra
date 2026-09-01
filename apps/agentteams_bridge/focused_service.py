@@ -195,13 +195,33 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             payload=fetch.receipt,
         )
 
+    @staticmethod
+    def _require_complete_source(source: TrustedMemoryFocusSource) -> None:
+        """Reject an upstream cap before it can hide an unknown mandatory fact."""
+
+        if not (source.truncated_by_scan_limit or source.truncated_by_max_items):
+            return
+        raise BridgeError(
+            "trusted_memory_focus_source_truncated",
+            "Trusted-memory focus source was truncated before mandatory coverage was proven",
+            status_code=502,
+            retryable=False,
+            details={
+                "matching_count": source.matching_count,
+                "returned_count": len(source.facts),
+                "scanned_count": source.scanned_count,
+                "truncated_by_scan_limit": source.truncated_by_scan_limit,
+                "truncated_by_max_items": source.truncated_by_max_items,
+            },
+        )
+
     def _ready_bundle(
         self,
         run: BridgeRun,
         source: TrustedMemoryFocusSource,
     ) -> Dict[str, Any]:
         if not source.facts:
-            core = {
+            core: Dict[str, Any] = {
                 "schema": _FOCUS_BUNDLE_SCHEMA,
                 "status": "EMPTY",
                 "mode": self.focus_memory_mode.value,
@@ -233,7 +253,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             )
             contexts[task.task_id] = compiled.model_dump(mode="json")
 
-        core = {
+        core: Dict[str, Any] = {
             "schema": _FOCUS_BUNDLE_SCHEMA,
             "status": "READY",
             "mode": self.focus_memory_mode.value,
@@ -259,6 +279,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
                 scan_limit=self.focus_memory_scan_limit,
             )
             self._archive_focus_receipt(run, fetch)
+            self._require_complete_source(fetch.source)
             return self._ready_bundle(run, fetch.source)
         except (BridgeError, FocusMemoryBudgetExceeded, TypeError, ValueError) as error:
             if self.focus_memory_mode is FocusMemoryMode.REQUIRED:
@@ -276,11 +297,13 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             }
             return self._status_bundle("UNAVAILABLE", failure=failure)
 
-    def _task_request_body(
+    def _task_request_body(  # type: ignore[override]
         self,
         run: BridgeRun,
         workflow: WorkflowResponse,
     ) -> Dict[str, Any]:
+        # The base implementation is a static pure helper. This bound specialization
+        # intentionally adds one instance-scoped projection before Matrix dispatch.
         body = super()._task_request_body(run, workflow)
         body["focus_memory"] = self._focus_bundle(run)
         return body

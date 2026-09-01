@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Literal, Mapping, Sequence, Tuple
+from typing import Any, Dict, Literal, Mapping, Tuple
 
 from pydantic import Field, field_validator, model_validator
 
@@ -191,7 +191,7 @@ def _normalized_kind(value: str) -> str:
 
 
 def _tokens(*values: str) -> frozenset[str]:
-    tokens = set()
+    tokens: set[str] = set()
     for value in values:
         tokens.update(token.casefold() for token in _TOKEN_RE.findall(value))
     return frozenset(tokens)

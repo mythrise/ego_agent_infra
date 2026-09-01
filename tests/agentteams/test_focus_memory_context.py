@@ -359,3 +359,50 @@ def test_focus_memory_modes_are_explicit_and_required_mode_fails_closed() -> Non
     with pytest.raises(BridgeError) as caught:
         required._task_request_body(_run(), _workflow())
     assert caught.value.code == "focus_memory_required_unavailable"
+
+
+def test_required_focus_memory_rejects_truncated_source_before_dispatch() -> None:
+    capped_query = FocusMemoryQuery(
+        tenant_id="tenant-a",
+        project_id="project-a",
+        outcomes=(DecisionOutcome.KEEP,),
+        origins=(MemoryOrigin.LOCAL_TRUSTED,),
+        max_items=1,
+        scan_limit=128,
+    )
+    source = build_trusted_memory_focus_source(
+        capped_query,
+        (
+            _fact(
+                SHA_A,
+                "Optional cache optimization selected first by digest.",
+            ),
+            _fact(
+                SHA_B,
+                "Mandatory evidence constraint hidden beyond the source cap.",
+                fact_kind="safety_constraint",
+            ),
+        ),
+        scanned_count=2,
+        truncated_by_scan_limit=False,
+    )
+    assert source.truncated_by_max_items is True
+    assert tuple(fact.fact_sha256 for fact in source.facts) == (SHA_A,)
+
+    store = _RecordingStore()
+    required = FocusedAgentTeamsBridge(
+        store,
+        object(),
+        object(),
+        object(),
+        focus_memory_provider=_Provider(source),
+        focus_memory_mode=FocusMemoryMode.REQUIRED,
+        focus_memory_tenant_id="tenant-a",
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        required._task_request_body(_run(), _workflow())
+
+    assert caught.value.code == "focus_memory_required_unavailable"
+    assert caught.value.details["cause_code"] == "trusted_memory_focus_source_truncated"
+    assert len(store.receipts) == 1
