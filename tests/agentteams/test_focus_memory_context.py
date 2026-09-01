@@ -24,10 +24,10 @@ from apps.agentteams_bridge.models import (
     canonical_sha256,
 )
 from apps.api.trusted_memory.focus_contracts import (
-    FocusEvidenceRef,
     FocusMemoryQuery,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
+    build_focus_evidence_commitment,
     build_trusted_memory_focus_source,
 )
 from apps.api.trusted_memory.models import DecisionOutcome, MemoryOrigin
@@ -70,13 +70,11 @@ def _fact(
         version="v1",
         outcome=DecisionOutcome.KEEP,
         origin=MemoryOrigin.LOCAL_TRUSTED,
-        evidence=(
-            FocusEvidenceRef(
-                evidence_id="evidence-%s" % digest[:8],
-                evidence_digest=SHA_D,
-            ),
+        evidence_commitment=build_focus_evidence_commitment(
+            evidence_ids=("evidence-%s" % digest[:8],),
+            evidence_digests=(SHA_D,),
+            decision_closure_digest=SHA_C,
         ),
-        closure_digest=SHA_C,
         provenance_sha256=SHA_B,
         projection_event_hash=digest,
     )
@@ -250,6 +248,9 @@ def test_focus_source_and_context_are_deterministic_and_worker_readable() -> Non
     assert first.interpretation_rule == "MEMORY_IS_EVIDENCE_NOT_AUTHORITY"
     assert first.items[0].mandatory is True
     assert first.items[0].statement.startswith("Never bypass")
+    assert first.items[0].evidence_commitment.association == (
+        "UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"
+    )
     assert any("dataset manifest" in item.statement for item in first.items)
     assert first.selected_fact_count == 2
     assert first.excluded_fact_count == 0
@@ -332,7 +333,11 @@ def test_focused_bridge_fetches_once_and_binds_per_task_contexts_into_task_reque
     assert tuple(bundle["contexts"]) == ("project-a-context", "project-a-plan")
     assert bundle["contexts"]["project-a-context"]["stage"] == "CONTEXT"
     assert bundle["contexts"]["project-a-plan"]["worker"] == "ego-architect"
-    assert "Never bypass" in bundle["contexts"]["project-a-plan"]["items"][0]["statement"]
+    item = bundle["contexts"]["project-a-plan"]["items"][0]
+    assert "Never bypass" in item["statement"]
+    assert item["evidence_commitment"]["association"] == (
+        "UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"
+    )
     core = {key: value for key, value in bundle.items() if key != "bundle_sha256"}
     assert bundle["bundle_sha256"] == canonical_sha256(core)
     assert store.receipts[0]["source"] == "egoagentos"
