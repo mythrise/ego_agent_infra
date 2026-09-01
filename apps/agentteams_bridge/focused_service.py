@@ -1,11 +1,12 @@
-"""AgentTeams bridge extension that binds trusted focus memory into TASK_REQUEST."""
+"""AgentTeams bridge extension that binds trusted focus memory into phase envelopes."""
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Protocol
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Tuple
 
 from apps.api.trusted_memory.focus_contracts import (
     FocusMemoryQuery,
@@ -20,8 +21,15 @@ from .extensions.focus_memory import (
     FocusMemorySourceContext,
     build_focused_memory_context,
 )
-from .models import BridgeRun, WorkflowResponse, canonical_sha256, utc_now
-from .service import AgentTeamsBridge
+from .models import (
+    BridgeRun,
+    CollaborationEnvelope,
+    EnvelopeKind,
+    ResearchTaskSpec,
+    canonical_sha256,
+    utc_now,
+)
+from .service import AgentTeamsBridge, POST_APPROVAL_STAGES
 from .transport import HTTPTransport
 
 
@@ -120,7 +128,7 @@ class EgoTrustedMemoryProvider(JSONClient):
 
 
 class FocusedAgentTeamsBridge(AgentTeamsBridge):
-    """Original AgentTeams orchestration with a deterministic focus-memory projection."""
+    """Original AgentTeams orchestration with deterministic phase focus memory."""
 
     def __init__(
         self,
@@ -168,8 +176,41 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
         ):
             raise ValueError("enabled focus-memory mode requires a provider")
 
+    @staticmethod
+    def _ordered_tasks(
+        tasks: Tuple[ResearchTaskSpec, ...],
+    ) -> Tuple[ResearchTaskSpec, ...]:
+        return tuple(sorted(tasks, key=lambda task: task.task_id))
+
+    def _focus_tasks(
+        self,
+        run: BridgeRun,
+        kind: EnvelopeKind,
+    ) -> Optional[Tuple[ResearchTaskSpec, ...]]:
+        if kind is EnvelopeKind.TASK_REQUEST:
+            tasks = tuple(self._effective_tasks(run))
+        elif kind is EnvelopeKind.APPROVAL_GRANTED:
+            tasks = tuple(self._effective_tasks(run, POST_APPROVAL_STAGES))
+        else:
+            return None
+        return self._ordered_tasks(tasks)
+
+    @classmethod
+    def _focus_cache_identity(
+        cls,
+        kind: EnvelopeKind,
+        tasks: Tuple[ResearchTaskSpec, ...],
+    ) -> Tuple[str, str]:
+        task_graph_sha256 = canonical_sha256(
+            [task.model_dump(mode="json") for task in cls._ordered_tasks(tasks)]
+        )
+        return "%s:%s" % (kind.value, task_graph_sha256), task_graph_sha256
+
     def _status_bundle(
         self,
+        run: BridgeRun,
+        kind: EnvelopeKind,
+        task_graph_sha256: str,
         status: str,
         *,
         failure: Optional[Dict[str, Any]] = None,
@@ -178,18 +219,134 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             "schema": _FOCUS_BUNDLE_SCHEMA,
             "status": status,
             "mode": self.focus_memory_mode.value,
+            "tenant_id": self.focus_memory_tenant_id,
+            "project_id": run.agentteams_project_id,
+            "envelope_kind": kind.value,
+            "task_graph_sha256": task_graph_sha256,
             "contexts": {},
         }
         if failure is not None:
             core["failure"] = failure
         return {**core, "bundle_sha256": canonical_sha256(core)}
 
-    def _archive_focus_receipt(self, run: BridgeRun, fetch: FocusMemoryFetch) -> None:
+    @staticmethod
+    def _validate_bundle_digest(bundle: Mapping[str, Any]) -> Dict[str, Any]:
+        digest = bundle.get("bundle_sha256")
+        if not isinstance(digest, str):
+            raise BridgeError(
+                "focus_memory_cache_invalid",
+                "Cached focus-memory bundle has no canonical digest",
+            )
+        core = {key: value for key, value in bundle.items() if key != "bundle_sha256"}
+        if canonical_sha256(core) != digest:
+            raise BridgeError(
+                "focus_memory_cache_invalid",
+                "Cached focus-memory bundle failed digest verification",
+            )
+        return copy.deepcopy(dict(bundle))
+
+    def _cached_focus_bundle(
+        self,
+        run: BridgeRun,
+        *,
+        cache_key: str,
+        kind: EnvelopeKind,
+        task_graph_sha256: str,
+    ) -> Optional[Dict[str, Any]]:
+        cached = run.checkpoint.get("focus_memory_bundles")
+        if cached is None:
+            return None
+        if not isinstance(cached, dict):
+            raise BridgeError(
+                "focus_memory_cache_invalid",
+                "Focus-memory checkpoint cache is not a JSON object",
+            )
+        candidate = cached.get(cache_key)
+        if candidate is None:
+            return None
+        if not isinstance(candidate, dict):
+            raise BridgeError(
+                "focus_memory_cache_invalid",
+                "Cached focus-memory bundle is not a JSON object",
+            )
+        bundle = self._validate_bundle_digest(candidate)
+        expected = {
+            "mode": self.focus_memory_mode.value,
+            "tenant_id": self.focus_memory_tenant_id,
+            "project_id": run.agentteams_project_id,
+            "envelope_kind": kind.value,
+            "task_graph_sha256": task_graph_sha256,
+        }
+        mismatched = tuple(
+            key for key, value in expected.items() if bundle.get(key) != value
+        )
+        if mismatched:
+            raise BridgeError(
+                "focus_memory_cache_scope_mismatch",
+                "Cached focus-memory bundle is bound to a different phase or scope",
+                details={"mismatched": list(mismatched)},
+            )
+        return bundle
+
+    def _remember_focus_bundle(
+        self,
+        run: BridgeRun,
+        *,
+        cache_key: str,
+        bundle: Dict[str, Any],
+        kind: EnvelopeKind,
+        task_graph_sha256: str,
+    ) -> Dict[str, Any]:
+        validated = self._validate_bundle_digest(bundle)
+        cached = run.checkpoint.get("focus_memory_bundles")
+        if cached is None:
+            cache: Dict[str, Any] = {}
+        elif isinstance(cached, dict):
+            cache = copy.deepcopy(cached)
+        else:
+            raise BridgeError(
+                "focus_memory_cache_invalid",
+                "Focus-memory checkpoint cache is not a JSON object",
+            )
+        existing = cache.get(cache_key)
+        if existing is not None:
+            previous = self._cached_focus_bundle(
+                run,
+                cache_key=cache_key,
+                kind=kind,
+                task_graph_sha256=task_graph_sha256,
+            )
+            if previous != validated:
+                raise BridgeError(
+                    "focus_memory_cache_conflict",
+                    "A phase retry produced a different focus-memory bundle",
+                )
+            assert previous is not None
+            return previous
+        cache[cache_key] = copy.deepcopy(validated)
+        run.checkpoint["focus_memory_bundles"] = cache
+        return copy.deepcopy(validated)
+
+    def _archive_focus_receipt(
+        self,
+        run: BridgeRun,
+        fetch: FocusMemoryFetch,
+        *,
+        cache_key: str,
+    ) -> None:
         if fetch.receipt is None:
             return
+        receipt_sha256 = canonical_sha256(fetch.receipt)
+        receipt_key_sha256 = canonical_sha256(
+            {
+                "cache_key": cache_key,
+                "source_sha256": fetch.source.source_sha256,
+                "receipt_sha256": receipt_sha256,
+            }
+        )
         self.store.archive_receipt(
             run.id,
-            receipt_key="focus-memory:%s" % fetch.source.source_sha256,
+            receipt_key="focus-memory:%s" % receipt_key_sha256,
             source="egoagentos",
             kind="trusted-memory-focus-source",
             payload=fetch.receipt,
@@ -219,12 +376,20 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
         self,
         run: BridgeRun,
         source: TrustedMemoryFocusSource,
+        tasks: Tuple[ResearchTaskSpec, ...],
+        *,
+        kind: EnvelopeKind,
+        task_graph_sha256: str,
     ) -> Dict[str, Any]:
         if not source.facts:
             empty_core: Dict[str, Any] = {
                 "schema": _FOCUS_BUNDLE_SCHEMA,
                 "status": "EMPTY",
                 "mode": self.focus_memory_mode.value,
+                "tenant_id": self.focus_memory_tenant_id,
+                "project_id": run.agentteams_project_id,
+                "envelope_kind": kind.value,
+                "task_graph_sha256": task_graph_sha256,
                 "source_sha256": source.source_sha256,
                 "memory_snapshot_root": source.memory_snapshot_root,
                 "scanned_count": source.scanned_count,
@@ -234,7 +399,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             return {**empty_core, "bundle_sha256": canonical_sha256(empty_core)}
 
         contexts: Dict[str, Any] = {}
-        for task in run.task_graph:
+        for task in self._ordered_tasks(tasks):
             context = FocusMemorySourceContext(
                 tenant_id=self.focus_memory_tenant_id,
                 project_id=run.agentteams_project_id,
@@ -257,6 +422,10 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             "schema": _FOCUS_BUNDLE_SCHEMA,
             "status": "READY",
             "mode": self.focus_memory_mode.value,
+            "tenant_id": self.focus_memory_tenant_id,
+            "project_id": run.agentteams_project_id,
+            "envelope_kind": kind.value,
+            "task_graph_sha256": task_graph_sha256,
             "source_sha256": source.source_sha256,
             "memory_snapshot_root": source.memory_snapshot_root,
             "scanned_count": source.scanned_count,
@@ -267,9 +436,39 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
         }
         return {**ready_core, "bundle_sha256": canonical_sha256(ready_core)}
 
-    def _focus_bundle(self, run: BridgeRun) -> Dict[str, Any]:
+    def _focus_bundle(
+        self,
+        run: BridgeRun,
+        tasks: Tuple[ResearchTaskSpec, ...],
+        *,
+        kind: EnvelopeKind,
+        cache_key: str,
+        task_graph_sha256: str,
+    ) -> Dict[str, Any]:
+        cached = self._cached_focus_bundle(
+            run,
+            cache_key=cache_key,
+            kind=kind,
+            task_graph_sha256=task_graph_sha256,
+        )
+        if cached is not None:
+            return cached
+
         if self.focus_memory_mode is FocusMemoryMode.DISABLED:
-            return self._status_bundle("DISABLED")
+            bundle = self._status_bundle(
+                run,
+                kind,
+                task_graph_sha256,
+                "DISABLED",
+            )
+            return self._remember_focus_bundle(
+                run,
+                cache_key=cache_key,
+                bundle=bundle,
+                kind=kind,
+                task_graph_sha256=task_graph_sha256,
+            )
+
         assert self.focus_memory_provider is not None
         try:
             fetch = self.focus_memory_provider.fetch(
@@ -278,9 +477,15 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
                 max_items=self.focus_memory_source_max_items,
                 scan_limit=self.focus_memory_scan_limit,
             )
-            self._archive_focus_receipt(run, fetch)
+            self._archive_focus_receipt(run, fetch, cache_key=cache_key)
             self._require_complete_source(fetch.source)
-            return self._ready_bundle(run, fetch.source)
+            bundle = self._ready_bundle(
+                run,
+                fetch.source,
+                tasks,
+                kind=kind,
+                task_graph_sha256=task_graph_sha256,
+            )
         except (BridgeError, FocusMemoryBudgetExceeded, TypeError, ValueError) as error:
             if self.focus_memory_mode is FocusMemoryMode.REQUIRED:
                 cause_code = error.code if isinstance(error, BridgeError) else type(error).__name__
@@ -295,18 +500,63 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
                 "code": error.code if isinstance(error, BridgeError) else type(error).__name__,
                 "retryable": isinstance(error, BridgeError) and error.retryable,
             }
-            return self._status_bundle("UNAVAILABLE", failure=failure)
+            bundle = self._status_bundle(
+                run,
+                kind,
+                task_graph_sha256,
+                "UNAVAILABLE",
+                failure=failure,
+            )
 
-    def _task_request_body(  # type: ignore[override]
+        return self._remember_focus_bundle(
+            run,
+            cache_key=cache_key,
+            bundle=bundle,
+            kind=kind,
+            task_graph_sha256=task_graph_sha256,
+        )
+
+    def _envelope(
         self,
         run: BridgeRun,
-        workflow: WorkflowResponse,
-    ) -> Dict[str, Any]:
-        # The base implementation is a static pure helper. This bound specialization
-        # intentionally adds one instance-scoped projection before Matrix dispatch.
-        body = super()._task_request_body(run, workflow)
-        body["focus_memory"] = self._focus_bundle(run)
-        return body
+        kind: EnvelopeKind,
+        body: Dict[str, Any],
+        *,
+        attempt: int = 1,
+        causation_id: Optional[str] = None,
+    ) -> CollaborationEnvelope:
+        tasks = self._focus_tasks(run, kind)
+        if tasks is None:
+            return super()._envelope(
+                run,
+                kind,
+                body,
+                attempt=attempt,
+                causation_id=causation_id,
+            )
+        if "focus_memory" in body:
+            raise BridgeError(
+                "focus_memory_body_conflict",
+                "Callers cannot supply an unverified focus-memory envelope field",
+            )
+        cache_key, task_graph_sha256 = self._focus_cache_identity(kind, tasks)
+        projected_body = {
+            **body,
+            "focus_memory": self._focus_bundle(
+                run,
+                tasks,
+                kind=kind,
+                cache_key=cache_key,
+                task_graph_sha256=task_graph_sha256,
+            ),
+        }
+        return super()._envelope(
+            run,
+            kind,
+            projected_body,
+            attempt=attempt,
+            causation_id=causation_id,
+        )
 
 
 __all__ = [
