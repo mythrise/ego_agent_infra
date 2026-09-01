@@ -8,14 +8,14 @@ from typing import Any, Mapping, Sequence
 
 from fastapi import FastAPI, Header, Request
 
-from benchmarks.secure_memory.canonical import canonical_bytes, canonical_sha256
+from benchmarks.secure_memory.canonical import canonical_sha256
 
 from ..errors import ControlPlaneError
 from .focus_contracts import (
-    FocusEvidenceRef,
     FocusMemoryQuery,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
+    build_focus_evidence_commitment,
     build_trusted_memory_focus_source,
 )
 from .models import MemoryOrigin, MemoryState, TrustedFact
@@ -133,17 +133,10 @@ class TrustedMemoryFocusService:
             fact.core.statement_utf8_base64,
             validate=True,
         ).decode("utf-8")
-        evidence = tuple(
-            sorted(
-                (
-                    FocusEvidenceRef(evidence_id=evidence_id, evidence_digest=evidence_digest)
-                    for evidence_id, evidence_digest in zip(
-                        fact.provenance.evidence_ids,
-                        fact.provenance.evidence_digests,
-                    )
-                ),
-                key=canonical_bytes,
-            )
+        evidence_commitment = build_focus_evidence_commitment(
+            evidence_ids=fact.provenance.evidence_ids,
+            evidence_digests=fact.provenance.evidence_digests,
+            decision_closure_digest=fact.provenance.decision_closure_digest,
         )
         return TrustedFocusFact(
             fact_sha256=fact.trusted_fact_digest,
@@ -158,8 +151,7 @@ class TrustedMemoryFocusService:
             version=fact.scope.version,
             outcome=fact.outcome,
             origin=fact.origin,
-            evidence=evidence,
-            closure_digest=fact.provenance.decision_closure_digest,
+            evidence_commitment=evidence_commitment,
             provenance_sha256=canonical_sha256(
                 "trusted-memory-fact-provenance", fact.provenance
             ),
