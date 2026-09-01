@@ -221,7 +221,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
         source: TrustedMemoryFocusSource,
     ) -> Dict[str, Any]:
         if not source.facts:
-            core: Dict[str, Any] = {
+            empty_core: Dict[str, Any] = {
                 "schema": _FOCUS_BUNDLE_SCHEMA,
                 "status": "EMPTY",
                 "mode": self.focus_memory_mode.value,
@@ -231,7 +231,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
                 "matching_count": source.matching_count,
                 "contexts": {},
             }
-            return {**core, "bundle_sha256": canonical_sha256(core)}
+            return {**empty_core, "bundle_sha256": canonical_sha256(empty_core)}
 
         contexts: Dict[str, Any] = {}
         for task in run.task_graph:
@@ -253,7 +253,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             )
             contexts[task.task_id] = compiled.model_dump(mode="json")
 
-        core: Dict[str, Any] = {
+        ready_core: Dict[str, Any] = {
             "schema": _FOCUS_BUNDLE_SCHEMA,
             "status": "READY",
             "mode": self.focus_memory_mode.value,
@@ -265,7 +265,7 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
             "truncated_by_max_items": source.truncated_by_max_items,
             "contexts": contexts,
         }
-        return {**core, "bundle_sha256": canonical_sha256(core)}
+        return {**ready_core, "bundle_sha256": canonical_sha256(ready_core)}
 
     def _focus_bundle(self, run: BridgeRun) -> Dict[str, Any]:
         if self.focus_memory_mode is FocusMemoryMode.DISABLED:
