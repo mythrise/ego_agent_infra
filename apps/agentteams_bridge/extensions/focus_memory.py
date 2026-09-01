@@ -8,7 +8,7 @@ from typing import Any, Dict, Literal, Mapping, Tuple
 from pydantic import Field, field_validator, model_validator
 
 from apps.api.trusted_memory.focus_contracts import (
-    FocusEvidenceRef,
+    FocusEvidenceCommitment,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
 )
@@ -110,8 +110,7 @@ class FocusedMemoryItem(StrictModel):
     version: str = Field(min_length=1, max_length=120)
     outcome: str = Field(min_length=1, max_length=80)
     origin: str = Field(min_length=1, max_length=80)
-    evidence: Tuple[FocusEvidenceRef, ...] = Field(min_length=1)
-    closure_digest: Digest
+    evidence_commitment: FocusEvidenceCommitment
     provenance_sha256: Digest
     relevance_score_basis_points: int = Field(ge=0, le=10_000)
     mandatory: bool
@@ -258,8 +257,7 @@ def _item(fact: TrustedFocusFact, context: FocusMemorySourceContext) -> FocusedM
         version=fact.version,
         outcome=fact.outcome.value,
         origin=fact.origin.value,
-        evidence=fact.evidence,
-        closure_digest=fact.closure_digest,
+        evidence_commitment=fact.evidence_commitment,
         provenance_sha256=fact.provenance_sha256,
         relevance_score_basis_points=score,
         mandatory=mandatory,
