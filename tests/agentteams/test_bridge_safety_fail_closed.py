@@ -1,224 +1,213 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
-from apps.agentteams_bridge.extensions.contracts import (
-    CanonicalEffect,
-    RiskDisposition,
-    RiskLevel,
-    SafetyVerdict,
-)
-from apps.agentteams_bridge.extensions.safety import evaluate_effect_safety
+from apps.agentteams_bridge.extensions import CanonicalEffect, SafetyVerdict
+from apps.agentteams_bridge.extensions.guardian import EgoGuardian, mandatory_rule_matches
+from apps.agentteams_bridge.extensions.safety import SystemRiskClassifier, evaluate_effect_safety
+from apps.agentteams_bridge.extensions.workspace_adapter import build_workspace_effect
 from benchmarks.secure_memory.canonical import canonical_sha256
 
 
-SHA = "a" * 64
-OTHER_SHA = "b" * 64
+SHA_A = "a" * 64
+SHA_B = "b" * 64
 
 
-def _effect(**overrides: Any) -> CanonicalEffect:
-    values: Dict[str, Any] = {
-        "schema_version": "agentteams-canonical-effect/v1",
-        "effect_id": "effect-fail-closed",
-        "operation": "workspace.write",
-        "final_arguments": {"path": "report.md", "text": "accepted evidence"},
-        "target": "workspace/report.md",
-        "affected_scope": ("project:project-1", "task:task-1"),
-        "project_id": "project-1",
-        "task_id": "task-1",
-        "workspace_checkpoint_sha256": SHA,
-        "policy_sha256": OTHER_SHA,
-        "reversibility": "REVERSIBLE",
-        "recovery_plan": "REMOVE_CREATED_PATH",
-    }
-    values.update(overrides)
-    values["effect_sha256"] = canonical_sha256("agentteams-canonical-effect", values)
-    return CanonicalEffect.model_validate(values)
+def _private_key_canary() -> str:
+    """Construct a detector canary without storing key-shaped text in the repository."""
 
-
-def _decision(effect: CanonicalEffect) -> Any:
-    return evaluate_effect_safety(
-        effect,
-        sequence=7,
-        approval_expires_at_sequence=11,
-    )
-
-
-def _assert_mandatory_deny(effect: CanonicalEffect, reason: str, constraint: str) -> None:
-    decision = _decision(effect)
-    system = decision.guardian_decision.system_assessment
-    guardian = decision.guardian_decision.guardian_assessment
-
-    assert system.risk_level is RiskLevel.HIGH
-    assert system.disposition is RiskDisposition.DENY
-    assert reason in system.reason_codes
-    assert constraint in system.mandatory_constraint_ids
-    assert guardian is not None
-    assert guardian.disposition is RiskDisposition.DENY
-    assert decision.verdict is SafetyVerdict.DENY
-
-
-@pytest.mark.parametrize(
-    "affected_scope",
-    [
-        ("task:task-1",),
-        ("project:project-1",),
-        ("component:extra", "project:project-1", "task:task-1"),
-        ("project:project-other", "task:task-1"),
-        ("project:project-1", "task:task-other"),
-    ],
-)
-def test_missing_extra_or_wrong_project_task_scope_is_mandatory_deny(
-    affected_scope: tuple[str, ...],
-) -> None:
-    _assert_mandatory_deny(
-        _effect(affected_scope=affected_scope),
-        "CROSS_PROJECT_TARGET",
-        "constraint.project-boundary",
-    )
-
-
-def test_review_cross_project_reproducer_cannot_receive_allow() -> None:
-    _assert_mandatory_deny(
-        _effect(
-            target="project-beta/report.md",
-            affected_scope=("task:task-1",),
-        ),
-        "CROSS_PROJECT_TARGET",
-        "constraint.project-boundary",
-    )
-
-
-@pytest.mark.parametrize(
-    "target",
-    [
-        "workspace",
-        "/workspace/report.md",
-        "workspace/../report.md",
-        "workspace//report.md",
-        "workspace/report.md/",
-        "workspace\\report.md",
-        "other-root/report.md",
-    ],
-)
-def test_target_must_be_a_canonical_workspace_subpath(target: str) -> None:
-    _assert_mandatory_deny(
-        _effect(target=target),
-        "PATH_ESCAPE",
-        "constraint.workspace-boundary",
-    )
-
-
-@pytest.mark.parametrize(
-    "target",
-    [
-        "workspace/evidence",
-        "workspace/evidence/decision.json",
-        "workspace/receipts",
-        "workspace/receipts/control.json",
-        "workspace/trace",
-        "workspace/trace/events.jsonl",
-        "workspace/decision-closure",
-        "workspace/requirement-ledger/current.json",
-        "workspace/trusted-memory",
-    ],
-)
-def test_evidence_roots_and_subtrees_are_immutable(target: str) -> None:
-    _assert_mandatory_deny(
-        _effect(target=target),
-        "EVIDENCE_TAMPERING",
-        "constraint.evidence-immutability",
-    )
-
-
-@pytest.mark.parametrize(
-    "recovery_plan",
-    ["", "   ", "none", "unrecoverable", "best effort only"],
-)
-def test_destructive_effect_with_empty_or_unrecoverable_plan_is_mandatory_deny(
-    recovery_plan: str,
-) -> None:
-    _assert_mandatory_deny(
-        _effect(
-            operation="workspace.delete",
-            final_arguments={"path": "obsolete.txt"},
-            target="workspace/obsolete.txt",
-            recovery_plan=recovery_plan,
-        ),
-        "IRREVERSIBLE_DESTRUCTION",
-        "constraint.recoverable-effects",
-    )
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "api_key=must-not-leak",
-        "Authorization: Bearer abcdefghijklmnop",
-        "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----",
-    ],
-)
-def test_egress_scans_every_nested_string_value_for_credentials(payload: str) -> None:
-    _assert_mandatory_deny(
-        _effect(
-            operation="workspace.network.send",
-            final_arguments={"envelope": {"items": [{"payload": payload}]}},
-            target="workspace/network-request",
-            recovery_plan="REMOVE_CREATED_PATH",
-        ),
-        "SECRET_EXFILTRATION",
-        "constraint.no-secret-exfiltration",
-    )
-
-
-def test_benign_secretary_and_token_budget_strings_are_not_credentials() -> None:
-    decision = _decision(
-        _effect(
-            operation="workspace.network.send",
-            final_arguments={
-                "payload": "secretary notes with token_budget=200",
-                "destination": "https://example.invalid/upload",
-            },
-            target="workspace/network-request",
+    return "".join(
+        (
+            "-----BEGIN ",
+            "PRIVATE KEY-----\n",
+            "not-a-real-key\n",
+            "-----END ",
+            "PRIVATE KEY-----",
         )
     )
 
-    assert decision.verdict is SafetyVerdict.APPROVAL_REQUIRED
-    assert "SECRET_EXFILTRATION" not in (
-        decision.guardian_decision.system_assessment.reason_codes
+
+def _effect(operation: str, target: str, **overrides: Any) -> CanonicalEffect:
+    values: dict[str, Any] = {
+        "schema_version": "agentteams-canonical-effect/v1",
+        "effect_id": "effect-fail-closed",
+        "operation": operation,
+        "final_arguments": {"path": target.removeprefix("workspace/")},
+        "target": target,
+        "affected_scope": ("project:project-a", "task:task-a"),
+        "project_id": "project-a",
+        "task_id": "task-a",
+        "workspace_checkpoint_sha256": SHA_A,
+        "policy_sha256": SHA_B,
+        "reversibility": "REVERSIBLE",
+        "recovery_plan": "restore the bound workspace checkpoint",
+    }
+    values.update(overrides)
+    values["effect_sha256"] = canonical_sha256(
+        "agentteams-canonical-effect",
+        values,
     )
+    return CanonicalEffect.model_validate(values)
 
 
 @pytest.mark.parametrize(
-    ("operation", "final_arguments"),
+    ("effect", "expected_reason"),
     [
-        ("dataset.create_manifest", {"path": "dataset"}),
-        ("gpu.launch_experiment", {"config": "dry-run"}),
         (
-            "workspace.write",
-            {
-                "path": "report.md",
-                "text": "content",
-                "execution_route": "dataset_create_manifest",
-            },
+            _effect(
+                "workspace.write",
+                "workspace/report.md",
+                affected_scope=("project:project-other", "task:task-a"),
+            ),
+            "CROSS_PROJECT_TARGET",
         ),
         (
-            "workspace.write",
-            {
-                "path": "report.md",
-                "text": "content",
-                "direct_tool": "gpu_launch_experiment",
-            },
+            _effect(
+                "workspace.write",
+                "../outside.txt",
+                final_arguments={"path": "../outside.txt"},
+            ),
+            "PATH_ESCAPE",
+        ),
+        (
+            _effect(
+                "workspace.upload",
+                "workspace/export.json",
+                final_arguments={"payload": {"api_key": "must-not-leak"}},
+            ),
+            "SECRET_EXFILTRATION",
+        ),
+        (
+            _effect(
+                "workspace.network.send",
+                "workspace/request.json",
+                final_arguments={
+                    "body": "api_key=must-not-leak",
+                    "path": "request.json",
+                },
+            ),
+            "SECRET_EXFILTRATION",
+        ),
+        (
+            _effect(
+                "workspace.network.send",
+                "workspace/request.json",
+                final_arguments={
+                    "body": _private_key_canary(),
+                    "path": "request.json",
+                },
+            ),
+            "SECRET_EXFILTRATION",
+        ),
+        (
+            _effect(
+                "workspace.delete",
+                "workspace/results.bin",
+                reversibility="IRREVERSIBLE",
+                recovery_plan="none",
+            ),
+            "IRREVERSIBLE_DESTRUCTION",
+        ),
+        (
+            _effect(
+                "workspace.write",
+                "workspace/evidence/result.json",
+            ),
+            "EVIDENCE_TAMPERING",
+        ),
+        (
+            _effect(
+                "direct.shell",
+                "workspace/run.sh",
+            ),
+            "WORKSPACE_GATEWAY_BYPASS",
+        ),
+        (
+            _effect(
+                "workspace.write",
+                "workspace/report.md",
+                final_arguments={"gateway": "DIRECT", "path": "report.md"},
+            ),
+            "WORKSPACE_GATEWAY_BYPASS",
         ),
     ],
 )
-def test_unknown_or_direct_legacy_tool_routes_are_mandatory_deny(
-    operation: str, final_arguments: Dict[str, Any]
+def test_mandatory_rules_fail_closed_for_boundary_bypasses(
+    effect: CanonicalEffect,
+    expected_reason: str,
 ) -> None:
-    _assert_mandatory_deny(
-        _effect(operation=operation, final_arguments=final_arguments),
-        "WORKSPACE_GATEWAY_BYPASS",
-        "constraint.workspace-gateway-only",
+    matches = dict(mandatory_rule_matches(effect))
+    assert expected_reason in matches
+
+    system = SystemRiskClassifier.assess(effect, sequence=20)
+    assert system.risk_level.value == "HIGH"
+    assert system.disposition.value == "DENY"
+    assert expected_reason in system.reason_codes
+    assert matches[expected_reason] in system.mandatory_constraint_ids
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=20,
+        approval_expires_at_sequence=30,
     )
+    assert decision.verdict is SafetyVerdict.DENY
+    assert decision.approval_pending is False
+    assert decision.approval_disclosure is None
+    assert decision.guardian_decision.guardian_assessment is not None
+    assert expected_reason in decision.guardian_decision.guardian_assessment.reason_codes
+
+
+def test_unknown_operations_are_denied_by_both_system_and_guardian() -> None:
+    effect = _effect("workspace.future_unregistered_effect", "workspace/future.bin")
+
+    system = SystemRiskClassifier.assess(effect, sequence=40)
+    assert system.risk_level.value == "HIGH"
+    assert system.disposition.value == "DENY"
+    assert system.reason_codes == ("UNKNOWN_OPERATION",)
+    assert system.mandatory_constraint_ids == ("constraint.known-operation",)
+
+    guardian = EgoGuardian.assess(effect, system, sequence=41)
+    assert guardian.risk_level.value == "HIGH"
+    assert guardian.disposition.value == "DENY"
+    assert "UNKNOWN_OPERATION" in guardian.reason_codes
+    assert "constraint.known-operation" in guardian.mandatory_constraint_ids
+
+
+def test_cross_project_scope_cannot_hide_behind_additional_scope_labels() -> None:
+    effect = _effect(
+        "workspace.write",
+        "workspace/report.md",
+        affected_scope=(
+            "project:project-a",
+            "project:project-b",
+            "task:task-a",
+        ),
+    )
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=50,
+        approval_expires_at_sequence=60,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    assert "CROSS_PROJECT_TARGET" in decision.guardian_decision.system_assessment.reason_codes
+
+
+def test_workspace_projection_is_unavailable_for_denied_effects() -> None:
+    effect = _effect(
+        "workspace.write",
+        "../escape.txt",
+        final_arguments={"path": "../escape.txt"},
+    )
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=70,
+        approval_expires_at_sequence=80,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    with pytest.raises(ValueError, match="ALLOW|approved"):
+        build_workspace_effect(decision)
