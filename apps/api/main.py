@@ -140,7 +140,11 @@ def create_app(
         operator_id=operator_id,
         allow_unauthenticated_demo=allow_unauthenticated_demo,
     )
-    resolved_tenant_id = tenant_id or os.getenv("EGO_TENANT_ID", "local")
+    resolved_tenant_id: str = (
+        tenant_id or os.getenv("EGO_TENANT_ID") or "local"
+    ).strip()
+    if not resolved_tenant_id:
+        raise ValueError("EGO_TENANT_ID must contain at least one non-whitespace character")
     token = (
         trusted_memory_service_token
         if trusted_memory_service_token is not None
