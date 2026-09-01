@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 from apps.api.main import create_app
 from apps.api.store import SQLiteStore
 from apps.api.trusted_memory.focus_contracts import (
-    FocusEvidenceRef,
     FocusMemoryQuery,
     TrustedFocusFact,
     TrustedMemoryFocusSource,
+    build_focus_evidence_commitment,
     build_trusted_memory_focus_source,
 )
 from apps.api.trusted_memory.focus_service import TrustedMemoryFocusService
@@ -68,13 +68,11 @@ def _source_fact(
         version="v1",
         outcome=DecisionOutcome.KEEP,
         origin=MemoryOrigin.LOCAL_TRUSTED,
-        evidence=(
-            FocusEvidenceRef(
-                evidence_id="evidence-%s" % digest[:8],
-                evidence_digest=SHA_A,
-            ),
+        evidence_commitment=build_focus_evidence_commitment(
+            evidence_ids=("evidence-%s" % digest[:8],),
+            evidence_digests=(SHA_A,),
+            decision_closure_digest=SHA_C,
         ),
-        closure_digest=SHA_C,
         provenance_sha256=SHA_D,
         projection_event_hash=digest,
     )
@@ -234,6 +232,9 @@ def test_focus_service_scans_only_current_eligible_facts_in_exact_project(tmp_pa
     assert result.scanned_count == 1
     assert tuple(fact.lineage_id for fact in result.facts) == (wanted.lineage_id,)
     assert result.facts[0].statement == "verified statement wanted"
-    assert result.facts[0].evidence[0].evidence_id == "evidence-wanted"
+    commitment = result.facts[0].evidence_commitment
+    assert commitment.evidence_ids == ("evidence-wanted",)
+    assert commitment.evidence_digests == (SHA_A,)
+    assert commitment.association == "UNPAIRED_SETS_BOUND_BY_DECISION_CLOSURE"
     assert len(result.memory_snapshot_root) == 64
     assert len(result.source_sha256) == 64
