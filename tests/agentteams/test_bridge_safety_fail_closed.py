@@ -16,7 +16,7 @@ SHA_B = "b" * 64
 
 
 def _private_key_canary() -> str:
-    """Construct a detector canary without storing key-shaped text in the repository."""
+    """Construct a detector canary without storing key-shaped text in source."""
 
     return "".join(
         (
@@ -209,5 +209,98 @@ def test_workspace_projection_is_unavailable_for_denied_effects() -> None:
     )
 
     assert decision.verdict is SafetyVerdict.DENY
-    with pytest.raises(ValueError, match="ALLOW|approved"):
+    with pytest.raises(ValueError, match="DENY|ALLOW|approved"):
         build_workspace_effect(decision)
+
+
+def test_unknown_operation_cannot_become_an_approval_request() -> None:
+    effect = _effect("workspace.future_unregistered_effect", "workspace/future.bin")
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=90,
+        approval_expires_at_sequence=100,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    assert decision.approval_pending is False
+    assert decision.approval_disclosure is None
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "workspace//report.md",
+        "workspace/report.md/",
+        "workspace/./report.md",
+        "workspace/reports/../report.md",
+        "workspace\\report.md",
+        "workspace/report.md\x00suffix",
+        "C:/workspace/report.md",
+    ],
+)
+def test_noncanonical_workspace_targets_are_denied(target: str) -> None:
+    effect = _effect(
+        "workspace.write",
+        target,
+        final_arguments={"path": target},
+    )
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=110,
+        approval_expires_at_sequence=120,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    assert "PATH_ESCAPE" in decision.guardian_decision.system_assessment.reason_codes
+
+
+@pytest.mark.parametrize(
+    "recovery_plan",
+    [
+        "restore if needed",
+        "we can probably reconstruct the file",
+        "RESTORE_BACKUP:../backup.bin",
+        "RESTORE_BACKUP:/tmp/backup.bin",
+    ],
+)
+def test_destructive_effects_require_a_machine_checkable_recovery_plan(
+    recovery_plan: str,
+) -> None:
+    effect = _effect(
+        "workspace.delete",
+        "workspace/results.bin",
+        recovery_plan=recovery_plan,
+    )
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=130,
+        approval_expires_at_sequence=140,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    assert "IRREVERSIBLE_DESTRUCTION" in (
+        decision.guardian_decision.system_assessment.reason_codes
+    )
+
+
+def test_nested_absolute_path_argument_is_denied() -> None:
+    effect = _effect(
+        "workspace.write",
+        "workspace/report.md",
+        final_arguments={
+            "path": "report.md",
+            "options": {"working_directory": "/tmp/outside"},
+        },
+    )
+
+    decision = evaluate_effect_safety(
+        effect,
+        sequence=150,
+        approval_expires_at_sequence=160,
+    )
+
+    assert decision.verdict is SafetyVerdict.DENY
+    assert "PATH_ESCAPE" in decision.guardian_decision.system_assessment.reason_codes
