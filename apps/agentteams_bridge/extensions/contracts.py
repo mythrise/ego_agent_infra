@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from enum import Enum
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -332,9 +333,7 @@ class GuardianDecision(StrictModel):
                 raise ValueError("guardian assessment must use the GUARDIAN stage")
             if guardian.effect_sha256 != self.effect_sha256:
                 raise ValueError("guardian assessment effect does not match the guardian decision")
-            if not set(system.mandatory_constraint_ids).issubset(
-                guardian.mandatory_constraint_ids
-            ):
+            if not set(system.mandatory_constraint_ids).issubset(guardian.mandatory_constraint_ids):
                 raise ValueError("guardian assessment cannot omit mandatory constraints")
             if _RISK_RANK[guardian.risk_level] < _RISK_RANK[system.risk_level]:
                 raise ValueError("guardian assessment cannot downgrade risk")
@@ -426,7 +425,9 @@ class SafetyDecision(StrictModel):
         if disclosure.affected_scope != effect.affected_scope:
             raise ValueError("approval disclosure scope does not match the canonical effect")
         if disclosure.recovery_plan != effect.recovery_plan:
-            raise ValueError("approval disclosure recovery plan does not match the canonical effect")
+            raise ValueError(
+                "approval disclosure recovery plan does not match the canonical effect"
+            )
         assessments = [self.guardian_decision.system_assessment]
         if self.guardian_decision.guardian_assessment is not None:
             assessments.append(self.guardian_decision.guardian_assessment)
@@ -448,6 +449,22 @@ class AttentionFactRef(StrictModel):
     lifecycle: str = Field(min_length=1)
     relevance_score_basis_points: int = Field(ge=0, le=10_000)
     evidence_watermark: int = Field(ge=0)
+
+    @field_validator(
+        "tenant_id", "project_id", "component", "version", "outcome", "origin", "lifecycle"
+    )
+    @classmethod
+    def validate_stable_fact_labels(cls, value: str) -> str:
+        """Fact refs carry stable labels only, never authority-bearing prose."""
+
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", value) is None:
+            raise ValueError("attention fact labels must be stable identifiers")
+        lowered = value.lower()
+        if any(
+            token in lowered for token in ("approve", "instruction", "authority", "system prompt")
+        ):
+            raise ValueError("attention fact labels cannot contain authority or instruction prose")
+        return value
 
 
 class AttentionPacket(StrictModel):
@@ -495,9 +512,7 @@ class AttentionPacket(StrictModel):
             )
         )
         if self.eligible_fact_refs != expected_fact_order:
-            raise ValueError(
-                "eligible_fact_refs must be ordered by relevance then fact digest"
-            )
+            raise ValueError("eligible_fact_refs must be ordered by relevance then fact digest")
 
         excluded = set(self.explicit_exclusions)
         if excluded.intersection(fact_ids):
@@ -510,9 +525,7 @@ class AttentionPacket(StrictModel):
             if fact.evidence_watermark != self.memory_watermark:
                 raise ValueError("attention fact has a stale evidence watermark")
             if fact.lifecycle != "VALIDATED":
-                raise ValueError(
-                    "eligible attention facts must have the VALIDATED lifecycle"
-                )
+                raise ValueError("eligible attention facts must have the VALIDATED lifecycle")
 
         source_core = self.model_dump(
             mode="python",
@@ -583,7 +596,9 @@ class WorkHierarchy(StrictModel):
             raise ValueError("direct_child_ids must exactly match the current scope child order")
 
         children = [node for node in self.nodes if node.parent_id == current.node_id]
-        ordered_children = tuple(node.node_id for node in sorted(children, key=lambda node: node.order))
+        ordered_children = tuple(
+            node.node_id for node in sorted(children, key=lambda node: node.order)
+        )
         if ordered_children != self.direct_child_ids:
             raise ValueError("direct child nodes must exactly match their declared IDs and order")
         if tuple(sorted(node.order for node in children)) != tuple(range(len(children))):
@@ -619,6 +634,7 @@ class UserStatusProjection(StrictModel):
     approval_disclosure: Optional[ApprovalDisclosure]
     explained_terms: Tuple[Tuple[str, str], ...]
     source_event_ids: Tuple[str, ...]
+    source_event_digests: Tuple[Digest, ...] = ()
     projection_sha256: Digest
 
     @field_validator("source_event_ids")
@@ -640,13 +656,16 @@ class UserStatusProjection(StrictModel):
 
     @model_validator(mode="after")
     def validate_projection(self) -> "UserStatusProjection":
+        if self.source_event_digests and len(self.source_event_digests) != len(
+            self.source_event_ids
+        ):
+            raise ValueError("source event digests must align with source event IDs")
         self._validate_visible_scope()
         self._validate_safety_material()
-        expected = _expected_model_digest(
-            self,
-            "agentteams-user-status-projection",
-            "projection_sha256",
-        )
+        projection_core = self.model_dump(mode="python", exclude={"projection_sha256"})
+        if not self.source_event_digests:
+            projection_core.pop("source_event_digests", None)
+        expected = canonical_sha256("agentteams-user-status-projection", projection_core)
         if self.projection_sha256 != expected:
             raise ValueError("user status projection digest does not match")
         return self
@@ -684,21 +703,18 @@ class UserStatusProjection(StrictModel):
         guardian_digest = self.guardian_decision_sha256
         safety_digest = self.safety_decision_sha256
         any_safety = any(
-            value is not None
-            for value in (guardian, safety, guardian_digest, safety_digest)
+            value is not None for value in (guardian, safety, guardian_digest, safety_digest)
         )
 
         if self.mode in {UserMessageMode.PROGRESS, UserMessageMode.DETAIL} and any_safety:
             raise ValueError("normal progress/detail projections forbid safety overrides")
         if self.mode in {UserMessageMode.APPROVAL, UserMessageMode.SECURITY} and not all(
-            value is not None
-            for value in (guardian, safety, guardian_digest, safety_digest)
+            value is not None for value in (guardian, safety, guardian_digest, safety_digest)
         ):
             raise ValueError("approval/security projections require Guardian and Safety digests")
         if any_safety:
             if not all(
-                value is not None
-                for value in (guardian, safety, guardian_digest, safety_digest)
+                value is not None for value in (guardian, safety, guardian_digest, safety_digest)
             ):
                 raise ValueError("partial Guardian/Safety binding is forbidden")
             assert guardian is not None

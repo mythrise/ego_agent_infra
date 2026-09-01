@@ -26,6 +26,13 @@ def _workspace_modules() -> tuple[Any, Any]:
     return contract, executor
 
 
+def _trusted_executor(executor: Any, root: Path | None = None, **kwargs: Any) -> Any:
+    kwargs.setdefault("effect_authority_verifier", lambda _effect: None)
+    if root is None:
+        return executor.WorkspaceExecutor.from_env(**kwargs)
+    return executor.WorkspaceExecutor(root, **kwargs)
+
+
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     root = tmp_path / "workspace-root"
     project = root / "project-alpha"
@@ -109,7 +116,7 @@ def test_write_text_is_atomic_and_returns_content_free_deterministic_receipt(
     contract, executor = _workspace_modules()
     effect = _effect(root)
 
-    receipt = executor.WorkspaceExecutor.from_env().execute(effect)
+    receipt = _trusted_executor(executor).execute(effect)
 
     target = project / "notes/result.txt"
     assert target.read_text(encoding="utf-8") == "bounded workspace output\n"
@@ -128,6 +135,21 @@ def test_write_text_is_atomic_and_returns_content_free_deterministic_receipt(
     assert receipt["safety_decision_sha256"] == SAFETY_DECISION_SHA256
     assert receipt["projection_sha256"] == effect.projection_sha256
     assert "bounded workspace output" not in repr(receipt)
+
+
+def test_unconfigured_from_env_rejects_allow_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, project = _workspace(tmp_path, monkeypatch)
+    (project / "notes").mkdir()
+    _contract, executor = _workspace_modules()
+    effect = _effect(root)
+
+    with pytest.raises(StructuredToolError) as rejected:
+        executor.WorkspaceExecutor.from_env().execute(effect)
+
+    assert rejected.value.code == "effect_authority_verifier_unavailable"
+    assert not (project / "notes/result.txt").exists()
 
 
 def test_cross_binding_fields_are_mandatory_and_projection_digest_is_recomputed(
@@ -151,11 +173,7 @@ def test_cross_binding_fields_are_mandatory_and_projection_digest_is_recomputed(
     stale_projection = effect.model_dump(mode="json")
     stale_projection["source_effect_sha256"] = "d" * 64
     stale_projection["effect_sha256"] = contract.canonical_sha256(
-        {
-            key: value
-            for key, value in stale_projection.items()
-            if key != "effect_sha256"
-        }
+        {key: value for key, value in stale_projection.items() if key != "effect_sha256"}
     )
     with pytest.raises(ValidationError, match="projection"):
         contract.WorkspaceEffect.model_validate(stale_projection)
@@ -183,7 +201,7 @@ def test_untrusted_or_cross_project_targets_are_rejected(
     _contract, executor = _workspace_modules()
 
     with pytest.raises(StructuredToolError) as rejected:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert rejected.value.code == code
     assert sorted(path.name for path in root.iterdir()) == ["project-alpha"]
@@ -205,12 +223,12 @@ def test_argument_drift_and_stale_checkpoint_never_write(
     )
 
     with pytest.raises(StructuredToolError) as drift:
-        executor.WorkspaceExecutor.from_env().execute(drifted)
+        _trusted_executor(executor).execute(drifted)
     assert drift.value.code == "effect_digest_mismatch"
 
     (project / "unrelated.txt").write_text("checkpoint changed", encoding="utf-8")
     with pytest.raises(StructuredToolError) as stale:
-        executor.WorkspaceExecutor.from_env().execute(approved)
+        _trusted_executor(executor).execute(approved)
     assert stale.value.code == "workspace_checkpoint_stale"
     assert not (project / "notes/result.txt").exists()
 
@@ -243,7 +261,7 @@ def test_make_directory_and_delete_file_are_reversible_and_non_recursive(
     recovery = project / ".recovery"
     recovery.mkdir()
     _contract, executor = _workspace_modules()
-    service = executor.WorkspaceExecutor.from_env()
+    service = _trusted_executor(executor)
 
     mkdir = _effect(
         root,
@@ -307,7 +325,7 @@ def test_decision_and_approval_receipt_gates_run_before_mutation(
     (project / "notes").mkdir()
     _contract, executor = _workspace_modules()
     verifier = _ReceiptVerifier()
-    service = executor.WorkspaceExecutor(root, approval_verifier=verifier)
+    service = _trusted_executor(executor, root, approval_verifier=verifier)
 
     denied = _effect(root, decision="DENY")
     with pytest.raises(StructuredToolError) as deny:
@@ -338,8 +356,8 @@ def test_expired_or_replayed_approval_receipts_never_execute(
     root, project = _workspace(tmp_path, monkeypatch)
     (project / "notes").mkdir()
     _contract, executor = _workspace_modules()
-    service = executor.WorkspaceExecutor(
-        root, approval_verifier=_ReceiptVerifier(failure_code=failure_code)
+    service = _trusted_executor(
+        executor, root, approval_verifier=_ReceiptVerifier(failure_code=failure_code)
     )
 
     with pytest.raises(StructuredToolError) as rejected:
@@ -387,7 +405,7 @@ def test_symlink_and_special_file_races_fail_closed(
 
     monkeypatch.setattr(executor, "open_child_descriptor", replace_then_open)
     with pytest.raises(StructuredToolError) as raced:
-        executor.WorkspaceExecutor.from_env().execute(delete)
+        _trusted_executor(executor).execute(delete)
     assert raced.value.code == "filesystem_race_detected"
     assert outside.read_text(encoding="utf-8") == "outside-marker"
 
@@ -418,7 +436,7 @@ def test_atomic_write_failure_preserves_old_bytes_and_redacts_secrets(
         backup_path="project-alpha/.recovery/result-secret.bak",
     )
     with pytest.raises(StructuredToolError) as secret_rejected:
-        executor.WorkspaceExecutor.from_env().execute(secret_effect)
+        _trusted_executor(executor).execute(secret_effect)
     assert secret_rejected.value.code == "secret_content_rejected"
     assert "must-never-leak" not in str(secret_rejected.value)
 
@@ -434,7 +452,7 @@ def test_atomic_write_failure_preserves_old_bytes_and_redacts_secrets(
 
     monkeypatch.setattr(executor.os, "replace", fail_replace)
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
     assert failed.value.code == "atomic_write_failed"
     assert "replace-failure-secret" not in str(failed.value)
     assert target.read_bytes() == b"old bytes"
@@ -469,7 +487,7 @@ def test_failed_overwrite_removes_its_recovery_backup_and_restores_checkpoint(
 
     monkeypatch.setattr(executor.os, "replace", fail_final_replace)
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert failed.value.code == "atomic_write_failed"
     assert target.read_bytes() == b"old bytes"
@@ -513,7 +531,7 @@ def test_new_write_parent_fsync_failure_rolls_back_exact_checkpoint(
     _inject_fsync_failure(executor, monkeypatch, call=2)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert failed.value.code == "atomic_write_failed"
     assert not (notes / "result.txt").exists()
@@ -543,7 +561,7 @@ def test_overwrite_parent_fsync_failure_restores_old_bytes_and_removes_backup(
     _inject_fsync_failure(executor, monkeypatch, call=4)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert failed.value.code == "atomic_write_failed"
     assert target.read_bytes() == b"old bytes"
@@ -568,7 +586,7 @@ def test_mkdir_parent_fsync_failure_removes_created_directory_and_restores_check
     _inject_fsync_failure(executor, monkeypatch, call=1)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert failed.value.code == "directory_create_failed"
     assert not (project / "generated").exists()
@@ -598,7 +616,7 @@ def test_delete_parent_fsync_failure_restores_target_and_removes_backup(
     _inject_fsync_failure(executor, monkeypatch, call=1)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     assert failed.value.code == "recoverable_delete_failed"
     assert target.read_bytes() == b"old bytes"
@@ -648,7 +666,7 @@ def test_new_write_rollback_failure_reports_partial_effect_and_preserves_created
     _inject_fsync_failure(executor, monkeypatch, call=2)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     _assert_partial_effect(
         failed.value,
@@ -657,9 +675,7 @@ def test_new_write_rollback_failure_reports_partial_effect_and_preserves_created
         recovery_mode="REMOVE_CREATED_PATH",
         recovery_path="project-alpha/notes/result.txt",
     )
-    assert (notes / "result.txt").read_text(encoding="utf-8") == (
-        "bounded workspace output\n"
-    )
+    assert (notes / "result.txt").read_text(encoding="utf-8") == ("bounded workspace output\n")
     _assert_no_workspace_temporary(project)
 
 
@@ -695,7 +711,7 @@ def test_overwrite_rollback_failure_reports_partial_effect_and_preserves_unique_
     _inject_fsync_failure(executor, monkeypatch, call=4)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     _assert_partial_effect(
         failed.value,
@@ -731,7 +747,7 @@ def test_mkdir_rollback_failure_reports_partial_effect_and_preserves_created_pat
     _inject_fsync_failure(executor, monkeypatch, call=1)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     _assert_partial_effect(
         failed.value,
@@ -772,7 +788,7 @@ def test_delete_rollback_failure_reports_partial_effect_and_preserves_unique_bac
     _inject_fsync_failure(executor, monkeypatch, call=1)
 
     with pytest.raises(StructuredToolError) as failed:
-        executor.WorkspaceExecutor.from_env().execute(effect)
+        _trusted_executor(executor).execute(effect)
 
     _assert_partial_effect(
         failed.value,

@@ -32,9 +32,7 @@ def _effect_payload(root: Path) -> dict[str, Any]:
         "affected_scope": ["project-alpha/out/server.txt"],
         "project_id": "project-alpha",
         "task_id": "task-server-1",
-        "workspace_checkpoint_sha256": executor.workspace_checkpoint_sha256(
-            root, "project-alpha"
-        ),
+        "workspace_checkpoint_sha256": executor.workspace_checkpoint_sha256(root, "project-alpha"),
         "policy_sha256": "b" * 64,
         "decision": "ALLOW",
         "reversibility": "REVERSIBLE",
@@ -57,9 +55,10 @@ def _redigest(contract: Any, payload: dict[str, Any]) -> None:
 
 def test_workspace_server_registers_one_typed_mutating_gateway() -> None:
     _contract, _executor, server = _workspace_modules()
+    server_module = server
 
     async def names() -> list[str]:
-        tools = await server.mcp.list_tools()
+        tools = await server_module.mcp.list_tools()
         return [tool.name for tool in tools]
 
     assert asyncio.run(names()) == ["workspace_execute_effect"]
@@ -73,10 +72,11 @@ def test_official_client_executes_only_inside_operator_configured_root(
     (project / "out").mkdir(parents=True)
     monkeypatch.setenv("EGO_MCP_WORKSPACE_ROOT", str(root))
     _contract, _executor, server = _workspace_modules()
+    server = server.create_workspace_server(effect_authority_verifier=lambda _effect: None)
     payload = _effect_payload(root)
 
     async def call() -> object:
-        async with Client(server.mcp) as client:
+        async with Client(server) as client:
             result = await client.call_tool(
                 "workspace_execute_effect",
                 {"effect": payload, "approval_receipt": None},
@@ -90,9 +90,7 @@ def test_official_client_executes_only_inside_operator_configured_root(
     assert response["effect_sha256"] == payload["effect_sha256"]
     assert response["status"] == "APPLIED"
     assert "server-created output" not in repr(response)
-    assert (project / "out/server.txt").read_text(encoding="utf-8") == (
-        "server-created output\n"
-    )
+    assert (project / "out/server.txt").read_text(encoding="utf-8") == ("server-created output\n")
 
 
 def test_server_failure_does_not_echo_secret_content(
@@ -147,7 +145,10 @@ def test_embedded_server_injects_exact_approval_verifier(
         if receipt != "exact-approved-receipt":
             raise AssertionError("unexpected approval receipt")
 
-    injected_mcp = server.create_workspace_server(approval_verifier=verify)
+    injected_mcp = server.create_workspace_server(
+        effect_authority_verifier=lambda _effect: None,
+        approval_verifier=verify,
+    )
 
     async def call() -> object:
         async with Client(injected_mcp) as client:

@@ -32,6 +32,7 @@ from .models import (
     utc_now,
 )
 from .store import OPERATION_LEASE_KEY, BridgeStoreContract
+from .extensions.workspace_authority import ControlLedgerWorkspaceEffectVerifier
 
 
 PRE_APPROVAL_STAGES = {"CONTEXT", "PLAN", "PLAN_REVIEW"}
@@ -126,6 +127,22 @@ class AgentTeamsBridge:
         checkpoint = dict(run.checkpoint)
         checkpoint[OPERATION_LEASE_KEY] = renewed.checkpoint[OPERATION_LEASE_KEY]
         return run.model_copy(update={"checkpoint": checkpoint})
+
+    def workspace_effect_authority_verifier(
+        self,
+        *,
+        run_id: str,
+        project_id: str,
+        configuration_id: Optional[str],
+    ) -> ControlLedgerWorkspaceEffectVerifier:
+        """Return the only supported authority callback for MCP workspace writes."""
+
+        return ControlLedgerWorkspaceEffectVerifier(
+            self.store,
+            run_id=run_id,
+            project_id=project_id,
+            configuration_id=configuration_id,
+        )
 
     def probe_live(self, team_name: str) -> Dict[str, Any]:
         if not self.matrix.token:
@@ -335,14 +352,10 @@ class AgentTeamsBridge:
         return event_id, run
 
     @staticmethod
-    def _task_request_body(
-        run: BridgeRun, workflow: WorkflowResponse
-    ) -> Dict[str, Any]:
+    def _task_request_body(run: BridgeRun, workflow: WorkflowResponse) -> Dict[str, Any]:
         return {
             "objective": run.objective,
-            "controller_workflow_sha256": canonical_sha256(
-                workflow.model_dump(mode="json")
-            ),
+            "controller_workflow_sha256": canonical_sha256(workflow.model_dump(mode="json")),
             "task_graph": [task.model_dump(mode="json") for task in run.task_graph],
             "execution_contract": {
                 "runtime": "AgentTeams TeamHarness",
@@ -396,9 +409,7 @@ class AgentTeamsBridge:
         }
 
     @staticmethod
-    def _validate_ego_live_binding(
-        request: StartRunRequest, ego_task: Dict[str, Any]
-    ) -> None:
+    def _validate_ego_live_binding(request: StartRunRequest, ego_task: Dict[str, Any]) -> None:
         if ego_task.get("synthetic_demo") is not False:
             raise BridgeError(
                 "synthetic_task_rejected",
@@ -422,9 +433,7 @@ class AgentTeamsBridge:
         if (
             not isinstance(actual_source, dict)
             or any(actual_source.get(key) != value for key, value in expected_source.items())
-            or actual_source.get(
-                "origin_authentication", "UNVERIFIED_OPERATOR_ASSERTION"
-            )
+            or actual_source.get("origin_authentication", "UNVERIFIED_OPERATOR_ASSERTION")
             != "UNVERIFIED_OPERATOR_ASSERTION"
         ):
             raise BridgeError(
@@ -606,9 +615,7 @@ class AgentTeamsBridge:
             checkpoint = dict(run.checkpoint)
             checkpoint["dispatch_matrix_event_id"] = matrix_event_id
             checkpoint["matrix_root"] = matrix_event_id
-            checkpoint["last_workflow_sha256"] = canonical_sha256(
-                workflow.model_dump(mode="json")
-            )
+            checkpoint["last_workflow_sha256"] = canonical_sha256(workflow.model_dump(mode="json"))
             run = run.model_copy(update={"state": RunState.PRE_APPROVAL, "checkpoint": checkpoint})
             self.store.update_run(
                 run,
@@ -831,9 +838,7 @@ class AgentTeamsBridge:
             if item["source"] == "matrix" and item["kind"] == "raw-message"
         ]
         reviewer_receipts = [
-            item["receipt_id"]
-            for item in receipts["items"]
-            if item["kind"] == "reviewer-decision"
+            item["receipt_id"] for item in receipts["items"] if item["kind"] == "reviewer-decision"
         ]
         accepted = run.checkpoint.get("accepted_contracts", {})
         metric_artifacts = [
@@ -1138,9 +1143,7 @@ class AgentTeamsBridge:
                     run.id, envelope, lease_owner=lease_owner
                 )
         checkpoint["node_status"] = statuses
-        checkpoint["last_workflow_sha256"] = canonical_sha256(
-            workflow.model_dump(mode="json")
-        )
+        checkpoint["last_workflow_sha256"] = canonical_sha256(workflow.model_dump(mode="json"))
         return run.model_copy(update={"checkpoint": checkpoint}), actions
 
     def _seconds_in_status(self, run: BridgeRun, task_id: str) -> float:
@@ -1149,7 +1152,9 @@ class AgentTeamsBridge:
         if not since:
             return 0.0
         parsed = datetime.fromisoformat(str(since).replace("Z", "+00:00"))
-        return (self.clock().astimezone(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+        return (
+            self.clock().astimezone(timezone.utc) - parsed.astimezone(timezone.utc)
+        ).total_seconds()
 
     def _candidate_workers(
         self, run: BridgeRun, task: ResearchTaskSpec
@@ -1216,9 +1221,11 @@ class AgentTeamsBridge:
             candidates.sort(key=lambda item: item[0] != suggested_worker)
         if not candidates:
             checkpoint["blocked_reason"] = "no alternate AgentTeams Worker is available"
-            return run.model_copy(
-                update={"state": RunState.BLOCKED, "checkpoint": checkpoint}
-            ), {"action": "blocked", "task_id": task.task_id, "reason": checkpoint["blocked_reason"]}
+            return run.model_copy(update={"state": RunState.BLOCKED, "checkpoint": checkpoint}), {
+                "action": "blocked",
+                "task_id": task.task_id,
+                "reason": checkpoint["blocked_reason"],
+            }
         worker_name, worker = candidates[count % len(candidates)]
         replacement_id = "%s-r%d" % (origin, count + 1)
         current_node = next((node for node in workflow.nodes if node.id == task.task_id), None)
@@ -1364,7 +1371,10 @@ class AgentTeamsBridge:
                 if detail and detail.summary:
                     suggested = None
                 return task, "AgentTeams reported terminal %s" % node.status, suggested
-            if node.status == "delegated" and self._seconds_in_status(run, task.task_id) > run.ack_timeout_seconds:
+            if (
+                node.status == "delegated"
+                and self._seconds_in_status(run, task.task_id) > run.ack_timeout_seconds
+            ):
                 return task, "ACK timeout exceeded", None
             if (
                 node.status == "in-progress"
@@ -1558,9 +1568,7 @@ class AgentTeamsBridge:
                 "receipt_chain_invalid",
                 "Bridge upstream receipt chain failed verification",
             )
-        receipts = {
-            item["receipt_key"]: item for item in receipt_bundle["items"]
-        }
+        receipts = {item["receipt_key"]: item for item in receipt_bundle["items"]}
         accepted: Dict[str, Dict[str, Any]] = run.checkpoint.get("accepted_contracts", {})
         stage_kinds = {
             "CONTEXT": ("dataset_manifest",),
@@ -1652,7 +1660,11 @@ class AgentTeamsBridge:
                         "review_artifact_body_missing",
                         "Archived reviewer response does not contain the raw JSON decision",
                     )
-                review_source = (task, content, {"artifact": artifact_ref, "receipt": official_receipt})
+                review_source = (
+                    task,
+                    content,
+                    {"artifact": artifact_ref, "receipt": official_receipt},
+                )
                 continue
             else:
                 source_stage = task.stage
@@ -1688,10 +1700,7 @@ class AgentTeamsBridge:
                     }
                     item_payload["receipts"] = [
                         official_receipt,
-                        *[
-                            self._control_receipt(message)
-                            for message in matrix_messages
-                        ],
+                        *[self._control_receipt(message) for message in matrix_messages],
                     ]
                 items[kind] = {
                     "generation": ego_task["generation"],
@@ -1731,9 +1740,7 @@ class AgentTeamsBridge:
             "reviewed_producers": review_content.get("reviewed_producers"),
             "independent": review_content.get("independent"),
             "verdict": review_content.get("verdict"),
-            "reviewed_evidence_digests": sorted(
-                item["artifact_digest"] for item in items.values()
-            ),
+            "reviewed_evidence_digests": sorted(item["artifact_digest"] for item in items.values()),
             "findings": review_content.get("findings", []),
             "attributes": {
                 "agentteams_project_id": run.agentteams_project_id,
@@ -1759,7 +1766,10 @@ class AgentTeamsBridge:
         if checkpoint.get("ego_finalization_committed"):
             task = self.ego.get_task(run.ego_task_id)
             self._assert_ego_run_binding(run, task)
-            if task.get("stage") != "COMPLETED" or task.get("gate_result", {}).get("status") != "pass":
+            if (
+                task.get("stage") != "COMPLETED"
+                or task.get("gate_result", {}).get("status") != "pass"
+            ):
                 raise BridgeError(
                     "ego_finalization_checkpoint_conflict",
                     "Persisted finalization receipt no longer matches EgoAgentOS terminal state",
@@ -1869,9 +1879,7 @@ class AgentTeamsBridge:
                 {
                     "recovered": True,
                     "reason": retry.get("reason"),
-                    "replacement": (
-                        replacement.model_dump(mode="json") if replacement else None
-                    ),
+                    "replacement": (replacement.model_dump(mode="json") if replacement else None),
                     "task_graph_sha256": canonical_sha256(
                         [task.model_dump(mode="json") for task in run.task_graph]
                     ),
@@ -1885,8 +1893,7 @@ class AgentTeamsBridge:
             requested_state = str(retry.get("resume_state", RunState.PRE_APPROVAL.value))
             next_state = (
                 RunState(requested_state)
-                if requested_state
-                in {RunState.PRE_APPROVAL.value, RunState.POST_APPROVAL.value}
+                if requested_state in {RunState.PRE_APPROVAL.value, RunState.POST_APPROVAL.value}
                 else RunState.PRE_APPROVAL
             )
         elif operation == "approval-required-notify":
@@ -1959,8 +1966,7 @@ class AgentTeamsBridge:
         )
         self.store.archive_receipt(
             run.id,
-            receipt_key="agentteams:workflow:%s"
-            % workflow_receipt["response_sha256"],
+            receipt_key="agentteams:workflow:%s" % workflow_receipt["response_sha256"],
             source="agentteams",
             kind="official-workflow-snapshot",
             payload=workflow_receipt,
@@ -2156,29 +2162,23 @@ class AgentTeamsBridge:
 
     def _post_approval_graph(self, run: BridgeRun) -> List[ResearchTaskSpec]:
         workers: Dict[str, Dict[str, Any]] = run.checkpoint.get("workers", {})
-        existing_post = [
-            task for task in run.task_graph if task.stage in POST_APPROVAL_STAGES
-        ]
+        existing_post = [task for task in run.task_graph if task.stage in POST_APPROVAL_STAGES]
         post = existing_post or self._build_task_graph(
             run.agentteams_project_id, workers, stages=sorted(POST_APPROVAL_STAGES)
         )
         accepted = run.checkpoint.get("accepted_contracts", {})
         pre = [
-            task.model_copy(update={"status": "completed"})
-            if task.task_id in accepted
-            else task
+            task.model_copy(update={"status": "completed"}) if task.task_id in accepted else task
             for task in run.task_graph
             if task.stage in PRE_APPROVAL_STAGES
         ]
         effective_pre = self._effective_tasks(run, PRE_APPROVAL_STAGES)
-        stage_order = {stage: index for index, stage in enumerate(
-            ("CONTEXT", "PLAN", "PLAN_REVIEW")
-        )}
+        stage_order = {
+            stage: index for index, stage in enumerate(("CONTEXT", "PLAN", "PLAN_REVIEW"))
+        }
         effective_pre.sort(key=lambda task: (stage_order.get(task.stage, -1), task.attempt))
         if effective_pre and post:
-            post[0] = post[0].model_copy(
-                update={"depends_on": [effective_pre[-1].task_id]}
-            )
+            post[0] = post[0].model_copy(update={"depends_on": [effective_pre[-1].task_id]})
         return pre + post
 
     def grant_r2(self, run_id: str, request: GrantRequest) -> BridgeRun:
@@ -2213,9 +2213,7 @@ class AgentTeamsBridge:
                     "This compensation is not an R2 token recovery",
                     details={
                         "operation": operation,
-                        "required_action": (
-                            "POST /api/v1/agentteams/runs/{run_id}/reconcile"
-                        ),
+                        "required_action": ("POST /api/v1/agentteams/runs/{run_id}/reconcile"),
                     },
                 )
         ego_grant_committed = bool(checkpoint.get("ego_grant_committed"))
@@ -2236,9 +2234,7 @@ class AgentTeamsBridge:
                 run.ego_task_id, request.approval_token, request.idempotency_key
             )
             advanced_task = response.get("task") if isinstance(response, dict) else None
-            advanced_stage = (
-                advanced_task.get("stage") if isinstance(advanced_task, dict) else None
-            )
+            advanced_stage = advanced_task.get("stage") if isinstance(advanced_task, dict) else None
             checkpoint["ego_grant_committed"] = True
             checkpoint["ego_grant_response_sha256"] = canonical_sha256(response)
             checkpoint["ego_grant_observed_stage"] = advanced_stage

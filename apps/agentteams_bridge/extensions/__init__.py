@@ -42,6 +42,7 @@ from .user_status import (
     project_user_status,
 )
 from .workspace_adapter import WORKSPACE_MAPPING_VERSION, build_workspace_effect
+from .workspace_authority import ControlLedgerWorkspaceEffectVerifier
 
 __all__ = [
     "AdmittedStatusEvent",
@@ -77,6 +78,7 @@ __all__ = [
     "build_attention_packet",
     "build_guardian_decision",
     "build_workspace_effect",
+    "ControlLedgerWorkspaceEffectVerifier",
     "campaign_binding_sha256",
     "deterministic_conservative_token_bound",
     "evaluate_effect_safety",

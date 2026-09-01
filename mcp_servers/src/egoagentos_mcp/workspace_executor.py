@@ -37,6 +37,12 @@ class ApprovalVerifier(Protocol):
     def __call__(self, approval_receipt: str, effect: WorkspaceEffect) -> None: ...
 
 
+class EffectAuthorityVerifier(Protocol):
+    """Injected Control-ledger verifier for source/safety/projection bindings."""
+
+    def __call__(self, effect: WorkspaceEffect) -> None: ...
+
+
 def _validate_project_id(root: TrustedRoot, project_id: str) -> str:
     normalised = root.normalised_relative(project_id)
     if normalised != project_id or len(PurePosixPath(normalised).parts) != 1:
@@ -44,7 +50,9 @@ def _validate_project_id(root: TrustedRoot, project_id: str) -> str:
             "project_scope_mismatch", "Project IDs must name one canonical workspace directory"
         )
     if is_sensitive_path(project_id):
-        raise StructuredToolError("sensitive_path_rejected", "Sensitive project paths are forbidden")
+        raise StructuredToolError(
+            "sensitive_path_rejected", "Sensitive project paths are forbidden"
+        )
     return normalised
 
 
@@ -223,21 +231,30 @@ class WorkspaceExecutor:
         self,
         root: str | Path,
         *,
+        effect_authority_verifier: EffectAuthorityVerifier
+        | Callable[[WorkspaceEffect], None]
+        | None = None,
         approval_verifier: ApprovalVerifier | Callable[[str, WorkspaceEffect], None] | None = None,
     ) -> None:
         self.root = TrustedRoot(root, label="workspace root")
+        self.effect_authority_verifier = effect_authority_verifier
         self.approval_verifier = approval_verifier
 
     @classmethod
     def from_env(
         cls,
         *,
-        approval_verifier: ApprovalVerifier
-        | Callable[[str, WorkspaceEffect], None]
+        effect_authority_verifier: EffectAuthorityVerifier
+        | Callable[[WorkspaceEffect], None]
         | None = None,
+        approval_verifier: ApprovalVerifier | Callable[[str, WorkspaceEffect], None] | None = None,
     ) -> WorkspaceExecutor:
         root = TrustedRoot.from_env("EGO_MCP_WORKSPACE_ROOT", label="workspace root")
-        return cls(root.path, approval_verifier=approval_verifier)
+        return cls(
+            root.path,
+            effect_authority_verifier=effect_authority_verifier,
+            approval_verifier=approval_verifier,
+        )
 
     def _normalise_bound_path(self, path: str, project_id: str) -> str:
         normalised = self.root.normalised_relative(path)
@@ -413,7 +430,9 @@ class WorkspaceExecutor:
     ) -> tuple[str, dict[str, Any]]:
         arguments = effect.final_arguments
         if not isinstance(arguments, WriteTextArguments):
-            raise StructuredToolError("operation_argument_mismatch", "WRITE_TEXT arguments required")
+            raise StructuredToolError(
+                "operation_argument_mismatch", "WRITE_TEXT arguments required"
+            )
         data = arguments.content_utf8.encode("utf-8")
         if len(data) > MAX_WRITE_TEXT_BYTES:
             raise StructuredToolError(
@@ -452,7 +471,9 @@ class WorkspaceExecutor:
                 recovery = {"mode": "REMOVE_CREATED_PATH", "backup_path": None}
             else:
                 if not stat.S_ISREG(metadata.st_mode):
-                    raise StructuredToolError("not_regular_file", "WRITE_TEXT targets regular files")
+                    raise StructuredToolError(
+                        "not_regular_file", "WRITE_TEXT targets regular files"
+                    )
                 if effect.recovery.mode != "RESTORE_BACKUP" or backup is None:
                     raise StructuredToolError(
                         "recovery_plan_mismatch", "Overwrites require an exact backup path"
@@ -614,7 +635,9 @@ class WorkspaceExecutor:
         self, effect: WorkspaceEffect, target: str, backup: str | None
     ) -> tuple[str, dict[str, Any]]:
         if not isinstance(effect.final_arguments, DeleteFileArguments):
-            raise StructuredToolError("operation_argument_mismatch", "DELETE_FILE arguments required")
+            raise StructuredToolError(
+                "operation_argument_mismatch", "DELETE_FILE arguments required"
+            )
         if effect.recovery.mode != "RESTORE_BACKUP" or backup is None:
             raise StructuredToolError(
                 "recovery_plan_mismatch", "DELETE_FILE requires a recoverable backup"
@@ -626,7 +649,9 @@ class WorkspaceExecutor:
             if metadata is None:
                 raise StructuredToolError("path_not_found", "DELETE_FILE target does not exist")
             if not stat.S_ISREG(metadata.st_mode):
-                raise StructuredToolError("not_regular_file", "DELETE_FILE only removes regular files")
+                raise StructuredToolError(
+                    "not_regular_file", "DELETE_FILE only removes regular files"
+                )
             opened, _ = open_child_descriptor(
                 target_descriptor, target_name, expected=metadata, require_file=True
             )
@@ -697,7 +722,22 @@ class WorkspaceExecutor:
     def execute(
         self, effect: WorkspaceEffect, *, approval_receipt: str | None = None
     ) -> dict[str, Any]:
+        if self.effect_authority_verifier is None:
+            raise StructuredToolError(
+                "effect_authority_verifier_unavailable",
+                "A trusted Control-ledger effect verifier is required before execution",
+            )
         target, backup = self._validate_authority(effect)
+        try:
+            self.effect_authority_verifier(effect)
+        except StructuredToolError:
+            raise
+        except Exception as exc:
+            raise StructuredToolError(
+                "effect_authority_verification_failed",
+                "The effect was not admitted by the trusted Control ledger",
+                {"reason": type(exc).__name__},
+            ) from exc
         before = self._verify_checkpoint(effect)
         approval = self._authorize(effect, approval_receipt)
         self._verify_checkpoint(effect)

@@ -45,10 +45,13 @@ apps/agentteams_bridge/clients.py
 apps/agentteams_bridge/errors.py
 apps/agentteams_bridge/extensions/__init__.py
 apps/agentteams_bridge/extensions/contracts.py
+apps/agentteams_bridge/extensions/attention.py
 apps/agentteams_bridge/extensions/guardian.py
 apps/agentteams_bridge/extensions/safety.py
 apps/agentteams_bridge/extensions/schema_contract.py
 apps/agentteams_bridge/extensions/workspace_adapter.py
+apps/agentteams_bridge/extensions/workspace_authority.py
+apps/agentteams_bridge/extensions/user_status.py
 apps/agentteams_bridge/main.py
 apps/agentteams_bridge/models.py
 apps/agentteams_bridge/postgres_store.py
@@ -436,6 +439,8 @@ def validate_no_ambiguous_private_sources(project_root: Path) -> None:
             if not candidate.is_file():
                 continue
             relative = candidate.relative_to(project_root).as_posix()
+            if "__pycache__" in PurePosixPath(relative).parts or candidate.suffix == ".pyc":
+                continue
             if relative in KNOWN_PRIVATE_SOURCE_FILES:
                 continue
             lowered_components = (part.lower() for part in PurePosixPath(relative).parts)

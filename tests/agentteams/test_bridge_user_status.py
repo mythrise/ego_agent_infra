@@ -384,6 +384,7 @@ def test_approval_rejects_stale_event_safety_binding() -> None:
         {"password": "hunter2"},
         {"headers": {"Authorization": "Bearer abc.def.ghi"}},
         {"api_key": "sk-secret-material"},
+        {"client_secret": "not-safe-to-display"},
     ],
 )
 def test_approval_rejects_secret_bearing_arguments(

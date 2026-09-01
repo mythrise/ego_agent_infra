@@ -10,13 +10,15 @@ from mcp.types import ToolAnnotations
 
 from .common import run_mcp_server
 from .workspace_contract import WorkspaceEffect
-from .workspace_executor import ApprovalVerifier, WorkspaceExecutor
+from .workspace_executor import ApprovalVerifier, EffectAuthorityVerifier, WorkspaceExecutor
+
 
 def create_workspace_server(
     *,
-    approval_verifier: ApprovalVerifier
-    | Callable[[str, WorkspaceEffect], None]
+    effect_authority_verifier: EffectAuthorityVerifier
+    | Callable[[WorkspaceEffect], None]
     | None = None,
+    approval_verifier: ApprovalVerifier | Callable[[str, WorkspaceEffect], None] | None = None,
 ) -> MCPServer:
     """Build a server with an optional trusted approval-verification dependency."""
 
@@ -44,7 +46,7 @@ def create_workspace_server(
         """Execute a canonical effect through the configured trusted verifier."""
 
         return WorkspaceExecutor.from_env(
-            approval_verifier=approval_verifier
+            effect_authority_verifier=effect_authority_verifier, approval_verifier=approval_verifier
         ).execute(effect, approval_receipt=approval_receipt)
 
     return server

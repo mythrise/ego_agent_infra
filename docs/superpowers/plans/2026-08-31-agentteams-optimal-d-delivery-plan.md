@@ -126,4 +126,3 @@ Keep the existing roles and add only a terminal AgentTeams Extractor after Decis
 - Verify user projection depth, glossary coverage, exact approval override, no secret bytes in logs/evidence, and deterministic memory/attention roots.
 - Produce a content-addressed acceptance directory with commands, raw normalized results, trace roots, known deferrals, and no production claims for unexecuted VM/provider/GPU/PITR work.
 - Push only `semifinal/secure-memory-implementation` to `origin` after clean verification. Do not merge or force-push `semifinal`/main.
-

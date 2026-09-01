@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
+import hashlib
 from typing import Any, Dict, Literal, Mapping, Optional, Sequence, Tuple
 
 from pydantic import Field, field_validator
@@ -73,6 +74,20 @@ _GLOSSARIES: Mapping[StatusLocale, Mapping[str, str]] = {
         "Guardian": "an independent deterministic safety review",
         "RLS": "database rules that isolate each tenant's rows",
         "Trace": "the admitted event record used to reconstruct this status",
+        "POLICY_WRITE": "a policy-governed write that needs an exact safety decision",
+        "UNKNOWN_OPERATION": "an operation outside the frozen allowlist",
+        "SYSTEM_HIGH_IMPACT_EFFECT": "the system classifier marked the effect high impact",
+        "READ_ONLY_WORKSPACE_EFFECT": "a read-only workspace operation",
+        "REVERSIBLE_WORKSPACE_MUTATION": "a reversible workspace change with recovery",
+        "GUARDIAN_HIGH_IMPACT_EFFECT": "Guardian confirmed a high-impact effect",
+        "SYSTEM_CONSTRAINT_MISMATCH": "Guardian found a mandatory rule mismatch",
+        "SYSTEM_GUARDIAN_RISK_MISMATCH": "system and Guardian risk assessments disagree",
+        "CROSS_PROJECT_TARGET": "the effect targets another project",
+        "EVIDENCE_TAMPERING": "the effect could alter immutable evidence",
+        "IRREVERSIBLE_DESTRUCTION": "the effect could destroy data without recovery",
+        "PATH_ESCAPE": "the effect leaves the managed workspace",
+        "SECRET_EXFILTRATION": "the effect could disclose a credential",
+        "WORKSPACE_GATEWAY_BYPASS": "the effect attempts to bypass the typed gateway",
     },
     StatusLocale.ZH_CN: {
         "CAS": "仅在已存版本仍匹配时才成功的更新",
@@ -80,6 +95,20 @@ _GLOSSARIES: Mapping[StatusLocale, Mapping[str, str]] = {
         "Guardian": "独立且确定性的安全复核",
         "RLS": "在数据库中隔离各租户数据行的规则",
         "Trace": "用于重建当前状态的已准入事件记录",
+        "POLICY_WRITE": "受策略约束的写入操作，需要精确的安全决策",
+        "UNKNOWN_OPERATION": "不在冻结允许列表中的操作",
+        "SYSTEM_HIGH_IMPACT_EFFECT": "系统分类器将该操作判为高影响",
+        "READ_ONLY_WORKSPACE_EFFECT": "只读工作区操作",
+        "REVERSIBLE_WORKSPACE_MUTATION": "带有恢复方案的可逆工作区变更",
+        "GUARDIAN_HIGH_IMPACT_EFFECT": "Guardian 确认该操作为高影响",
+        "SYSTEM_CONSTRAINT_MISMATCH": "Guardian 发现强制规则不匹配",
+        "SYSTEM_GUARDIAN_RISK_MISMATCH": "系统评估与 Guardian 风险评估不一致",
+        "CROSS_PROJECT_TARGET": "操作目标属于其他项目",
+        "EVIDENCE_TAMPERING": "操作可能修改不可变证据",
+        "IRREVERSIBLE_DESTRUCTION": "操作可能在无恢复方案时销毁数据",
+        "PATH_ESCAPE": "操作离开受管工作区",
+        "SECRET_EXFILTRATION": "操作可能泄露凭据",
+        "WORKSPACE_GATEWAY_BYPASS": "操作试图绕过类型化工作区网关",
     },
 }
 
@@ -125,6 +154,7 @@ _SECRET_KEYS = {
     "private_key",
     "secret",
 }
+_SECRET_KEY_MARKERS = ("secret", "password", "passwd", "credential", "api_key", "apikey", "token")
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"),
@@ -140,7 +170,9 @@ def _assert_no_secret(value: Any, path: str = "approval") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = _normalize_key(str(key))
-            if normalized in _SECRET_KEYS:
+            if normalized in _SECRET_KEYS or any(
+                marker in normalized for marker in _SECRET_KEY_MARKERS
+            ):
                 raise ValueError(f"secret or credential key is forbidden at {path}.{key}")
             _assert_no_secret(item, f"{path}.{key}")
         return
@@ -148,9 +180,7 @@ def _assert_no_secret(value: Any, path: str = "approval") -> None:
         for index, item in enumerate(value):
             _assert_no_secret(item, f"{path}[{index}]")
         return
-    if isinstance(value, str) and any(
-        pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS
-    ):
+    if isinstance(value, str) and any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS):
         raise ValueError(f"secret or credential material is forbidden at {path}")
 
 
@@ -404,10 +434,11 @@ def project_user_status(
     override_ids: Tuple[str, ...] = ()
     attention_ids: Tuple[str, ...] = ()
     if override_type is not None:
+        # A higher-priority approval/security event must never hide a concurrent
+        # lower-priority risk event. All safety descendants remain visible.
+        safety_types = frozenset(_MODE_EVENT.values())
         attention_candidates = {
-            event.node_id
-            for event in events
-            if event.event_type is override_type
+            event.node_id for event in events if event.event_type in safety_types
         }
         attention_ids = _ordered_nodes(hierarchy, tuple(attention_candidates))
         override_ids = tuple(node_id for node_id in attention_ids if node_id not in base_ids)
@@ -417,9 +448,31 @@ def project_user_status(
         event
         for event in events
         if latest.get(event.node_id) == event
-        or (override_type is not None and event.event_type is override_type)
+        or (override_type is not None and event.event_type in frozenset(_MODE_EVENT.values()))
     )
+    if safety_decision is not None:
+        safety_terms: set[str] = set()
+        for assessment in (
+            safety_decision.guardian_decision.system_assessment,
+            safety_decision.guardian_decision.guardian_assessment,
+        ):
+            if assessment is not None:
+                safety_terms.update(assessment.reason_codes)
+        generated_terms: Tuple[str, ...] = tuple(sorted(safety_terms))
+        used_events = tuple(used_events)
+    else:
+        generated_terms = ()
     explained_terms = _explained_terms(used_events, selected_locale)
+    if generated_terms:
+        glossary = _GLOSSARIES[selected_locale]
+        missing: Tuple[str, ...] = tuple(term for term in generated_terms if term not in glossary)
+        if missing:
+            raise ValueError(
+                f"specialist term is missing from the {selected_locale.value} glossary: {missing}"
+            )
+        explained_terms = tuple(
+            sorted(set(explained_terms).union({(term, glossary[term]) for term in generated_terms}))
+        )
     status_text = _render_status(
         mode,
         hierarchy,
@@ -452,6 +505,10 @@ def project_user_status(
         "approval_disclosure": approval_disclosure,
         "explained_terms": explained_terms,
         "source_event_ids": tuple(sorted(event.event_id for event in used_events)),
+        "source_event_digests": tuple(
+            hashlib.sha256(canonical_bytes(event.model_dump(mode="python"))).hexdigest()
+            for event in sorted(used_events, key=lambda item: item.event_id)
+        ),
     }
     return UserStatusProjection(
         schema_version="agentteams-user-status-projection/v1",
@@ -474,9 +531,11 @@ def project_user_status(
         approval_disclosure=approval_disclosure,
         explained_terms=explained_terms,
         source_event_ids=tuple(sorted(event.event_id for event in used_events)),
-        projection_sha256=canonical_sha256(
-            "agentteams-user-status-projection", projection_core
+        source_event_digests=tuple(
+            hashlib.sha256(canonical_bytes(event.model_dump(mode="python"))).hexdigest()
+            for event in sorted(used_events, key=lambda item: item.event_id)
         ),
+        projection_sha256=canonical_sha256("agentteams-user-status-projection", projection_core),
     )
 
 
