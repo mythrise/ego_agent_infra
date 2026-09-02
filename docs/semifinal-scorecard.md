@@ -12,13 +12,14 @@
 > 配置，因此 live 状态是 `NOT_CONFIGURED/NOT_RUN`。下文保留的 PolarDB 记录是上一轮评委意见
 > 的历史验收，不代表本轮已跑 Nexa。
 
-**工程候选已形成，但复赛 AgentTeams 硬门槛仍为 `BLOCKED`。** 仓库已经提供可执行
+**工程候选已形成，但复赛 AgentTeams 完整业务硬门槛仍为 `BLOCKED`。** 仓库已经提供可执行
 Controller/Matrix bridge、PostgreSQL checkpoint/receipt/event backend、动态 replan、超时
 改派、恢复与补偿、R2 HITL 恢复链、结构化 correlation envelope、Skill 证据分级、
 Fashion-MNIST 单 GPU adapter、离线验收包和 fail-closed benchmark adapter；这些行为已有
-本地 contract/fixture 测试。当前主机没有可用的官方 AgentTeams 服务、真实 Team/Worker、
-Matrix 凭据、GPU receipt 与逐场景 fault/replay harness，因此不能产生官方运行证据。已提交
-benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确返回
+本地 contract/fixture 测试。当前主机已运行官方 Controller/Manager、Active Team、四个
+Worker 资源、暂停 Project、Bridge 与真实 Matrix room，并取得四 Agent smoke receipt；但没有
+完整 task lifecycle、Skill invocation、R2 恢复、GPU receipt 与逐场景 fault/replay harness。
+已提交 benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确返回
 `UNIMPLEMENTED/SKIP`，不是 `PASS`。
 
 证据必须按以下三层表述：
@@ -26,8 +27,8 @@ benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确�
 | 层级 | 可以主张 | 不可以主张 |
 |---|---|---|
 | 已实现 | bridge、schema、adapter、runbook 与 release verifier 已进入代码库 | 这些代码已经驱动官方服务 |
-| 本地验证 | fixture/contract、离线契约锁、状态机、RXP、Skill runtime 与安全 oracle 通过测试 | fixture 是 AgentTeams Worker 的真实输出 |
-| 官方 live | 仅当 Controller、TeamHarness、Matrix 与真实 Worker 共同产生可复核 trace 后成立 | 用静态回放、mock response、角色标签或自报 `pass` 替代 live trace |
+| 本地验证 | fixture/contract、状态机、RXP、Skill runtime、安全 oracle，以及官方服务/Matrix 基础 smoke | 基础 smoke 是完整 Project 或 GPU 实验 |
+| 官方 live | Controller/Manager、Team/Workers、暂停 Project、Bridge 与 Matrix smoke 已本地成立；完整实验需同一 correlation 的 task/artifact/Decision/GPU trace | 用静态回放、mock response、角色标签或自报 `pass` 替代 live trace |
 
 ## 硬门槛与否决项
 
@@ -36,8 +37,8 @@ benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确�
 
 | 硬门槛 / 否决风险 | 必须提交的机器证据 | 当前状态 | Release 判定 |
 |---|---|---|---|
-| 核心业务链真实使用 AgentTeams | 同一 Project 的官方 create/workflow/spawn/Matrix 标识，覆盖创建、委派、接单、执行、验收与终态 | bridge 合同完成；无官方 live run | **未满足** |
-| 至少 3 个不同职能 Agent | trace 中至少 3 个真实 AgentTeams Worker，`id`、Matrix user、role 唯一且事件 actor 可解析 | 资源定义 7 个 Worker；仅本地合同验证 | **未满足 live 证明** |
+| 核心业务链真实使用 AgentTeams | 同一 Project 的官方 create/workflow/spawn/Matrix 标识，覆盖创建、委派、接单、执行、验收与终态 | 官方服务和暂停 Project 已 live；完整 lifecycle 未运行 | **未满足** |
+| 至少 3 个不同职能 Agent | trace 中至少 3 个真实 AgentTeams Worker，`id`、Matrix user、role 唯一且事件 actor 可解析 | 四个 Running Worker 与四 Agent Matrix smoke 已 `LIVE_LOCAL`；尚无 task lifecycle | **部分满足** |
 | 动态协作而非固定脚本 | 中间结果触发 conflict/replan；timeout 触发 cancel/replacement/reassign；恢复后继续原 correlation | 逻辑与故障测试完成；无官方事件链 | **未满足 live 证明** |
 | 核心 Skill 可发现、调用、追踪 | Worker 声明、spawn 授权和官方成功 `tool_result`；版本及 package digest 与任务 trace 关联 | 本地 registry/API 可运行；AgentTeams `TOOL_INVOKED` 未 live 验证 | **部分满足** |
 | 高风险动作有人类授权 | R2 先 pause，单次 scope-bound Grant 被 EgoAgentOS 消费，再 resume/replan；重放被拒 | bridge 与本地 approval/RXP 测试完成；无 live receipt | **部分满足** |
@@ -55,7 +56,7 @@ benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确�
 | 复赛维度 | 权重 | 当前可复核优势 | 仍需补齐的评审证据 | 当前判定 |
 |---|---:|---|---|---|
 | 场景价值与可迁移性 | 20% | 面向具身 AI 实验的目标→矩阵→执行→评测→复核→决策闭环；RXP 与 adapter 为领域无关合同；真实 Fashion-MNIST FP32/AMP 工作负载已代码就绪 | 一次官方 AgentTeams+GPU 同源运行、研究员手工基线，以及第二领域的迁移映射 | `PARTIAL` |
-| 多 Agent 协作 | 25% | 7 个职责分离 Worker；bridge 映射 Project/TeamHarness/Matrix；实现 conflict/replan、timeout/reassign/resume/compensation | 一条官方 live trace 证明至少 3 Worker 的动态协作与终态验收 | `BLOCKED` |
+| 多 Agent 协作 | 25% | 官方 Controller/Manager、Active Team、四个 Worker 与四 Agent Matrix smoke 已 `LIVE_LOCAL`；bridge 实现 conflict/replan、timeout/reassign/resume/compensation | 同一 Project 的委派、Skill、R2、动态分支和终态验收 trace | `PARTIAL / BUSINESS GATE BLOCKED` |
 | Skill 工程化 | 20% | 6 个版本化 Skill 包；本地 discovery、digest pin、invocation trace、canary/retire/rollback 已实现并测试 | 在真实 Worker 上证明包存在、spawn 授权、成功调用、失败与版本回滚 | `PARTIAL` |
 | 工程实现与安全审计 | 30% | RXP/1、14 场景 benchmark、独立 trace oracle、content-addressed bundle、TDSQL Nexa SQL adapter、TencentDB Agent Memory v3、per-agent compact、PostgreSQL-compatible 事务/最小权限/append-only/LISTEN-NOTIFY、R2/重放/篡改门禁 | 官方 AgentTeams live fault injection、Nexa/Agent Memory 实例验收、外部 effect exactly-once 与真实恢复时间 | `PARTIAL` |
 | 开源贡献 | 5% | Apache-2.0 代码、JSON Schema、Skill、adapter、测试、runbook 与可复现实验协议均公开可读 | tag/release、干净机安装记录，以及外部 issue、复用或反馈证据 | `PARTIAL` |

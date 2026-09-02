@@ -18,7 +18,7 @@ flowchart TB
   SK["6 versioned Skill contracts"] -. "workflow contract" .-> R
   MCP["4 independently runnable MCP servers"] -. "execution-profile bridge" .-> API
   MCP -. "may carry RXP documents" .-> RXP
-  AT["Official AgentTeams Controller + Matrix\noptional live deployment"] -. "Project API + TeamHarness" .-> AB["Durable AgentTeams bridge\ncorrelation · replan · recovery"]
+  AT["Official AgentTeams Controller + Matrix\nLIVE_LOCAL deployment"] -. "Project API + TeamHarness" .-> AB["Durable AgentTeams bridge\ncorrelation · replan · recovery"]
   AB -. "validated artifact receipts" .-> API
   AB -. "RXP digests and cell refs" .-> RXP
   GPU["Fashion-MNIST FP32 vs AMP\nreal bounded single-GPU adapter"] -. "unrun external execution" .-> AB
@@ -93,12 +93,14 @@ memory telemetry, independent review, and final Decision under explicit 900-seco
 0.25-GPU-hour, and 100-MiB limits. [`../semifinal_acceptance/`](../semifinal_acceptance/)
 recomputes the content-addressed bundle and rejects Matrix gaps, receipt reuse, forged origin,
 trace/Decision drift, resource overrun, and incomplete recovery evidence. No official
-AgentTeams/GPU execution is bundled, so a locally valid contract still reports
-`CONTRACT_PASS_ORIGIN_UNVERIFIED`.
+AgentTeams-to-GPU execution is bundled, so a locally valid contract still reports
+`CONTRACT_PASS_ORIGIN_UNVERIFIED` for the experiment origin.
 
-This profile still reports `not configured` until real health, Team/Worker readiness,
-Project API, and Matrix responses are captured. Unit fixtures validate the contract and
-state machine; they are not live-execution evidence.
+The 2026-09-02 local profile captured real Controller/Manager health, an Active Team,
+four Running Worker resources, a paused Project, Bridge connectivity, and 36 Matrix events
+from four distinct Agent identities. This is `LIVE_LOCAL` collaboration-infrastructure
+evidence, not a completed Project workflow, Skill invocation, fault/recovery scenario, or
+physical-GPU experiment. See [`acceptance/live-local-2026-09-02.md`](acceptance/live-local-2026-09-02.md).
 
 ## Deployment profiles
 
@@ -109,9 +111,9 @@ state machine; they are not live-execution evidence.
   roles/RLS, candidate-only memory writes, append-only ledgers, LISTEN/NOTIFY, CAS/advisory
   locks, restart recovery, and migration replay. This is the production architecture path,
   but it does not imply a cloud database was exercised.
-- `agentteams` (opt-in executable profile): external official AgentTeams deployment plus
-  `apps/agentteams_bridge`; the bridge itself performs fail-closed Controller/Team/Matrix
-  probes before dispatch.
+- `agentteams` (opt-in executable profile): official AgentTeams deployment plus
+  `apps/agentteams_bridge`; the 2026-09-02 loopback deployment passed Controller/Team/Worker/
+  Matrix probes and remains paused before GPU dispatch.
 - `platform` (target contract): PolarDB-PG-compatible DB, object storage, OTel collector,
   AgentTeams, Higress, and Nacos. A fail-closed preflight checks schema, roles, policies,
   topology and notification capabilities, but the current health API still reports external
@@ -119,7 +121,8 @@ state machine; they are not live-execution evidence.
 - `lab`: platform profile plus the real Fashion-MNIST scheduler/GPU adapter and a trusted
   dataset root. The adapter is implemented; the external run remains unverified.
 
-The local profile is a functioning control-plane path, not a static UI. Agent reasoning,
-the model workload, and hardware telemetry in the included EgoLite scenario are deterministic
-synthetic fixtures and visibly labeled. The separate Fashion-MNIST adapter operates on real
-data/GPU only when explicitly launched; no such launch is claimed by this repository snapshot.
+The local profile is a functioning control-plane path, not a static UI. The public GitHub Pages
+build remains a static replay. The separate local stack can make real model calls and run the
+official collaboration services, while the included EgoLite metrics remain deterministic
+synthetic fixtures. The Fashion-MNIST adapter operates on real data/GPU only when explicitly
+launched; no such launch is claimed by this repository snapshot.

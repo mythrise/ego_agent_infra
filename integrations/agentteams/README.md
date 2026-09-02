@@ -28,6 +28,12 @@ replay. This proves live model HTTP calls and model-output contract handling onl
 It deliberately records official AgentTeams Controller, Matrix, and physical GPU
 as `NOT_RUN`; those labels cannot be promoted by a successful model response.
 
+That historical harness label remains correct for its own frozen artifact. Separately, the
+2026-09-02 local deployment verified the official Controller/Manager, Active Team, four Running
+Worker resources, a paused Project, Bridge handshake, and Matrix messages from four Agent
+identities as `LIVE_LOCAL`. It did not execute the Project through a physical GPU or terminal
+Decision. See [`../../docs/acceptance/live-local-2026-09-02.md`](../../docs/acceptance/live-local-2026-09-02.md).
+
 ## Official contract pin
 
 Implementation was checked against only the official
