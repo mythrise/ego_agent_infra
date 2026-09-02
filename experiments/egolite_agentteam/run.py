@@ -17,6 +17,12 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 import yaml  # type: ignore[import-untyped]
 
 from apps.api.service import DEMO_TASK_ID, ResearchOpsService
+from apps.api.research_os.models import (
+    CompileResearchRequest,
+    FocusMessage,
+    StageCommitRequest,
+)
+from apps.api.research_os.service import ResearchOSService
 from apps.api.store_factory import create_store
 from integrations.agentteams.model_gateway import (
     ModelCall,
@@ -203,6 +209,42 @@ def _control_plane_replay(output_dir: Path) -> Dict[str, Any]:
     }
 
 
+def _commit_role_focus(
+    research_os: ResearchOSService,
+    *,
+    role: str,
+    stage_id: str,
+    trace_id: str,
+    output: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Close one model-backed role phase and compact its private local attention."""
+
+    return research_os.commit_stage(
+        role,
+        StageCommitRequest(
+            team_id="egoagentos-final-acceptance",
+            user_id="mythrise",
+            session_id=trace_id,
+            task_id="ego3d-b-final",
+            stage_id=stage_id,
+            messages=[
+                FocusMessage(
+                    role="assistant",
+                    content=json.dumps(output, ensure_ascii=False, sort_keys=True),
+                )
+            ],
+            decisions=["The %s phase returned a schema-valid output." % role],
+            evidence=["Model response and HTTP receipt are content-addressed."],
+            blockers=[
+                "Official AgentTeams, Matrix, Tencent cloud memory, and physical GPU remain NOT_RUN."
+            ],
+            next_actions=["Advance only through the deterministic next gate."],
+            validated_facts=["The external model call for %s completed." % role],
+        ),
+        sync_remote=False,
+    )
+
+
 def _checksums(root: Path, excluded: Iterable[Path] = ()) -> Dict[str, str]:
     skip = {path.resolve() for path in excluded}
     result: Dict[str, str] = {}
@@ -228,6 +270,12 @@ def run_acceptance(
     shutil.copy2(workspace / "examples/egolite/experiment-plan.yaml", output_dir / "input-plan.yaml")
 
     trace_id = "trace_%s" % uuid.uuid4().hex
+    research_os = ResearchOSService(memory_root=output_dir / "agent-memory")
+    compiled = research_os.compile(
+        CompileResearchRequest.model_validate(
+            _read_yaml(workspace / "examples/ego3d_b_branch/input.yaml")
+        )
+    )
     objective_digest = _digest(goal)
     plan_digest = _digest(plan)
     truth_boundary = {
@@ -251,6 +299,15 @@ def run_acceptance(
         {"objective_digest": objective_digest},
         output_dir,
     )
+    focus_receipts: Dict[str, Dict[str, Any]] = {
+        "research-pi": _commit_role_focus(
+            research_os,
+            role="research-pi",
+            stage_id="INTAKE",
+            trace_id=trace_id,
+            output=calls["research-pi"].output,
+        )
+    }
     context_input = {
         "trace_id": trace_id,
         "goal": goal,
@@ -272,6 +329,13 @@ def run_acceptance(
         {"input_digest": context_digest},
         output_dir,
     )
+    focus_receipts["scout"] = _commit_role_focus(
+        research_os,
+        role="scout",
+        stage_id="CONTEXT",
+        trace_id=trace_id,
+        output=calls["scout"].output,
+    )
     calls["experiment-architect"] = _call_role(
         gateway,
         "experiment-architect",
@@ -287,6 +351,13 @@ def run_acceptance(
         },
         {"plan_digest": plan_digest},
         output_dir,
+    )
+    focus_receipts["experiment-architect"] = _commit_role_focus(
+        research_os,
+        role="experiment-architect",
+        stage_id="PLAN",
+        trace_id=trace_id,
+        output=calls["experiment-architect"].output,
     )
 
     control = _control_plane_replay(output_dir)
@@ -324,11 +395,26 @@ def run_acceptance(
         {"reviewed_evidence_digest": reviewed_evidence_digest},
         output_dir,
     )
+    focus_receipts["reviewer"] = _commit_role_focus(
+        research_os,
+        role="reviewer",
+        stage_id="VERIFY",
+        trace_id=trace_id,
+        output=calls["reviewer"].output,
+    )
 
     for role, call in calls.items():
         _write_json(output_dir / "agents" / (role + ".json"), call.output)
         _write_json(output_dir / "receipts" / (role + ".json"), call.receipt)
     _write_json(output_dir / "control-plane.json", control)
+    _write_json(
+        output_dir / "research-os.json",
+        {
+            "compile": compiled,
+            "focus_receipts": focus_receipts,
+            "storage": research_os.storage_status(),
+        },
+    )
 
     structural_pass = all(
         [
@@ -358,6 +444,9 @@ def run_acceptance(
         },
         "output": {
             "model_call_count": len(calls),
+            "research_matrix_cells": compiled["matrix"]["cell_count"],
+            "resource_review": compiled["resource_review"]["decision"],
+            "focus_compact_count": len(focus_receipts),
             "distinct_roles": sorted(calls),
             "control_plane_stage": completed_task["stage"],
             "evidence_gate": completed_task["gate_result"]["status"],

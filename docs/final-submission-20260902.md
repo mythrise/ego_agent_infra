@@ -56,10 +56,15 @@ CPU/GPU 预算、并发、row shards、checkpoint/resume、缓存、barrier、va
 | per-agent SQLite + FOCUS.md compact | `LIVE_LOCAL · PASS` |
 | secure memory / control-plane / RXP tests | `LIVE_LOCAL · PASS` |
 | Agnes 风格静态 Demo | `SYNTHETIC_FIXTURE · browser-tested` |
-| OpenAI-compatible 外部模型 harness | 复用上一轮 live harness；本轮最终回归需单独生成 receipt |
+| OpenAI-compatible 外部模型 harness | `LIVE · PASS`：4/4 HTTP 200，4 角色 schema 校验、独立复核与离线哈希重验通过 |
 | TDSQL Nexa instance | `NOT_CONFIGURED / NOT_RUN` |
 | TencentDB Agent Memory instance | `NOT_CONFIGURED / NOT_RUN` |
 | 官方 AgentTeams Controller + Matrix + GPU | `NOT_RUN`，不能由本地角色标签代替 |
+
+本轮 receipt：`trace_8f4e3f93754b4d4faafa4c7fa962373a`。它验证的不是 Ego3D 模型精度，
+而是外部模型角色输出进入本地确定性 Research Compiler、资源门、13 阶段控制面和 per-agent
+compact 后仍可完整离线复核。完整输入、输出、时序、摘要与限制见
+[`acceptance/2026-09-02-final-live-model.md`](acceptance/2026-09-02-final-live-model.md)。
 
 ## 评委入口
 
@@ -69,3 +74,14 @@ CPU/GPU 预算、并发、row shards、checkpoint/resume、缓存、barrier、va
 - 数学与测试方案：[`../examples/ego3d_b_branch/B_BRANCH_DESIGN.md`](../examples/ego3d_b_branch/B_BRANCH_DESIGN.md)
 - 数据面合同：[`agent-native-data-plane.md`](agent-native-data-plane.md)
 - 复赛记分卡：[`semifinal-scorecard.md`](semifinal-scorecard.md)
+
+## 最终 ZIP
+
+```bash
+uv run --python 3.9 python scripts/build_final_release.py \
+  --evidence-dir artifacts/runtime/egolite-agentteam-20260902-final
+```
+
+构建器先调用独立 verifier 校验 evidence 目录，再扫描凭据，最后把源码、B 支线编译结果、
+四角色原始输入/输出/receipt、控制面、私有 SQLite/`FOCUS.md` 与 `SHA256SUMS.json` 一起写入
+确定性 ZIP。任何哈希不一致或疑似密钥都会拒绝出包。

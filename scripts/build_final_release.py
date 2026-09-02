@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from apps.api.research_os.cli import compile_file
+from experiments.egolite_agentteam.verify import verify_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +47,14 @@ def _scan(relative: str, payload: bytes) -> None:
     if path.name in SENSITIVE_NAMES or path.suffix.lower() in {".pem", ".key", ".p12"}:
         raise ValueError("refusing sensitive filename: %s" % relative)
     for pattern in SECRET_PATTERNS:
-        if pattern.search(payload):
+        match = pattern.search(payload)
+        if match is None:
+            continue
+        # The security regression suite intentionally carries this low-entropy
+        # rejection canary. It is not a credential and must remain in the source ZIP.
+        if match.group(0).lower() == b"authorization: bearer secret-secret-secret":
+            continue
+        if match:
             raise ValueError("possible credential in release file: %s" % relative)
 
 
@@ -58,7 +66,7 @@ def _zip_info(name: str, executable: bool) -> zipfile.ZipInfo:
     return info
 
 
-def _release_files() -> List[Tuple[str, bytes, bool]]:
+def _release_files(evidence_dir: Optional[Path] = None) -> List[Tuple[str, bytes, bool]]:
     files: List[Tuple[str, bytes, bool]] = []
     for path in _tracked_files():
         if not path.is_file() or path.is_symlink():
@@ -77,11 +85,29 @@ def _release_files() -> List[Tuple[str, bytes, bool]]:
             payload = path.read_bytes()
             _scan(relative, payload)
             files.append((relative, payload, False))
+
+    if evidence_dir is not None:
+        evidence_dir = evidence_dir.resolve()
+        verification = verify_bundle(evidence_dir)
+        if verification.get("verified") is not True:
+            raise ValueError(
+                "refusing unverified live evidence: %s"
+                % json.dumps(verification.get("errors", []), ensure_ascii=False)
+            )
+        for path in sorted(evidence_dir.rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = "evidence/live-model-acceptance/%s" % path.relative_to(
+                evidence_dir
+            ).as_posix()
+            payload = path.read_bytes()
+            _scan(relative, payload)
+            files.append((relative, payload, False))
     return sorted(files, key=lambda value: value[0])
 
 
-def build(output: Path) -> Dict[str, object]:
-    files = _release_files()
+def build(output: Path, evidence_dir: Optional[Path] = None) -> Dict[str, object]:
+    files = _release_files(evidence_dir)
     records = [
         {"path": relative, "bytes": len(payload), "sha256": _sha(payload)}
         for relative, payload, _ in files
@@ -94,10 +120,14 @@ def build(output: Path) -> Dict[str, object]:
         "truth_boundary": {
             "local_contracts": "LIVE_LOCAL",
             "web_demo": "SYNTHETIC_FIXTURE",
+            "external_model_calls": "LIVE" if evidence_dir is not None else "NOT_PACKAGED",
             "tdsql_nexa": "NOT_CONFIGURED",
             "tencentdb_agent_memory": "NOT_CONFIGURED",
             "official_agentteams_matrix_gpu": "NOT_RUN",
         },
+        "live_evidence": (
+            "verified_and_packaged" if evidence_dir is not None else "not_packaged"
+        ),
         "files": records,
     }
     manifest_payload = (
@@ -136,8 +166,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         type=Path,
         default=ROOT / "dist" / (PREFIX + ".zip"),
     )
+    parser.add_argument(
+        "--evidence-dir",
+        type=Path,
+        help=(
+            "optional live model-team acceptance directory; it must pass the offline "
+            "verifier before it is secret-scanned and packaged"
+        ),
+    )
     args = parser.parse_args(argv)
-    print(json.dumps(build(args.output), sort_keys=True))
+    print(json.dumps(build(args.output, args.evidence_dir), sort_keys=True))
     return 0
 
 
