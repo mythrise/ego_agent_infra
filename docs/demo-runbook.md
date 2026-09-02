@@ -1,7 +1,8 @@
 # Judge replay runbook
 
-This is the semifinal replay path for the repository snapshot dated 2026-08-29. It
-does not require a GPU, AgentTeams, Nacos, Higress, PolarDB, or other cloud credentials.
+This is the semifinal replay path for the repository snapshot dated 2026-09-02. The
+static replay does not require a GPU or cloud credentials. A separate official
+AgentTeams `LIVE_LOCAL` path is documented below and deliberately stops before GPU.
 
 ## 0. Truth boundary before the demo
 
@@ -13,7 +14,7 @@ does not require a GPU, AgentTeams, Nacos, Higress, PolarDB, or other cloud cred
 | RXP API | schema catalog, synthetic fixture, structural ledger verification | RXP persistence in the task store or issuer trust |
 | Skill API | six packages discovered, three deterministic handlers, digest-bound traces | durable rollout state or Nacos publication |
 | PostgreSQL | real PostgreSQL 16 store/role/ledger contract, 32/32 integration tests | PolarDB cloud deployment or PITR |
-| AgentTeams | executable bridge/finalization contracts and honest `UNIMPLEMENTED/SKIP` target | per-scenario live fault/replay harness or official Matrix collaboration |
+| AgentTeams | static replay proves only the bridge contract; the separate local-live acceptance proves official Controller/Manager, four Worker resources, Matrix and Bridge connectivity | a physical GPU run or public hosted Controller |
 
 ## 1. Start the local stack
 
@@ -42,10 +43,10 @@ export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
 ```
 
-Evidence boundary: `docker compose config` and the real PostgreSQL 16 data-layer suite
-were verified on 2026-08-29. API/Web image build was not verified on that host because
-Docker Hub metadata requests timed out. On a network with registry access, the command
-above remains the intended replay path. The native fallback avoids image pulls:
+Evidence boundary: on 2026-09-02 the full local Compose stack passed PostgreSQL, API,
+Web and Bridge health checks. The official AgentTeams path additionally passed four
+distinct Matrix Agent replies. The native fallback remains useful when only the
+deterministic replay is needed:
 
 ```bash
 uv sync --python 3.9 --extra dev
@@ -73,7 +74,7 @@ printing it:
 
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-flash
+export EGO_AGENT_MODEL=agnes-2.5-pro
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 ```
@@ -83,6 +84,24 @@ Paste only `EGO_OPERATOR_KEY` into the browser's operator-session field. Never p
 model receipts, four per-Agent compact receipts, a valid event chain, a compiled matrix digest,
 and `execution_started=false`. It must still show official AgentTeams, Matrix transport,
 retrieval, and physical GPU as `NOT_RUN` unless separate receipts have been ingested.
+
+## 1A. Deploy and verify official AgentTeams locally
+
+```bash
+python3 scripts/deploy_local_live_stack.py all
+```
+
+This pins official AgentTeams `v1.2.3`, configures `agnes-2.5-pro`, creates Team
+`ego-researchops`, four Worker resources and L2 Human `ego-judge`, joins the Human to the
+Team room, and creates paused Project `egoagentos-gpu-gated-v1`. It then starts the
+PostgreSQL-backed EgoAgentOS API and AgentTeams Bridge. The generated public receipt is
+`.runtime/live-stack-public.json`; raw credentials stay only in the mode-0600
+`.runtime/live-stack.env`.
+
+Do not resume the workflow until a GPU host has been supplied and independently reviewed.
+The 2026-09-02 local run reports `leaderReady=true`, three ready subordinate Workers and
+four running Worker resources in total. The Matrix smoke received messages from all four
+Agent identities. See [the frozen acceptance note](acceptance/live-local-2026-09-02.md).
 
 ## 2. Run the six-minute cockpit replay
 

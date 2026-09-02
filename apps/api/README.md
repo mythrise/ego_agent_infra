@@ -84,7 +84,7 @@ Configure the model plane only on the API process:
 
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-flash
+export EGO_AGENT_MODEL=agnes-2.5-pro
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 ```
