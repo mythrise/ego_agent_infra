@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .ladder import canonical_sha256
 from .models import ResourcePlan
@@ -14,12 +14,31 @@ class IndependentResourceReviewer:
     reviewer_id = "resource-reviewer/external-v1"
     policy_version = "resource-efficiency-policy/1"
 
-    def review(self, plan: ResourcePlan) -> Dict[str, Any]:
+    def review(
+        self,
+        plan: ResourcePlan,
+        *,
+        expected_matrix_cells: Optional[int] = None,
+        expected_folds: Optional[int] = None,
+    ) -> Dict[str, Any]:
         findings: List[Dict[str, str]] = []
 
         def veto(code: str, message: str, remediation: str) -> None:
             findings.append(
                 {"severity": "VETO", "code": code, "message": message, "remediation": remediation}
+            )
+
+        if expected_matrix_cells is not None and plan.matrix_cells != expected_matrix_cells:
+            veto(
+                "MATRIX_CARDINALITY_MISMATCH",
+                "The resource declaration does not match the compiled experiment matrix.",
+                "Set matrix_cells to the compiler-produced cell_count before approval.",
+            )
+        if expected_folds is not None and plan.folds != expected_folds:
+            veto(
+                "FOLD_CARDINALITY_MISMATCH",
+                "The resource declaration does not match the compiled fold set.",
+                "Set folds to the number of unique compiler input folds before approval.",
             )
 
         if plan.recomputes_fold_invariant_data or not plan.shared_dataset_cache:
@@ -81,6 +100,10 @@ class IndependentResourceReviewer:
             "findings": findings,
             "human_approval_observed": plan.human_approved,
             "human_approval_can_override": False,
+            "compiled_expectation": {
+                "matrix_cells": expected_matrix_cells,
+                "folds": expected_folds,
+            },
             "plan": plan.model_dump(mode="json"),
         }
         return {

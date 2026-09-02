@@ -41,6 +41,9 @@ headline、5 folds、3 seeds、B-DIAG 与 B0–B7 树、验收指标和资源计
 - matrix：`89a47d8e3952f047ddec1b05b6db18c223a985cc8b049614677e244144d89718`
 - matrix cells：165
 
+资源计划同时声明 `matrix_cells=165`、`folds=5`；编译服务把这两项与实际产物做硬绑定，
+任一不一致都返回 `MATRIX_CARDINALITY_MISMATCH` 或 `FOLD_CARDINALITY_MISMATCH` 并 VETO。
+
 API key 只从进程环境读取；receipt 固定记录 `credential_persisted=false`，证据目录和最终 ZIP
 均执行密钥扫描。
 

@@ -30,7 +30,11 @@ class ResearchOSService:
     def compile(self, body: CompileResearchRequest) -> Dict[str, Any]:
         result = compile_research_input(body.input)
         if body.resource_plan is not None:
-            review = self.reviewer.review(body.resource_plan)
+            review = self.reviewer.review(
+                body.resource_plan,
+                expected_matrix_cells=result["matrix"]["cell_count"],
+                expected_folds=len(set(body.input.folds)),
+            )
         else:
             review = {
                 "decision": "NOT_RUN",

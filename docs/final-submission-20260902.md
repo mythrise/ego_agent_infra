@@ -15,7 +15,7 @@ Gate 决定是否采信，并在每个阶段把各 Agent 的注意力压缩成�
 3. **双重记忆面**：TencentDB Agent Memory 承担隔离的 L0–L3 上下文；每 Agent 单独 SQLite +
    `FOCUS.md` 提供可读、可重放的本地投影。每个阶段自动 archive/compact，而不是无限增长聊天记录。
 4. **不可讨价还价的资源 Reviewer**：它不评价研究“想不想做”，只判断计划是否浪费或不可恢复；
-   人类审批不能覆盖 VETO，只能修改计划。
+   人类审批不能覆盖 VETO，只能修改计划；声明的 fold/cell 数必须与编译产物精确相等。
 5. **Agent-native data authority**：TDSQL Nexa 是生产事务/证据权威，复用 SQL 事务、权限、
    append-only 和事件通知；腾讯端未配置时 fail closed。
 

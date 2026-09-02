@@ -129,6 +129,15 @@ def test_independent_resource_veto_survives_human_approval() -> None:
     assert safe["decision"] == "PASS"
     assert safe["gate"] == "ALLOW_APPROVAL_GATE"
 
+    mismatched = IndependentResourceReviewer().review(
+        _good_resource_plan(), expected_matrix_cells=66, expected_folds=2
+    )
+    assert mismatched["decision"] == "VETO"
+    assert {finding["code"] for finding in mismatched["findings"]} == {
+        "MATRIX_CARDINALITY_MISMATCH",
+        "FOLD_CARDINALITY_MISMATCH",
+    }
+
 
 def test_each_agent_gets_private_database_markdown_and_digest_chain(tmp_path: Path) -> None:
     registry = AgentMemoryRegistry(tmp_path)
@@ -197,11 +206,15 @@ def test_research_os_routes_expose_truthful_storage_and_full_compile(tmp_path: P
         headers=TEST_AUTHORIZATION_HEADERS,
         json={
             "input": _research_input(idea="Calibrate translation").model_dump(mode="json"),
-            "resource_plan": _good_resource_plan().model_dump(mode="json"),
+            "resource_plan": _good_resource_plan(matrix_cells=66, folds=2).model_dump(mode="json"),
         },
     )
     assert compiled.status_code == 200, compiled.text
     assert compiled.json()["resource_review"]["decision"] == "PASS"
+    assert compiled.json()["resource_review"]["compiled_expectation"] == {
+        "matrix_cells": 66,
+        "folds": 2,
+    }
 
     committed = client.post(
         "/api/v1/research/agents/planner/stages/commit",

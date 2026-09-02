@@ -89,7 +89,7 @@ input:
           runnable: true
           hypothesis: Finger refinement helps only after the B6 wrist gate passes.
 resource_plan:
-  matrix_cells: 150
+  matrix_cells: 165
   folds: 5
   estimated_cpu_hours: 96
   estimated_gpu_hours: 120
