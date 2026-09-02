@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import App, { approvalTokenForGeneration, EvidenceLedger, RXPProtocolView, StageSpine } from "./App";
+import App, { approvalTokenForGeneration, EvidenceLedger, ResearchComposer, RXPProtocolView, StageSpine } from "./App";
 import { clearOperatorSession, researchApi } from "./api";
 import { syntheticDashboard, syntheticTask } from "./demoData";
 import { syntheticRXP } from "./rxpDemoData";
@@ -23,6 +23,33 @@ afterEach(() => {
 });
 
 describe("ResearchOps cockpit primitives", () => {
+  it("accepts custom input for all three judge modes and can load a visible example", () => {
+    render(<ResearchComposer runtimeMode="static_replay" />);
+
+    const editor = screen.getByRole("textbox", { name: /paste a real project brief/i });
+    expect(editor).toHaveValue("");
+    expect(screen.getByText("Example input")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use this example" }));
+    expect((editor as HTMLTextAreaElement).value).toContain("C7 RTMW-G5");
+
+    fireEvent.click(screen.getByRole("tab", { name: /rough idea/i }));
+    expect(screen.getByRole("textbox", { name: /paste a real project brief/i })).toHaveValue("");
+    fireEvent.change(screen.getByRole("textbox", { name: /paste a real project brief/i }), {
+      target: { value: "Frozen baseline plus a bounded translation-residual idea." },
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /baseline only/i }));
+    expect(screen.getByRole("textbox", { name: /paste a real project brief/i })).toHaveValue("");
+    fireEvent.click(screen.getByRole("tab", { name: /rough idea/i }));
+    expect(screen.getByRole("textbox", { name: /paste a real project brief/i })).toHaveValue(
+      "Frozen baseline plus a bounded translation-residual idea.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /compile research tree/i }));
+    expect(screen.getByText("normalized + hashed")).toBeInTheDocument();
+  });
+
   it("marks the current deterministic workflow stage", () => {
     render(<StageSpine current="APPROVAL" reducedMotion />);
 

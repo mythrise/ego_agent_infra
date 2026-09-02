@@ -667,13 +667,64 @@ const composerLevels: Array<{ id: ComposerLevel; labelKey: TranslationKey; detai
   { id: "baseline", labelKey: "composer.level.baseline", detailKey: "composer.level.baselineDetail" },
 ];
 
-function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtimeMode"] }) {
+const composerModeDefinitions: Record<ComposerLevel, {
+  guideKey: TranslationKey;
+  placeholderKey: TranslationKey;
+  exampleKey: TranslationKey;
+  requirementKeys: TranslationKey[];
+}> = {
+  detailed: {
+    guideKey: "composer.mode.detailedGuide",
+    placeholderKey: "composer.prompt.detailed",
+    exampleKey: "composer.example.detailed",
+    requirementKeys: [
+      "composer.requirement.detailedBaseline",
+      "composer.requirement.detailedBranches",
+      "composer.requirement.detailedEvidence",
+    ],
+  },
+  idea: {
+    guideKey: "composer.mode.ideaGuide",
+    placeholderKey: "composer.prompt.idea",
+    exampleKey: "composer.example.idea",
+    requirementKeys: [
+      "composer.requirement.ideaBaseline",
+      "composer.requirement.ideaDirection",
+      "composer.requirement.ideaConstraints",
+    ],
+  },
+  baseline: {
+    guideKey: "composer.mode.baselineGuide",
+    placeholderKey: "composer.prompt.baseline",
+    exampleKey: "composer.example.baseline",
+    requirementKeys: [
+      "composer.requirement.baselineCode",
+      "composer.requirement.baselineMetrics",
+      "composer.requirement.baselineBudget",
+    ],
+  },
+};
+
+export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtimeMode"] }) {
   const { t } = useI18n();
   const [level, setLevel] = useState<ComposerLevel>("detailed");
-  const [prompt, setPrompt] = useState(
-    "Freeze C7 RTMW-G5. Replace the zero head-to-optical-center assumption, isolate t and R, then repair the wrist seam.",
-  );
+  const [inputs, setInputs] = useState<Record<ComposerLevel, string>>({
+    detailed: "",
+    idea: "",
+    baseline: "",
+  });
   const [compiled, setCompiled] = useState(false);
+  const mode = composerModeDefinitions[level];
+  const prompt = inputs[level];
+
+  const updatePrompt = (value: string) => {
+    setInputs((current) => ({ ...current, [level]: value }));
+    setCompiled(false);
+  };
+
+  const loadExample = () => {
+    updatePrompt(t(mode.exampleKey));
+  };
 
   return (
     <section className="research-composer" id="compose" aria-labelledby="composer-title">
@@ -706,25 +757,60 @@ function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtime
             </button>
           ))}
         </div>
-        <div className="composer-input">
-          <label htmlFor="research-prompt">{t("composer.promptLabel")}</label>
-          <textarea
-            id="research-prompt"
-            value={prompt}
-            onChange={(event) => { setPrompt(event.target.value); setCompiled(false); }}
-            rows={3}
-            placeholder={t("composer.promptPlaceholder")}
-          />
-          <div className="composer-input-foot">
-            <span>
-              {runtimeMode === "static_replay"
-                ? t("composer.browserExplainer")
-                : t("composer.localControlPlane")}
-            </span>
-            <button type="button" onClick={() => setCompiled(true)} disabled={!prompt.trim()}>
-              {t("composer.compile")} <ArrowRight size={15} />
-            </button>
+        <div className="composer-workbench" aria-label={t("composer.workspaceLabel")}>
+          <div className="composer-input">
+            <div className="composer-pane-heading">
+              <div>
+                <span>{t("composer.customInput")}</span>
+                <h3>{t(composerLevels.find((item) => item.id === level)?.labelKey ?? "composer.level.detailed")}</h3>
+                <p id={`composer-guide-${level}`}>{t(mode.guideKey)}</p>
+              </div>
+              <button type="button" className="composer-clear" onClick={() => updatePrompt("")} disabled={!prompt}>
+                {t("composer.clear")}
+              </button>
+            </div>
+            <label htmlFor={`research-prompt-${level}`}>{t("composer.customInputHint")}</label>
+            <textarea
+              id={`research-prompt-${level}`}
+              aria-describedby={`composer-guide-${level}`}
+              value={prompt}
+              onChange={(event) => updatePrompt(event.target.value)}
+              rows={12}
+              placeholder={t(mode.placeholderKey)}
+            />
+            <div className="composer-requirements" aria-label={t("composer.requirements")}>
+              <strong>{t("composer.requirements")}</strong>
+              <ul>
+                {mode.requirementKeys.map((key) => (
+                  <li key={key}><Check size={13} aria-hidden="true" />{t(key)}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="composer-input-foot">
+              <span>
+                {runtimeMode === "static_replay"
+                  ? t("composer.browserExplainer")
+                  : t("composer.localControlPlane")}
+                <em>{t("composer.characters", { count: prompt.length })}</em>
+              </span>
+              <button type="button" onClick={() => setCompiled(true)} disabled={!prompt.trim()}>
+                {t("composer.compile")} <ArrowRight size={15} />
+              </button>
+            </div>
           </div>
+          <aside className="composer-example" aria-labelledby={`composer-example-${level}`}>
+            <div className="composer-example-heading">
+              <div>
+                <span>{t("composer.exampleNote")}</span>
+                <h3 id={`composer-example-${level}`}>{t("composer.exampleTitle")}</h3>
+              </div>
+              <span className="composer-example-mode">0{composerLevels.findIndex((item) => item.id === level) + 1}</span>
+            </div>
+            <div className="composer-example-content">{t(mode.exampleKey)}</div>
+            <button type="button" className="composer-example-action" onClick={loadExample}>
+              <Check size={15} aria-hidden="true" /> {t("composer.loadExample")}
+            </button>
+          </aside>
         </div>
       </div>
 
