@@ -546,7 +546,7 @@ def main() -> int:
     parser.add_argument(
         "--base-url", default=os.getenv("EGO_AGENT_MODEL_BASE_URL", ""), help="non-secret URL"
     )
-    parser.add_argument("--model", default=os.getenv("EGO_AGENT_MODEL", "agnes-2.5-flash"))
+    parser.add_argument("--model", default=os.getenv("EGO_AGENT_MODEL", "agnes-2.5-pro"))
     args = parser.parse_args()
     api_key = os.getenv("EGO_AGENT_MODEL_API_KEY", "")
     if not args.base_url or not api_key:
