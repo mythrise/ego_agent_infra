@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
@@ -69,6 +70,21 @@ class FakeGateway:
         )
 
 
+class RetryGateway(FakeGateway):
+    def __init__(self) -> None:
+        self.calls: Dict[str, int] = {}
+
+    def complete_json(self, **kwargs: Any) -> ModelCall:
+        role = kwargs["role"]
+        self.calls[role] = self.calls.get(role, 0) + 1
+        call = super().complete_json(**kwargs)
+        if role == "research-pi" and self.calls[role] == 1:
+            return ModelCall(
+                output={**call.output, "approval_required": False}, receipt=call.receipt
+            )
+        return call
+
+
 def test_reviewer_verdict_normalization_retains_provider_value() -> None:
     normalized = _normalize_reviewer_verdict({"verdict": "PASS_WITH_BOUNDARY"})
     assert normalized["verdict"] == "WARN"
@@ -106,3 +122,22 @@ def test_bounded_model_team_acceptance_bundle(tmp_path: Path) -> None:
     verification = verify_bundle(output)
     assert verification["verified"] is True
     assert verification["errors"] == []
+
+
+def test_schema_failure_is_retried_and_audited_inside_the_same_trace(tmp_path: Path) -> None:
+    workspace = Path(__file__).resolve().parents[2]
+    output = tmp_path / "retried-acceptance"
+    gateway = RetryGateway()
+    result = run_acceptance(gateway, workspace=workspace, output_dir=output)  # type: ignore[arg-type]
+
+    assert result["structural_acceptance"] == "PASS"
+    assert result["output"]["model_call_count"] == 5
+    assert result["output"]["model_retry_count"] == 1
+    receipt = json.loads(
+        (output / "receipts" / "research-pi.json").read_text(encoding="utf-8")
+    )
+    assert receipt["attempt"] == 2
+    assert receipt["prior_failures"][0]["message"] == (
+        "research-pi must preserve the R2 approval gate"
+    )
+    assert verify_bundle(output)["verified"] is True

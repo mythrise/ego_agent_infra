@@ -45,8 +45,14 @@ def verify_bundle(root: Path) -> Dict[str, Any]:
     output = acceptance.get("output", {})
     if set(output.get("distinct_roles", [])) != EXPECTED_ROLES:
         errors.append("model role set is incomplete")
-    if output.get("model_call_count") != len(EXPECTED_ROLES):
-        errors.append("model call count is not four")
+    model_call_count = output.get("model_call_count")
+    if not isinstance(model_call_count, int) or not 4 <= model_call_count <= 12:
+        errors.append("model call count is outside the bounded 4..12 range")
+    if output.get("validated_role_count") != len(EXPECTED_ROLES):
+        errors.append("validated model role count is not four")
+    if isinstance(model_call_count, int):
+        if output.get("model_retry_count") != model_call_count - len(EXPECTED_ROLES):
+            errors.append("model retry count does not reconcile")
     if output.get("research_matrix_cells") != 165:
         errors.append("research matrix does not contain the frozen 165 cells")
     if output.get("resource_review") != "PASS":
@@ -87,6 +93,19 @@ def verify_bundle(root: Path) -> Dict[str, Any]:
     receipt_roles = {path.stem for path in (root / "receipts").glob("*.json")}
     if receipt_roles != EXPECTED_ROLES:
         errors.append("receipt role set is incomplete")
+    receipt_attempts = 0
+    for path in (root / "receipts").glob("*.json"):
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        attempt = receipt.get("attempt")
+        failures = receipt.get("prior_failures")
+        if not isinstance(attempt, int) or not 1 <= attempt <= 3:
+            errors.append("%s has an invalid bounded attempt" % path.stem)
+            continue
+        if not isinstance(failures, list) or len(failures) != attempt - 1:
+            errors.append("%s retry history does not match attempt" % path.stem)
+        receipt_attempts += attempt
+    if isinstance(model_call_count, int) and receipt_attempts != model_call_count:
+        errors.append("receipt attempts do not reconcile with model calls")
 
     return {
         "schema": "egoagentos.egolite-model-team-verification/v1",
