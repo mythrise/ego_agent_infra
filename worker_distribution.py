@@ -56,6 +56,7 @@ apps/agentteams_bridge/extensions/workspace_authority.py
 apps/agentteams_bridge/extensions/user_status.py
 apps/agentteams_bridge/main.py
 apps/agentteams_bridge/models.py
+apps/agentteams_bridge/operator_auth.py
 apps/agentteams_bridge/postgres_store.py
 apps/agentteams_bridge/service.py
 apps/agentteams_bridge/settings.py
@@ -70,6 +71,7 @@ apps/api/evidence.py
 apps/api/main.py
 apps/api/memory.py
 apps/api/models.py
+apps/api/operator_auth.py
 apps/api/polardb_preflight.py
 apps/api/policy.py
 apps/api/postgres_store.py
@@ -210,6 +212,11 @@ KNOWN_PRIVATE_SOURCE_FILES: FrozenSet[str] = frozenset(
         "benchmarks/secure_memory/substrate/broker.py",
         "benchmarks/secure_memory/substrate/budget.py",
         "benchmarks/secure_memory/substrate/clock.py",
+        # Host-side live acceptance harnesses are intentionally outside the public Worker.
+        "experiments/egolite_agentteam/__init__.py",
+        "experiments/egolite_agentteam/run.py",
+        "experiments/egolite_agentteam/verify.py",
+        "integrations/agentteams/model_gateway.py",
     }
 )
 PUBLIC_SOURCE_ROOTS = (

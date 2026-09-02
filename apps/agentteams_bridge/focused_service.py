@@ -344,12 +344,15 @@ class FocusedAgentTeamsBridge(AgentTeamsBridge):
                 "receipt_sha256": receipt_sha256,
             }
         )
+        lease = run.checkpoint.get("_operation_lease")
+        lease_owner = lease.get("owner_id") if isinstance(lease, dict) else None
         self.store.archive_receipt(
             run.id,
             receipt_key="focus-memory:%s" % receipt_key_sha256,
             source="egoagentos",
             kind="trusted-memory-focus-source",
             payload=fetch.receipt,
+            lease_owner=lease_owner,
         )
 
     @staticmethod

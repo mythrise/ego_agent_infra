@@ -162,6 +162,7 @@ class _RecordingStore:
         source: str,
         kind: str,
         payload: Dict[str, Any],
+        lease_owner: Optional[str] = None,
     ) -> None:
         self.receipts.append(
             {
@@ -170,6 +171,7 @@ class _RecordingStore:
                 "source": source,
                 "kind": kind,
                 "payload": payload,
+                "lease_owner": lease_owner,
             }
         )
 

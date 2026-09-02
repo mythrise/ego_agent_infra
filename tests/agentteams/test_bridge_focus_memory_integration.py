@@ -12,11 +12,10 @@ from apps.agentteams_bridge.models import (
     CollaborationEnvelope,
     EnvelopeKind,
     StartRunRequest,
-    WorkerResource,
     WorkerResultEnvelope,
     canonical_sha256,
 )
-from apps.agentteams_bridge.store import SQLiteBridgeStore
+from apps.agentteams_bridge.store import BridgeStore as SQLiteBridgeStore
 from apps.api.trusted_memory.focus_contracts import (
     FocusMemoryQuery,
     TrustedFocusFact,
@@ -31,6 +30,16 @@ SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
 SHA_D = "d" * 64
+PROJECT_ID = "ego-task-live-v1-a17ccd18"
+
+WORKER_SKILLS = {
+    "ego-scout": ["research-memory"],
+    "ego-architect": ["research-plan", "ablation-analyzer"],
+    "ego-runtime": ["safe-experiment-runner", "dataset-manifest"],
+    "ego-evaluator": ["ablation-analyzer"],
+    "ego-reviewer": ["evidence-gate"],
+    "ego-memory-curator": ["research-memory"],
+}
 
 
 def _focused_service_module():
@@ -44,7 +53,7 @@ def _focused_service_module():
 def _source() -> TrustedMemoryFocusSource:
     query = FocusMemoryQuery(
         tenant_id="tenant-1",
-        project_id="ego-task-live-v1-7f0a5407",
+        project_id=PROJECT_ID,
         outcomes=(DecisionOutcome.KEEP,),
         origins=(MemoryOrigin.LOCAL_TRUSTED,),
         max_items=16,
@@ -53,7 +62,7 @@ def _source() -> TrustedMemoryFocusSource:
     fact = TrustedFocusFact(
         fact_sha256=SHA_A,
         tenant_id="tenant-1",
-        project_id="ego-task-live-v1-7f0a5407",
+        project_id=PROJECT_ID,
         lineage_id="lineage-1",
         revision_id="revision-1",
         revision=1,
@@ -126,9 +135,9 @@ class _Transport:
         path = url.split("?", 1)[0]
         payload = {} if body is None else __import__("json").loads(body.decode("utf-8"))
         if method == "GET" and path.endswith("/healthz"):
-            return 200, {}, b'{"status":"ok"}'
-        if method == "GET" and path.endswith("/version"):
-            return 200, {}, b'{"version":"test","gitCommit":"%s"}' % OFFICIAL_MAIN_COMMIT.encode()
+            return 200, {}, b"ok"
+        if method == "GET" and path.endswith("/api/v1/version"):
+            return 200, {}, b'{"controller":"test","gitCommit":"%s"}' % OFFICIAL_MAIN_COMMIT.encode()
         if method == "GET" and path.endswith("/_matrix/client/v3/account/whoami"):
             return 200, {}, b'{"user_id":"@bridge:test","device_id":"DEV"}'
         if method == "GET" and path.endswith("/api/v1/projects"):
@@ -137,41 +146,52 @@ class _Transport:
         if method == "GET" and "/api/v1/teams/" in path:
             return 200, {}, __import__("json").dumps(
                 {
-                    "metadata": {"name": "ego-researchops"},
-                    "spec": {"leader": "ego-leader", "members": []},
-                    "status": {
-                        "phase": "Active",
-                        "readyWorkers": 8,
-                        "totalWorkers": 8,
-                        "leaderReady": True,
-                        "leaderName": "ego-leader",
-                        "teamRoomID": "!team:test",
-                    },
+                    "name": "ego-researchops",
+                    "teamName": "ego-researchops",
+                    "phase": "Active",
+                    "workerMembers": [
+                        {"name": name, "role": "worker"} for name in WORKER_SKILLS
+                    ],
+                    "leaderName": "ego-scout",
+                    "teamRoomID": "!team:test",
+                    "leaderReady": True,
+                    "readyWorkers": len(WORKER_SKILLS),
+                    "totalWorkers": len(WORKER_SKILLS),
                 }
+            ).encode()
+        if method == "POST" and path.endswith("/ensure-ready"):
+            name = path.split("/api/v1/workers/", 1)[1].split("/", 1)[0]
+            return 200, {}, __import__("json").dumps(
+                {"name": name, "phase": "Ready", "skills": WORKER_SKILLS[name]}
             ).encode()
         if method == "GET" and "/api/v1/workers/" in path:
             name = path.rsplit("/", 1)[-1]
             return 200, {}, __import__("json").dumps(
                 {
-                    "metadata": {"name": name},
-                    "spec": {"team": "ego-researchops"},
-                    "status": {
-                        "phase": "Running",
-                        "matrixUserID": "@%s:test" % name,
-                        "podName": "%s-pod" % name,
-                    },
+                    "name": name,
+                    "phase": "Running",
+                    "state": "Running",
+                    "skills": WORKER_SKILLS[name],
+                    "matrixUserID": "@%s:test" % name,
+                    "roomID": "!%s:test" % name,
+                    "team": "ego-researchops",
+                    "role": "worker",
                 }
             ).encode()
         if method == "POST" and path.endswith("/api/v1/projects"):
             project_id = payload["project_id"]
             project = {
-                "projectId": project_id,
-                "id": project_id,
+                "project_id": project_id,
                 "title": payload["title"],
-                "team": payload["team"],
+                "team_id": payload["team_id"],
                 "status": "active",
-                "planType": "dag",
+                "plan_type": "dag",
+                "mode": "project",
                 "nodes": [],
+                "edges": [],
+                "next": [],
+                "interrupts": [],
+                "tasks_detail": [],
             }
             self.projects[project_id] = project
             return 201, {}, __import__("json").dumps(project).encode()
@@ -180,21 +200,17 @@ class _Transport:
             project = self.projects[project_id]
             project["nodes"] = [
                 {
-                    "taskId": task["taskId"],
-                    "title": task["title"],
-                    "assignedTo": task["assignedTo"],
-                    "dependsOn": task["dependsOn"],
-                    "status": task["status"],
-                    "attempt": 1,
-                    "assignedAt": "2026-09-01T00:00:00+00:00",
-                    "completedAt": None,
-                    "output": None,
-                    "reason": None,
-                    "updatedAt": "2026-09-01T00:00:00+00:00",
+                    "id": task["taskId"],
+                    "name": task["title"],
+                    "assignee": task["assignedTo"],
+                    "status": "pending",
                 }
                 for task in payload["tasks"]
             ]
             return 200, {}, __import__("json").dumps(project).encode()
+        if method == "GET" and path.endswith("/workflow"):
+            project_id = path.split("/api/v1/projects/", 1)[1].split("/", 1)[0]
+            return 200, {}, __import__("json").dumps(self.projects[project_id]).encode()
         if method == "PUT" and "/_matrix/client/v3/rooms/" in path:
             self.sent_messages.append(payload)
             return 200, {}, b'{"event_id":"$matrix-focus"}'
@@ -217,6 +233,29 @@ class _Transport:
                 }
             ).encode()
         raise AssertionError((method, url, payload))
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json_body: Any = None,
+        timeout: float = 15.0,
+    ):
+        from apps.agentteams_bridge.transport import HTTPResponse
+
+        body = None
+        if json_body is not None:
+            body = __import__("json").dumps(json_body).encode("utf-8")
+        status, response_headers, response_body = self(
+            method,
+            url,
+            headers or {},
+            body,
+            timeout,
+        )
+        return HTTPResponse(status, response_headers, response_body)
 
 
 def _service(tmp_path, provider: _Provider, *, mode: str = "required"):
@@ -261,7 +300,7 @@ def test_required_focus_memory_is_bound_into_real_task_request_envelope(tmp_path
     assert run.state.value == "PRE_APPROVAL"
     assert provider.calls == 1
     sent = transport.sent_messages[-1]
-    envelope = CollaborationEnvelope.model_validate(sent["ego_envelope"])
+    envelope = CollaborationEnvelope.model_validate(sent["com.egoagentos.envelope"])
     assert envelope.kind is EnvelopeKind.TASK_REQUEST
     focus = envelope.body["focus_memory"]
     assert focus["status"] == "READY"
@@ -300,7 +339,7 @@ def test_required_focus_memory_failure_enters_existing_compensation_path(tmp_pat
         service.start_run(_request())
 
     assert caught.value.details["compensation_operation"] == "start-dispatch"
-    projects = service.store.recoverable_runs()
+    projects = service.store.active_runs()
     assert len(projects) == 1
     run = projects[0]
     assert run.state.value == "COMPENSATION_REQUIRED"
@@ -317,7 +356,7 @@ def test_disabled_focus_memory_is_explicit_and_never_reported_as_ready(tmp_path)
     assert run.state.value == "PRE_APPROVAL"
     assert provider.calls == 0
     envelope = CollaborationEnvelope.model_validate(
-        transport.sent_messages[-1]["ego_envelope"]
+        transport.sent_messages[-1]["com.egoagentos.envelope"]
     )
     focus = envelope.body["focus_memory"]
     assert focus["status"] == "DISABLED"
