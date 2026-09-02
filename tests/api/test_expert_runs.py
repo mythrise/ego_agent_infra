@@ -5,7 +5,9 @@ from typing import Any, Dict, Mapping
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
-from integrations.agentteams.model_gateway import ModelCall
+from apps.api.expert_runs import ExpertRunService
+from apps.api.research_os.service import ResearchOSService
+from integrations.agentteams.model_gateway import ModelCall, ModelGatewayError
 from tests.api.operator_auth_helpers import (
     TEST_AUTHORIZATION_HEADERS,
     TEST_OPERATOR_ID,
@@ -87,6 +89,18 @@ class FakeLiveGateway:
                 "latency_ms": 12,
                 "usage": {"total_tokens": 42},
             },
+        )
+
+
+class TerminalFailureGateway(FakeLiveGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def complete_json(self, **kwargs: Any) -> ModelCall:
+        self.calls += 1
+        raise ModelGatewayError(
+            "model gateway returned HTTP 403 (insufficient_user_quota)", retryable=False
         )
 
 
@@ -193,3 +207,45 @@ def test_unconfigured_gateway_fails_closed(tmp_path: Path, monkeypatch: Any) -> 
     assert status.json()["configured"] is False
     assert blocked.status_code == 503
     assert blocked.json()["error"]["code"] == "expert_model_not_configured"
+
+
+def test_environment_uses_low_reasoning_json_mode_for_live_experts(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("EGO_AGENT_MODEL_BASE_URL", "https://model.invalid/v1")
+    monkeypatch.setenv("EGO_AGENT_MODEL_API_KEY", "server-only-key")
+    monkeypatch.setenv("EGO_AGENT_MODEL", "agnes-2.5-pro")
+    monkeypatch.delenv("EGO_AGENT_MODEL_REASONING_EFFORT", raising=False)
+    research_os = ResearchOSService(memory_root=tmp_path / "research-os")
+
+    service = ExpertRunService.from_environment(research_os, tmp_path / "artifacts")
+
+    assert service.status()["reasoning_effort"] == "low"
+    assert service.status()["structured_output"] == "json_object"
+
+
+def test_terminal_gateway_error_is_not_retried(tmp_path: Path) -> None:
+    gateway = TerminalFailureGateway()
+    application = create_app(
+        str(tmp_path / "researchops.sqlite3"),
+        operator_key=TEST_OPERATOR_KEY,
+        operator_id=TEST_OPERATOR_ID,
+        expert_gateway=gateway,
+        expert_run_root=tmp_path / "artifacts",
+    )
+
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/v1/expert-runs",
+            headers=TEST_AUTHORIZATION_HEADERS,
+            json={"input_mode": "idea", "locale": "en", "content": "x" * 50},
+        )
+        run = client.get(
+            "/api/v1/expert-runs/%s" % response.json()["run_id"],
+            headers=TEST_AUTHORIZATION_HEADERS,
+        ).json()
+
+    assert gateway.calls == 1
+    assert run["status"] == "failed"
+    assert "insufficient_user_quota" in run["decision"]["error"]
+    assert "after 1 attempt(s)" in run["decision"]["error"]

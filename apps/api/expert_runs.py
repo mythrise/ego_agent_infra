@@ -246,9 +246,15 @@ class ExpertRunService:
         base_url = os.getenv("EGO_AGENT_MODEL_BASE_URL", "").strip()
         api_key = os.getenv("EGO_AGENT_MODEL_API_KEY", "")
         model = os.getenv("EGO_AGENT_MODEL", "agnes-2.5-pro").strip()
+        reasoning_effort = os.getenv("EGO_AGENT_MODEL_REASONING_EFFORT", "low").strip()
         gateway = None
         if base_url and api_key:
-            gateway = OpenAICompatibleModelGateway(base_url, api_key, model)
+            gateway = OpenAICompatibleModelGateway(
+                base_url,
+                api_key,
+                model,
+                reasoning_effort=reasoning_effort or None,
+            )
         root = artifact_root or Path(os.getenv("EGO_ARTIFACT_ROOT", "artifacts/runtime"))
         return cls(gateway, research_os, root)
 
@@ -256,6 +262,8 @@ class ExpertRunService:
         return {
             "configured": self.gateway is not None,
             "model": self.gateway.model if self.gateway else None,
+            "reasoning_effort": getattr(self.gateway, "reasoning_effort", None),
+            "structured_output": "json_object" if self.gateway else None,
             "provider": "openai-compatible-server-side" if self.gateway else "not_configured",
             "credential_location": "server_environment_only",
             "truth_boundary": (
@@ -442,10 +450,15 @@ class ExpertRunService:
                     output=call.output,
                     receipt={**call.receipt, "attempt": attempt, "prior_validation_failures": failures},
                 )
-            except (ModelGatewayError, ValueError) as error:
+            except ModelGatewayError as error:
+                failures.append(str(error)[:300])
+                if not error.retryable:
+                    break
+            except ValueError as error:
                 failures.append(str(error)[:300])
         raise ValueError(
-            "%s failed deterministic validation after 2 attempts: %s" % (role, failures[-1])
+            "%s failed deterministic validation after %d attempt(s): %s"
+            % (role, len(failures), failures[-1])
         )
 
     def _compact_role(

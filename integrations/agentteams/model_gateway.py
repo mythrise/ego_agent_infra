@@ -21,6 +21,10 @@ from typing import Any, Dict, List, Mapping, Optional
 class ModelGatewayError(RuntimeError):
     """Sanitized gateway failure that never includes credentials or response bodies."""
 
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
 
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(
@@ -71,6 +75,7 @@ class OpenAICompatibleModelGateway:
         model: str,
         *,
         timeout_seconds: float = 60.0,
+        reasoning_effort: Optional[str] = None,
         opener: Optional[Any] = None,
     ) -> None:
         normalized = base_url.strip().rstrip("/")
@@ -84,9 +89,13 @@ class OpenAICompatibleModelGateway:
             raise ValueError("model gateway API key is required")
         if not model.strip():
             raise ValueError("model name is required")
+        normalized_effort = reasoning_effort.strip().lower() if reasoning_effort else None
+        if normalized_effort not in {None, "low", "medium", "high"}:
+            raise ValueError("reasoning effort must be low, medium, high, or omitted")
         self.base_url = normalized
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
+        self.reasoning_effort = normalized_effort
         self._api_key = api_key
         self._opener = opener or urllib.request.urlopen
 
@@ -107,7 +116,23 @@ class OpenAICompatibleModelGateway:
                 status = int(getattr(response, "status", response.getcode()))
                 payload = response.read()
         except urllib.error.HTTPError as error:
-            raise ModelGatewayError("model gateway returned HTTP %d" % error.code) from error
+            provider_code = None
+            try:
+                failure = json.loads(error.read(4096))
+                candidate = failure.get("error", {}).get("code")
+                if (
+                    isinstance(candidate, str)
+                    and 1 <= len(candidate) <= 64
+                    and all(char.isalnum() or char in "._-" for char in candidate)
+                ):
+                    provider_code = candidate
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                provider_code = None
+            message = "model gateway returned HTTP %d" % error.code
+            if provider_code:
+                message += " (%s)" % provider_code
+            retryable = error.code in {408, 409, 425, 429} or error.code >= 500
+            raise ModelGatewayError(message, retryable=retryable) from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise ModelGatewayError("model gateway request failed") from error
         if not 200 <= status < 300:
@@ -142,16 +167,24 @@ class OpenAICompatibleModelGateway:
             ],
             "temperature": 0,
             "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
         }
+        if self.reasoning_effort is not None:
+            request_payload["reasoning_effort"] = self.reasoning_effort
         request_bytes = canonical_bytes(request_payload)
         started = time.monotonic()
         status, response_bytes = self._request("POST", "/chat/completions", request_bytes)
         latency_ms = round((time.monotonic() - started) * 1000)
         try:
             response = json.loads(response_bytes)
-            content = response["choices"][0]["message"]["content"]
+            choice = response["choices"][0]
+            content = choice["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("content")
+            if not content.strip() and choice.get("finish_reason") == "length":
+                raise ModelGatewayError(
+                    "model exhausted max_tokens in reasoning before producing JSON text"
+                )
             output = parse_json_object(content)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
             raise ModelGatewayError("chat completion response has an invalid shape") from error
@@ -169,6 +202,10 @@ class OpenAICompatibleModelGateway:
             "request_sha256": sha256_bytes(request_bytes),
             "response_sha256": sha256_bytes(response_bytes),
             "latency_ms": latency_ms,
+            "finish_reason": choice.get("finish_reason"),
+            "response_chars": len(content),
+            "json_mode": True,
+            "reasoning_effort": self.reasoning_effort,
             "usage": response.get("usage") or {},
         }
         return ModelCall(output=output, receipt=receipt)

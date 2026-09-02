@@ -85,9 +85,15 @@ Configure the model plane only on the API process:
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
 export EGO_AGENT_MODEL=agnes-2.5-pro
+export EGO_AGENT_MODEL_REASONING_EFFORT=low
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 ```
+
+`complete_json` sends `response_format={"type":"json_object"}`. The live expert service uses
+low reasoning effort by default so a reasoning model cannot consume the entire completion budget
+before emitting the contract JSON. Set `EGO_AGENT_MODEL_REASONING_EFFORT` to an empty value only
+for gateways that reject the OpenAI-compatible parameter.
 
 The returned truth boundary is intentionally narrower than an AgentTeams or experiment claim:
 provider responses are `LIVE`; deterministic compilation and private focus memory are
