@@ -4057,3 +4057,30 @@ p {
     grid-template-columns: 1fr;
   }
 }
+
+/* Keep in-page navigation targets below the sticky task and operator bars. */
+#compose,
+#cockpit,
+#protocol,
+#acceptance,
+#experiments,
+#evidence,
+#trace,
+#memory,
+#integrations {
+  scroll-margin-top: 122px;
+}
+
+@media (max-width: 840px) {
+  #compose,
+  #cockpit,
+  #protocol,
+  #acceptance,
+  #experiments,
+  #evidence,
+  #trace,
+  #memory,
+  #integrations {
+    scroll-margin-top: 120px;
+  }
+}
