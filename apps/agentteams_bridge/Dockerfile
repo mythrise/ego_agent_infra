@@ -1,14 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /app
-COPY pyproject.toml requirements-api.lock ./
-COPY apps ./apps
-COPY benchmarks ./benchmarks
+COPY requirements-api.lock ./
 RUN pip install --no-cache-dir -r requirements-api.lock \
     && addgroup --system egoagentos \
     && adduser --system --ingroup egoagentos --home /nonexistent --no-create-home egoagentos \
     && mkdir -p /data \
     && chown -R egoagentos:egoagentos /data
+
+COPY pyproject.toml ./
+COPY apps ./apps
+COPY benchmarks ./benchmarks
 
 ENV EGO_AGENTTEAMS_BRIDGE_DB=/data/bridge.sqlite3
 VOLUME ["/data"]

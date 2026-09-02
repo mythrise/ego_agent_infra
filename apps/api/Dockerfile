@@ -1,4 +1,4 @@
-FROM python:3.9-slim AS runtime
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,18 +7,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements-api.lock ./
-COPY apps/api ./apps/api
-COPY benchmarks ./benchmarks
-COPY contracts ./contracts
-COPY protocols ./protocols
-COPY skill_runtime ./skill_runtime
-COPY skills ./skills
-
 RUN pip install --no-cache-dir --require-hashes -r requirements-api.lock \
     && addgroup --system egoagentos \
     && adduser --system --ingroup egoagentos --home /nonexistent --no-create-home egoagentos \
     && mkdir -p /data \
     && chown -R egoagentos:egoagentos /data
+
+COPY apps/api ./apps/api
+COPY benchmarks ./benchmarks
+COPY contracts ./contracts
+COPY integrations ./integrations
+COPY protocols ./protocols
+COPY skill_runtime ./skill_runtime
+COPY skills ./skills
 
 USER egoagentos
 
