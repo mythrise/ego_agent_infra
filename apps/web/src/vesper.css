@@ -22,8 +22,8 @@
   --warning: #d7bb82;
   --error: #ff8d98;
   --font-ui: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-display: "Instrument Serif", "Times New Roman", Times, serif;
-  --mono: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --font-display: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 * {
@@ -391,13 +391,14 @@ summary:focus-visible,
 .landing-copy h1 em {
   color: #9a9a9a;
   font-family: var(--font-display);
-  font-size: 1.08em;
-  font-weight: 400;
-  letter-spacing: -0.03em;
+  font-size: 1em;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: inherit;
 }
 
 :lang(zh) .landing-copy h1 em {
-  font-family: "Songti SC", "STSong", serif;
+  font-family: var(--font-ui);
 }
 
 .landing-lede {
@@ -924,6 +925,58 @@ summary:focus-visible,
 
 .research-cockpit table {
   min-width: 580px;
+}
+
+.research-cockpit :is(.experiment-table, .metric-table) {
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.research-cockpit :is(.experiment-table, .metric-table) :is(th, td) {
+  border-color: var(--line);
+  background: #080808;
+  color: #c7c7c7;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: none;
+}
+
+.research-cockpit :is(.experiment-table, .metric-table) thead th {
+  background: #0d0d0d;
+  color: #a9a9a9;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.research-cockpit :is(.experiment-table, .metric-table) tbody tr:hover :is(th, td) {
+  background: #101010;
+}
+
+.research-cockpit .metric-table tbody th {
+  color: #d4d4d4;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.research-cockpit .metric-table tbody th small {
+  color: #888;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.research-cockpit .metric-table td,
+.research-cockpit .metric-table .target-cell {
+  color: #c7c7c7;
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.research-cockpit .metric-table .target-cell {
+  color: var(--positive);
 }
 
 .research-cockpit table :is(th, td),
