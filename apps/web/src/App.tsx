@@ -35,6 +35,9 @@ import {
   taskEventStreamUrl,
 } from "./api";
 import { syntheticDashboard } from "./demoData";
+import { useI18n } from "./i18n";
+import type { TranslationKey } from "./i18n";
+import { LandingPage } from "./LandingPage";
 import { syntheticRXP } from "./rxpDemoData";
 import { STAGES } from "./types";
 import type {
@@ -59,30 +62,30 @@ function approvalTokenForGeneration(
   return grant?.generation === generation ? grant.token : undefined;
 }
 
-const navItems = [
-  { id: "compose", label: "Research composer", icon: Bot },
-  { id: "cockpit", label: "Task cockpit", icon: Gauge },
-  { id: "acceptance", label: "Semifinal acceptance", icon: ShieldCheck },
-  { id: "experiments", label: "Experiments", icon: FlaskConical },
-  { id: "protocol", label: "RXP protocol", icon: KeyRound },
-  { id: "evidence", label: "Evidence", icon: FileCheck2 },
-  { id: "trace", label: "Audit trace", icon: Workflow },
-  { id: "integrations", label: "Integrations", icon: Network },
+const navItems: Array<{ id: string; labelKey: TranslationKey; icon: typeof Bot }> = [
+  { id: "compose", labelKey: "nav.compose", icon: Bot },
+  { id: "cockpit", labelKey: "nav.cockpit", icon: Gauge },
+  { id: "acceptance", labelKey: "nav.acceptance", icon: ShieldCheck },
+  { id: "experiments", labelKey: "nav.experiments", icon: FlaskConical },
+  { id: "protocol", labelKey: "nav.protocol", icon: KeyRound },
+  { id: "evidence", labelKey: "nav.evidence", icon: FileCheck2 },
+  { id: "trace", labelKey: "nav.trace", icon: Workflow },
+  { id: "integrations", labelKey: "nav.integrations", icon: Network },
 ];
 
 const sourceLinks = [
   {
-    label: "GitHub source",
+    labelKey: "nav.github" as TranslationKey,
     href: "https://github.com/mythrise/ego_agent_infra",
     icon: Code2,
   },
   {
-    label: "Read the README",
+    labelKey: "nav.readme" as TranslationKey,
     href: "https://github.com/mythrise/ego_agent_infra#readme",
     icon: BookOpen,
   },
   {
-    label: "Third-party notices",
+    labelKey: "nav.notices" as TranslationKey,
     href: `${import.meta.env.BASE_URL}THIRD_PARTY_NOTICES.txt`,
     icon: FileCheck2,
   },
@@ -288,11 +291,13 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <NoiseField />
-      <Rail open={navOpen} onClose={() => setNavOpen(false)} runtimeMode={dashboard.runtimeMode} />
+    <div className="experience-root">
+      <LandingPage />
+      <div className="app-shell research-cockpit">
+        <NoiseField />
+        <Rail open={navOpen} onClose={() => setNavOpen(false)} runtimeMode={dashboard.runtimeMode} />
 
-      <main className="workspace" id="main-content">
+        <main className="workspace" id="main-content">
         <Topbar
           task={activeTask}
           tasks={dashboard.tasks}
@@ -328,7 +333,7 @@ function App() {
           />
         )}
 
-        <div className="workspace-grid">
+          <div className="workspace-grid">
           <div className="primary-column">
             <ResearchComposer runtimeMode={dashboard.runtimeMode} />
             <TaskCommand task={activeTask} runtimeMode={dashboard.runtimeMode} />
@@ -366,68 +371,69 @@ function App() {
             selectedEvidence={selectedEvidence}
             onCloseEvidence={() => setSelectedEvidence(null)}
           />
-        </div>
-      </main>
+          </div>
 
-      <ActionDock
-        task={activeTask}
-        busy={busy}
-        approvalToken={approvalToken}
-        onReset={() =>
-          void runAction(
-            "reset",
-            async () => {
-              const result = await researchApi.reset();
-              setApprovalGrant(null);
-              return result;
-            },
-            "Synthetic demo reset to a clean state.",
-          )
-        }
-        onAdvance={() =>
-          void runAction(
-            "advance",
-            async () => {
-              const result = await researchApi.advance(activeTask.id, approvalToken);
-              if (approvalToken) setApprovalGrant(null);
-              return result;
-            },
-            dashboard.runtimeMode === "static_replay"
-              ? "Synthetic state transition replayed in browser memory."
-              : "Deterministic state transition requested.",
-          )
-        }
-        onAutorun={() =>
-          void runAction(
-            "autorun",
-            async () => {
-              const result = await researchApi.autorun(activeTask.id, approvalToken);
-              if (approvalToken) setApprovalGrant(null);
-              return result;
-            },
-            dashboard.runtimeMode === "static_replay"
-              ? "Synthetic browser replay continued to the next policy or evidence gate."
-              : "Autorun continued to the next policy or evidence gate.",
-          )
-        }
-        runtimeMode={dashboard.runtimeMode}
-        operatorConnected={operatorConnected}
-      />
+          <ActionDock
+            task={activeTask}
+            busy={busy}
+            approvalToken={approvalToken}
+            onReset={() =>
+              void runAction(
+                "reset",
+                async () => {
+                  const result = await researchApi.reset();
+                  setApprovalGrant(null);
+                  return result;
+                },
+                "Synthetic demo reset to a clean state.",
+              )
+            }
+            onAdvance={() =>
+              void runAction(
+                "advance",
+                async () => {
+                  const result = await researchApi.advance(activeTask.id, approvalToken);
+                  if (approvalToken) setApprovalGrant(null);
+                  return result;
+                },
+                dashboard.runtimeMode === "static_replay"
+                  ? "Synthetic state transition replayed in browser memory."
+                  : "Deterministic state transition requested.",
+              )
+            }
+            onAutorun={() =>
+              void runAction(
+                "autorun",
+                async () => {
+                  const result = await researchApi.autorun(activeTask.id, approvalToken);
+                  if (approvalToken) setApprovalGrant(null);
+                  return result;
+                },
+                dashboard.runtimeMode === "static_replay"
+                  ? "Synthetic browser replay continued to the next policy or evidence gate."
+                  : "Autorun continued to the next policy or evidence gate.",
+              )
+            }
+            runtimeMode={dashboard.runtimeMode}
+            operatorConnected={operatorConnected}
+          />
+        </main>
 
-      <AnimatePresence>
-        {notice && (
-          <motion.div
-            className="toast"
-            role="status"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-          >
-            <span className="status-dot positive" />
-            {notice}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <AnimatePresence>
+          {notice && (
+            <motion.div
+              className="toast"
+              role="status"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+            >
+              <span className="status-dot positive" />
+              {notice}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -441,18 +447,19 @@ export function OperatorSessionBar({
   onConnect: (key: string) => boolean;
   onClear: () => void;
 }) {
+  const { language, t } = useI18n();
   const [key, setKey] = useState("");
 
   return (
-    <section className="operator-strip" aria-label="Operator session">
+    <section className="operator-strip" aria-label={language === "zh" ? "操作者会话" : "Operator session"}>
       <div className={`operator-state ${connected ? "connected" : "locked"}`}>
         <KeyRound size={13} aria-hidden="true" />
-        <span>{connected ? "OPERATOR CONNECTED" : "MUTATIONS LOCKED"}</span>
-        <small>{connected ? "MEMORY ONLY · CLEAR ON TAB RELOAD" : "BEARER KEY REQUIRED"}</small>
+        <span>{connected ? (language === "zh" ? "操作者已连接" : "OPERATOR CONNECTED") : (language === "zh" ? "写操作已锁定" : "MUTATIONS LOCKED")}</span>
+        <small>{connected ? (language === "zh" ? "仅存于内存 · 刷新标签页后清除" : "MEMORY ONLY · CLEAR ON TAB RELOAD") : (language === "zh" ? "需要访问密钥" : "BEARER KEY REQUIRED")}</small>
       </div>
       {connected ? (
         <button className="operator-clear" type="button" onClick={onClear}>
-          Clear session
+          {t("action.clearSession")}
         </button>
       ) : (
         <form
@@ -462,18 +469,18 @@ export function OperatorSessionBar({
             if (onConnect(key)) setKey("");
           }}
         >
-          <label htmlFor="operator-session-key">Session operator key</label>
+          <label htmlFor="operator-session-key">{language === "zh" ? "会话操作者密钥" : "Session operator key"}</label>
           <input
             id="operator-session-key"
-            aria-label="Operator session key"
+            aria-label={language === "zh" ? "操作者会话密钥" : "Operator session key"}
             type="password"
             autoComplete="off"
             spellCheck={false}
             value={key}
             onChange={(event) => setKey(event.target.value)}
-            placeholder="Paste deployment key"
+            placeholder={language === "zh" ? "粘贴部署密钥" : "Paste deployment key"}
           />
-          <button type="submit" disabled={!key}>Connect session</button>
+          <button type="submit" disabled={!key}>{t("action.connect")}</button>
         </form>
       )}
     </section>
@@ -493,38 +500,44 @@ function Rail({
   onClose: () => void;
   runtimeMode: DashboardData["runtimeMode"];
 }) {
+  const { language, setLanguage, t } = useI18n();
   return (
     <>
-      {open && <button className="nav-scrim" aria-label="Close navigation" onClick={onClose} />}
-      <aside className={`rail ${open ? "is-open" : ""}`} aria-label="Primary navigation">
+      {open && <button className="nav-scrim" aria-label={t("nav.close")} onClick={onClose} />}
+      <aside className={`rail ${open ? "is-open" : ""}`} aria-label={t("nav.primary")}>
         <a className="brand-mark" href="#compose" aria-label="EgoAgentOS ResearchOps home" onClick={onClose}>
           <span className="brand-glyph">E</span>
           <span className="brand-type">EgoAgentOS</span>
         </a>
         <nav className="rail-nav">
-          {navItems.map(({ id, label, icon: Icon }, index) => (
+          {navItems.map(({ id, labelKey, icon: Icon }, index) => (
             <a
               href={`#${id}`}
               className={index === 0 ? "active" : ""}
               key={id}
+              title={t(labelKey)}
               aria-current={index === 0 ? "page" : undefined}
               onClick={onClose}
             >
               <Icon size={17} strokeWidth={1.6} aria-hidden="true" />
-              <span>{label}</span>
+              <span>{t(labelKey)}</span>
             </a>
           ))}
           <span className="rail-divider" aria-hidden="true" />
-          {sourceLinks.map(({ label, href, icon: Icon }) => (
-            <a href={href} key={label} target="_blank" rel="noreferrer" onClick={onClose}>
+          {sourceLinks.map(({ labelKey, href, icon: Icon }) => (
+            <a href={href} key={labelKey} title={t(labelKey)} target="_blank" rel="noreferrer" onClick={onClose}>
               <Icon size={17} strokeWidth={1.6} aria-hidden="true" />
-              <span>{label}</span>
+              <span>{t(labelKey)}</span>
             </a>
           ))}
         </nav>
+        <div className="rail-language" role="group" aria-label={t("language.switch")}>
+          <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}>EN</button>
+          <button className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")} aria-pressed={language === "zh"}>中</button>
+        </div>
         <div className="rail-footer">
           <span className="mode-light" aria-hidden="true" />
-          <span>{runtimeMode === "static_replay" ? <>Browser replay<br />no live services</> : <>Synthetic<br />API workspace</>}</span>
+          <span>{runtimeMode === "static_replay" ? <>{t("runtime.browserReplay")}<br />{t("runtime.noLiveServices")}</> : <>{t("runtime.syntheticApi")}</>}</span>
         </div>
       </aside>
     </>
@@ -554,16 +567,17 @@ function Topbar({
   onRefresh: () => void;
   runtimeMode: DashboardData["runtimeMode"];
 }) {
+  const { t } = useI18n();
   const staticReplay = runtimeMode === "static_replay";
   return (
     <header className="topbar">
-      <button className="icon-button mobile-menu" onClick={onMenu} aria-label="Open navigation">
+      <button className="icon-button mobile-menu" onClick={onMenu} aria-label={t("nav.open")}>
         <Menu size={18} />
       </button>
       <div className="context-line">
         <span className="eyebrow">RESEARCHOPS / TASK</span>
         <label className="task-picker">
-          <span className="sr-only">Selected research task</span>
+          <span className="sr-only">{t("task.selected")}</span>
           <select value={selectedTaskId} onChange={(event) => onTaskChange(event.target.value)}>
             {tasks.map((item) => (
               <option value={item.id} key={item.id}>{item.id}</option>
@@ -577,21 +591,21 @@ function Topbar({
           className="demo-stamp"
           title={staticReplay ? "Browser-only fixture: no API, MCP, AgentTeams, or GPU connection" : "Synthetic scenario served by the local API"}
         >
-          <span className="demo-label-full">{staticReplay ? "SYNTHETIC · STATIC REPLAY · NO API/MCP" : "SYNTHETIC · LOCAL API"}</span>
-          <span className="demo-label-mobile">{staticReplay ? "STATIC · SYNTHETIC" : "API · SYNTHETIC"}</span>
+          <span className="demo-label-full">{staticReplay ? t("runtime.staticBadge") : t("runtime.localBadge")}</span>
+          <span className="demo-label-mobile">{staticReplay ? t("runtime.staticBadgeShort") : t("runtime.localBadgeShort")}</span>
         </span>
-        <span className="sync-time">UPDATED {formatTime(task.updatedAt)}</span>
+        <span className="sync-time">{t("runtime.updated", { time: formatTime(task.updatedAt) })}</span>
         {!staticReplay && (
           <button
             className={`icon-button ${autoRefresh ? "is-active" : ""}`}
             onClick={onToggleAuto}
-            aria-label={autoRefresh ? "Pause automatic refresh" : "Resume automatic refresh"}
+            aria-label={autoRefresh ? t("action.pauseRefresh") : t("action.resumeRefresh")}
             title={autoRefresh ? "Auto refresh on" : "Auto refresh paused"}
           >
             {autoRefresh ? <Pause size={14} /> : <Play size={14} />}
           </button>
         )}
-        <button className="icon-button" onClick={onRefresh} aria-label="Refresh dashboard">
+        <button className="icon-button" onClick={onRefresh} aria-label={t("action.refresh")}>
           <RefreshCcw className={refreshing ? "spin" : ""} size={14} />
         </button>
       </div>
@@ -600,6 +614,7 @@ function Topbar({
 }
 
 function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: DashboardData["runtimeMode"] }) {
+  const { t } = useI18n();
   const staticReplay = runtimeMode === "static_replay";
   return (
     <section className="task-command" id="cockpit" aria-labelledby="task-title">
@@ -607,13 +622,13 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
         <div className="section-kicker">
           <span className={`live-mark ${task.stage === "COMPLETED" || staticReplay ? "settled" : ""}`} />
           {staticReplay
-            ? task.stage === "COMPLETED" ? "Completed synthetic replay" : "Synthetic replay checkpoint"
-            : task.stage === "COMPLETED" ? "Completed research task" : "Active research goal"}
+            ? task.stage === "COMPLETED" ? t("task.syntheticCompleted") : t("task.syntheticCheckpoint")
+            : task.stage === "COMPLETED" ? t("task.completed") : t("task.activeGoal")}
         </div>
         <h2 id="task-title">{task.title}</h2>
         <p>{task.objective}</p>
       </div>
-      <div className="acceptance-strip" aria-label="Acceptance thresholds">
+      <div className="acceptance-strip" aria-label={t("task.acceptance")}>
         {task.acceptance.length ? (
           task.acceptance.map((metric) => (
             <div className="acceptance-item" key={metric.key}>
@@ -625,18 +640,18 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
           ))
         ) : (
           <div className="acceptance-item empty-inline">
-            <span>Acceptance schema</span>
-            <strong>Not supplied</strong>
+            <span>{t("task.acceptanceSchema")}</span>
+            <strong>{t("task.notSupplied")}</strong>
           </div>
         )}
         <div className="acceptance-item risk-item">
-          <span>Policy class</span>
-          <strong>{task.riskLevel} <small>approval bounded</small></strong>
+          <span>{t("task.policyClass")}</span>
+          <strong>{task.riskLevel} <small>{t("task.approvalBounded")}</small></strong>
         </div>
         {task.decision && (
           <div className="acceptance-item decision-item">
-            <span>Verified decision</span>
-            <strong>{task.decision} <small>gate bound</small></strong>
+            <span>{t("task.verifiedDecision")}</span>
+            <strong>{task.decision} <small>{t("task.gateBound")}</small></strong>
           </div>
         )}
       </div>
@@ -646,13 +661,14 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
 
 type ComposerLevel = "detailed" | "idea" | "baseline";
 
-const composerLevels: Array<{ id: ComposerLevel; label: string; detail: string }> = [
-  { id: "detailed", label: "Full protocol", detail: "Plan + branches + code" },
-  { id: "idea", label: "Rough idea", detail: "Idea + frozen baseline" },
-  { id: "baseline", label: "Baseline only", detail: "Discover bounded branches" },
+const composerLevels: Array<{ id: ComposerLevel; labelKey: TranslationKey; detailKey: TranslationKey }> = [
+  { id: "detailed", labelKey: "composer.level.detailed", detailKey: "composer.level.detailedDetail" },
+  { id: "idea", labelKey: "composer.level.idea", detailKey: "composer.level.ideaDetail" },
+  { id: "baseline", labelKey: "composer.level.baseline", detailKey: "composer.level.baselineDetail" },
 ];
 
 function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtimeMode"] }) {
+  const { t } = useI18n();
   const [level, setLevel] = useState<ComposerLevel>("detailed");
   const [prompt, setPrompt] = useState(
     "Freeze C7 RTMW-G5. Replace the zero head-to-optical-center assumption, isolate t and R, then repair the wrist seam.",
@@ -663,22 +679,19 @@ function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtime
     <section className="research-composer" id="compose" aria-labelledby="composer-title">
       <div className="composer-hero">
         <div className="composer-copy">
-          <div className="composer-badge"><span /> AGENT-NATIVE RESEARCH CONTROL PLANE</div>
-          <h1 id="composer-title">From one research question<br />to a decision you can replay.</h1>
-          <p>
-            AgentOS turns a complete protocol, a rough idea, or only a baseline into an explicit
-            experiment tree—then binds every run, review, and memory update to evidence.
-          </p>
+          <div className="composer-badge"><span /> {t("composer.badge")}</div>
+          <h1 id="composer-title">{t("composer.titleLine1")}<br />{t("composer.titleLine2")}</h1>
+          <p>{t("composer.lede")}</p>
         </div>
         <div className="composer-proof" aria-label="System properties">
-          <div><strong>13</strong><span>sealed stages</span></div>
-          <div><strong>RXP</strong><span>per-run identity</span></div>
-          <div><strong>L0–L3</strong><span>isolated memory</span></div>
+          <div><strong>13</strong><span>{t("composer.proof.stages")}</span></div>
+          <div><strong>RXP</strong><span>{t("composer.proof.identity")}</span></div>
+          <div><strong>L0–L3</strong><span>{t("composer.proof.memory")}</span></div>
         </div>
       </div>
 
       <div className="composer-surface">
-        <div className="composer-levels" role="tablist" aria-label="Research input level">
+        <div className="composer-levels" role="tablist" aria-label={t("composer.inputLevel")}>
           {composerLevels.map((item, index) => (
             <button
               type="button"
@@ -689,26 +702,27 @@ function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtime
               key={item.id}
             >
               <small>0{index + 1}</small>
-              <span><strong>{item.label}</strong><em>{item.detail}</em></span>
+              <span><strong>{t(item.labelKey)}</strong><em>{t(item.detailKey)}</em></span>
             </button>
           ))}
         </div>
         <div className="composer-input">
-          <label htmlFor="research-prompt">Describe the next research move</label>
+          <label htmlFor="research-prompt">{t("composer.promptLabel")}</label>
           <textarea
             id="research-prompt"
             value={prompt}
             onChange={(event) => { setPrompt(event.target.value); setCompiled(false); }}
             rows={3}
+            placeholder={t("composer.promptPlaceholder")}
           />
           <div className="composer-input-foot">
             <span>
               {runtimeMode === "static_replay"
-                ? "BROWSER EXPLAINER · NO MODEL OR API CALL"
-                : "LOCAL CONTROL PLANE · OPERATOR AUTH REQUIRED FOR MUTATIONS"}
+                ? t("composer.browserExplainer")
+                : t("composer.localControlPlane")}
             </span>
             <button type="button" onClick={() => setCompiled(true)} disabled={!prompt.trim()}>
-              Compile research tree <ArrowRight size={15} />
+              {t("composer.compile")} <ArrowRight size={15} />
             </button>
           </div>
         </div>
@@ -722,28 +736,28 @@ function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtime
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="chain-node source">
-            <span>INPUT</span><strong>{composerLevels.find((item) => item.id === level)?.label}</strong>
-            <small>{compiled ? "normalized + hashed" : "waiting to compile"}</small>
+            <span>{t("composer.chain.input")}</span><strong>{t(composerLevels.find((item) => item.id === level)?.labelKey ?? "composer.level.detailed")}</strong>
+            <small>{compiled ? t("composer.chain.normalized") : t("composer.chain.waiting")}</small>
           </div>
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node tree">
-            <span>TREE</span><strong>Root · t · R · wrists</strong>
+            <span>{t("composer.chain.tree")}</span><strong>{t("composer.chain.treeValue")}</strong>
             <div className="mini-tree" aria-hidden="true"><i /><i /><i /><i /></div>
           </div>
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node matrix">
-            <span>MATRIX</span><strong>{compiled ? "165 deterministic cells" : "fold × seed × branch"}</strong>
-            <small>one intent token per cell</small>
+            <span>{t("composer.chain.matrix")}</span><strong>{compiled ? t("composer.chain.cells", { count: 165 }) : t("composer.chain.matrixFormula")}</strong>
+            <small>{t("composer.chain.intent")}</small>
           </div>
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node evidence">
-            <span>GATE</span><strong>Evidence before decision</strong>
-            <small>reviewer can veto approval</small>
+            <span>{t("composer.chain.gate")}</span><strong>{t("composer.chain.evidence")}</strong>
+            <small>{t("composer.chain.veto")}</small>
           </div>
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node memory">
-            <span>COMPACT</span><strong>Agent / FOCUS.md</strong>
-            <small>{compiled ? "context 18.4k → 1.7k" : "per-stage freshness"}</small>
+            <span>{t("composer.chain.compact")}</span><strong>{t("composer.chain.focus")}</strong>
+            <small>{compiled ? t("composer.chain.context", { before: "18.4k", after: "1.7k" }) : t("composer.chain.freshness")}</small>
           </div>
         </motion.div>
       </AnimatePresence>
@@ -763,57 +777,58 @@ function RXPProtocolView({
   data: RXPProtocolData | null;
   runtimeMode: DashboardData["runtimeMode"];
 }) {
+  const { status, t } = useI18n();
   const [selectedCellId, setSelectedCellId] = useState("");
   const selectedCell = data?.cells.find((cell) => cell.cellId === selectedCellId) ?? data?.cells[0];
-  const lifecycle = ["Intent", "Grant", "Receipt", "Evidence", "Decision"];
+  const lifecycle = ["protocol.intent", "protocol.grant", "protocol.receipt", "protocol.evidence", "protocol.decision"] as const;
 
   return (
     <section className="rxp-section" id="protocol" aria-labelledby="rxp-title">
       <SectionHeading
         id="rxp-title"
         index="RXP/1"
-        title="Research eXecution Protocol"
-        note="Experiment authority becomes a replayable causal chain"
+        title={t("protocol.title")}
+        note={t("protocol.note")}
       />
       {data ? (
         <>
           <div className="rxp-truthline">
             <span className={`rxp-verdict ${data.structuralVerification.toLowerCase()}`}>
-              <ShieldCheck size={14} /> STRUCTURE {data.structuralVerification}
+              <ShieldCheck size={14} /> {t("protocol.structure", { status: status(data.structuralVerification) })}
             </span>
-            <span>{runtimeMode === "static_replay" ? "STATIC FIXTURE · VERIFIER NOT EXECUTED HERE" : "LOCAL API · VERIFIER EXECUTED"}</span>
-            <span>GPU RUN · {data.physicalGpuRun ? "VERIFIED" : "NONE"}</span>
-            <span>PRODUCTION SIGNATURE TRUST · {data.productionSignatureTrust ? "VERIFIED" : "NONE"}</span>
+            <span>{runtimeMode === "static_replay" ? t("protocol.staticVerifier") : t("protocol.localVerifier")}</span>
+            <span>{t("protocol.gpuRun", { status: data.physicalGpuRun ? t("status.verified") : t("status.none") })}</span>
+            <span>{t("protocol.signatureTrust", { status: data.productionSignatureTrust ? t("status.verified") : t("status.none") })}</span>
           </div>
 
           <div className="rxp-rootline">
             <div>
-              <span>FROZEN MATRIX</span>
+              <span>{t("protocol.frozenMatrix")}</span>
               <strong>{data.matrixId}</strong>
             </div>
             <div>
-              <span>APPEND-ONLY ROOT · {data.entryCount} ENTRIES</span>
+              <span>{t("protocol.appendRoot", { count: data.entryCount })}</span>
               <code title={data.root}>{compactDigest(data.root)}</code>
             </div>
             <div className={`rxp-completeness ${data.completeness.toLowerCase()}`}>
-              <span>MATRIX COVERAGE</span>
-              <strong>{data.decidedCellCount}/{data.expectedCellCount} {data.completeness}</strong>
+              <span>{t("protocol.matrixCoverage")}</span>
+              <strong>{data.decidedCellCount}/{data.expectedCellCount} {status(data.completeness)}</strong>
             </div>
           </div>
 
-          <div className="rxp-chain" aria-label="RXP causal lifecycle">
-            {lifecycle.map((stage, index) => (
-              <div className="rxp-chain-step" key={stage}>
+          <div className="rxp-chain" aria-label={t("protocol.lifecycle")}>
+            {lifecycle.map((stageKey, index) => (
+              <div className="rxp-chain-step" key={stageKey}>
                 <span>{String(index + 1).padStart(2, "0")}</span>
-                <strong>{stage}</strong>
-                <small>{index === 1 ? "one-use scope" : index === 3 ? "Merkle gate" : "digest bound"}</small>
+                <strong>{t(stageKey)}</strong>
+                <small>{index === 1 ? t("protocol.oneUseScope") : index === 3 ? t("protocol.merkleGate") : t("protocol.digestBound")}</small>
                 {index < lifecycle.length - 1 && <ArrowRight size={14} aria-hidden="true" />}
               </div>
             ))}
           </div>
 
           <div className="rxp-inspection">
-            <div className="rxp-cell-index" role="list" aria-label="Committed matrix cells">
+            <div className="rxp-cell-index" role="list" aria-label={t("protocol.committedCells")}>
               {data.cells.map((cell) => (
                 <button
                   type="button"
@@ -822,17 +837,17 @@ function RXPProtocolView({
                   onClick={() => setSelectedCellId(cell.cellId)}
                 >
                   <span>{cell.cellId}</span>
-                  <strong>{cell.state}</strong>
-                  <small>{cell.evidenceCount}/7 evidence · {cell.determinismLevel.replace("_BYTE_REPLAY_VERIFIED", "")}</small>
+                  <strong>{status(cell.state)}</strong>
+                  <small>{t("protocol.evidenceCount", { count: cell.evidenceCount })} · {cell.determinismLevel.replace("_BYTE_REPLAY_VERIFIED", "")}</small>
                 </button>
               ))}
             </div>
             {selectedCell && (
               <dl className="rxp-cell-detail">
-                <div><dt>Intent</dt><dd><code title={selectedCell.intentDigest}>{compactDigest(selectedCell.intentDigest)}</code></dd></div>
-                <div><dt>Grant</dt><dd><code title={selectedCell.grantDigest}>{compactDigest(selectedCell.grantDigest)}</code></dd></div>
-                <div><dt>Receipt</dt><dd><code title={selectedCell.receiptDigest}>{compactDigest(selectedCell.receiptDigest)}</code></dd></div>
-                <div><dt>Decision</dt><dd><code title={selectedCell.decisionDigest}>{compactDigest(selectedCell.decisionDigest)}</code></dd></div>
+                <div><dt>{t("protocol.intent")}</dt><dd><code title={selectedCell.intentDigest}>{compactDigest(selectedCell.intentDigest)}</code></dd></div>
+                <div><dt>{t("protocol.grant")}</dt><dd><code title={selectedCell.grantDigest}>{compactDigest(selectedCell.grantDigest)}</code></dd></div>
+                <div><dt>{t("protocol.receipt")}</dt><dd><code title={selectedCell.receiptDigest}>{compactDigest(selectedCell.receiptDigest)}</code></dd></div>
+                <div><dt>{t("protocol.decision")}</dt><dd><code title={selectedCell.decisionDigest}>{compactDigest(selectedCell.decisionDigest)}</code></dd></div>
               </dl>
             )}
           </div>
@@ -870,21 +885,37 @@ function AcceptanceReadiness({
 }: {
   runtimeMode: DashboardData["runtimeMode"];
 }) {
+  const { language, t } = useI18n();
   const [layer, setLayer] = useState<"gpu" | "database">("gpu");
+  const localizedSteps = language === "zh" ? [
+    ["01", "规划", "矩阵已冻结"],
+    ["02", "审查", "独立审查"],
+    ["03", "批准", "R2 精确权限"],
+    ["04", "执行", "1 GPU · ≤900 秒"],
+    ["05", "评测", "原始指标"],
+    ["06", "验证", "证据门禁"],
+    ["07", "决策", "保留 / 拒绝"],
+  ] : liveAcceptanceSteps;
+  const localizedRoles = language === "zh" ? [
+    ["运行时", "状态 + 只追加", "禁止删除"],
+    ["审计员", "仅查询", "禁止写入"],
+    ["证据写入者", "写入证据", "禁止写记忆"],
+    ["记忆策展者", "写入候选", "禁止写入已验证区"],
+  ] : databaseRoles;
   return (
     <section className="acceptance-readiness" id="acceptance" aria-labelledby="acceptance-readiness-title">
       <SectionHeading
         id="acceptance-readiness-title"
         index="JUDGE"
-        title="Semifinal acceptance path"
-        note="Code-ready · external execution still evidence-gated"
+        title={t("acceptance.title")}
+        note={t("acceptance.note")}
       />
       <div className="acceptance-truthline">
-        <span><ShieldCheck size={13} /> CONTRACT PATH IMPLEMENTED</span>
-        <span className="origin-warning">EXTERNAL ORIGIN · UNVERIFIED</span>
-        <span>{runtimeMode === "static_replay" ? "THIS PAGE · STATIC REPLAY" : "THIS TASK · SYNTHETIC API"}</span>
+        <span><ShieldCheck size={13} /> {t("acceptance.contract")}</span>
+        <span className="origin-warning">{t("acceptance.externalOrigin")}</span>
+        <span>{runtimeMode === "static_replay" ? t("acceptance.staticPage") : t("acceptance.syntheticTask")}</span>
       </div>
-      <div className="acceptance-tabs" role="tablist" aria-label="Acceptance evidence layer">
+      <div className="acceptance-tabs" role="tablist" aria-label={t("acceptance.layer")}>
         <button
           type="button"
           role="tab"
@@ -892,8 +923,8 @@ function AcceptanceReadiness({
           className={layer === "gpu" ? "active" : ""}
           onClick={() => setLayer("gpu")}
         >
-          AgentTeams + GPU
-          <small>controlled experiment chain</small>
+          {t("acceptance.agentTeams")}
+          <small>{t("acceptance.agentTeamsDetail")}</small>
         </button>
         <button
           type="button"
@@ -902,8 +933,8 @@ function AcceptanceReadiness({
           className={layer === "database" ? "active" : ""}
           onClick={() => setLayer("database")}
         >
-          Nexa + Agent Memory
-          <small>authority and compact context</small>
+          {t("acceptance.database")}
+          <small>{t("acceptance.databaseDetail")}</small>
         </button>
       </div>
       <AnimatePresence mode="wait" initial={false}>
@@ -916,7 +947,7 @@ function AcceptanceReadiness({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
           >
-            {liveAcceptanceSteps.map(([index, title, detail], stepIndex) => (
+            {localizedSteps.map(([index, title, detail], stepIndex) => (
               <div className="live-acceptance-step" key={title}>
                 <span>{index}</span>
                 <strong>{title}</strong>
@@ -937,13 +968,13 @@ function AcceptanceReadiness({
             <div className="database-principle">
               <Database size={20} strokeWidth={1.4} />
               <div>
-                <span>SOURCE OF TRUTH</span>
-                <strong>TDSQL Nexa · SQL authority</strong>
-                <small>MVCC · immutable ledgers · per-agent L0–L3 · checksum replay</small>
+                <span>{language === "zh" ? "事实源" : "SOURCE OF TRUTH"}</span>
+                <strong>{language === "zh" ? "TDSQL Nexa · SQL 权限边界" : "TDSQL Nexa · SQL authority"}</strong>
+                <small>{language === "zh" ? "MVCC · 不可变账本 · 每 Agent L0–L3 · 校验和重放" : "MVCC · immutable ledgers · per-agent L0–L3 · checksum replay"}</small>
               </div>
             </div>
-            <div className="role-matrix" aria-label="Database role write boundaries">
-              {databaseRoles.map(([role, grant, denied]) => (
+            <div className="role-matrix" aria-label={language === "zh" ? "数据库角色写入边界" : "Database role write boundaries"}>
+              {localizedRoles.map(([role, grant, denied]) => (
                 <div className="role-matrix-row" key={role}>
                   <strong>{role}</strong>
                   <span>{grant}</span>
@@ -955,14 +986,14 @@ function AcceptanceReadiness({
         )}
       </AnimatePresence>
       <div className="acceptance-boundary">
-        <span>LOCAL PER-AGENT DB + FOCUS.MD · CONTRACT VERIFIED</span>
-        <span>TDSQL NEXA / AGENT MEMORY / OFFICIAL AGENTTEAMS / GPU · NOT RUN</span>
+        <span>{language === "zh" ? "本地每 Agent 数据库 + FOCUS.MD · 合同已验证" : "LOCAL PER-AGENT DB + FOCUS.MD · CONTRACT VERIFIED"}</span>
+        <span>{language === "zh" ? "TDSQL NEXA / AGENT MEMORY / 官方 AGENTTEAMS / GPU · 未运行" : "TDSQL NEXA / AGENT MEMORY / OFFICIAL AGENTTEAMS / GPU · NOT RUN"}</span>
         <a
           href="https://github.com/mythrise/ego_agent_infra/blob/main/docs/judge-feedback-implementation.md"
           target="_blank"
           rel="noreferrer"
         >
-          Evidence map <ArrowRight size={12} />
+          {language === "zh" ? "证据地图" : "Evidence map"} <ArrowRight size={12} />
         </a>
       </div>
     </section>
@@ -970,16 +1001,17 @@ function AcceptanceReadiness({
 }
 
 function StageSpine({ current, reducedMotion }: { current: ResearchTask["stage"]; reducedMotion: boolean }) {
+  const { language, stage: stageLabel } = useI18n();
   const currentIndex = Math.max(0, STAGES.indexOf(current));
   return (
     <section className="stage-section" aria-labelledby="state-title">
       <SectionHeading
         id="state-title"
         index="01"
-        title="Deterministic state spine"
-        note={`Current gate · ${current.replaceAll("_", " ")}`}
+        title={language === "zh" ? "确定性状态脊柱" : "Deterministic state spine"}
+        note={`${language === "zh" ? "当前门禁" : "Current gate"} · ${stageLabel(current)}`}
       />
-      <div className="stage-scroll" tabIndex={0} aria-label={`Workflow stage ${current} of ${STAGES.length}`}>
+      <div className="stage-scroll" tabIndex={0} aria-label={`${language === "zh" ? "工作流阶段" : "Workflow stage"} ${stageLabel(current)} / ${STAGES.length}`}>
         <div className="stage-spine" style={{ "--stage-progress": `${(currentIndex / (STAGES.length - 1)) * 100}%` } as React.CSSProperties}>
           <div className="stage-track" aria-hidden="true">
             <div className="stage-progress" />
@@ -991,7 +1023,7 @@ function StageSpine({ current, reducedMotion }: { current: ResearchTask["stage"]
               <div className={`stage-node ${state}`} key={stage} aria-current={state === "current" ? "step" : undefined}>
                 <span className="stage-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="stage-pip">{state === "complete" && <Check size={9} strokeWidth={2.6} />}</span>
-                <span className="stage-label">{stage.replaceAll("_", " ")}</span>
+                <span className="stage-label">{language === "zh" ? stageLabel(stage) : stage.replaceAll("_", " ")}</span>
               </div>
             );
           })}
@@ -1018,18 +1050,19 @@ function StatusDot({ status }: { status: string }) {
 }
 
 function ExperimentMatrix({ experiments }: { experiments: Experiment[] }) {
+  const { language, status } = useI18n();
   return (
     <section className="matrix-section" id="experiments" aria-labelledby="matrix-title">
-      <SectionHeading id="matrix-title" index="02" title="Experiment matrix" note={`${experiments.length} SYNTHETIC bounded arms`} />
+      <SectionHeading id="matrix-title" index="02" title={language === "zh" ? "实验矩阵" : "Experiment matrix"} note={language === "zh" ? `${experiments.length} 条合成数据受控支线` : `${experiments.length} SYNTHETIC bounded arms`} />
       {experiments.length ? (
         <div className="table-scroll">
           <table className="experiment-table">
             <thead>
               <tr>
-                <th>Arm / variant</th>
-                <th>State</th>
-                <th>Lane</th>
-                <th>Manifest</th>
+                <th>{language === "zh" ? "支线 / 变体" : "Arm / variant"}</th>
+                <th>{language === "zh" ? "状态" : "State"}</th>
+                <th>{language === "zh" ? "计算通道" : "Lane"}</th>
+                <th>{language === "zh" ? "清单摘要" : "Manifest"}</th>
               </tr>
             </thead>
             <tbody>
@@ -1040,7 +1073,7 @@ function ExperimentMatrix({ experiments }: { experiments: Experiment[] }) {
                     <span className="row-secondary">{experiment.variant}</span>
                   </td>
                   <td>
-                    <span className="state-label"><StatusDot status={experiment.status} />{experiment.status}</span>
+                    <span className="state-label"><StatusDot status={experiment.status} />{status(experiment.status)}</span>
                   </td>
                   <td className="mono-cell">{experiment.gpuLane ?? "not run"}</td>
                   <td className="mono-cell">{experiment.manifestDigest ?? "not run"}</td>
@@ -1074,6 +1107,7 @@ function Sparkline({ resource }: { resource: ResourceSnapshot }) {
 }
 
 function ResourceTrace({ resources, trace }: { resources: ResourceSnapshot[]; trace: TraceEvent[] }) {
+  const { language } = useI18n();
   const [visibleLogs, setVisibleLogs] = useState(1);
   const reducedMotion = useReducedMotion();
 
@@ -1094,7 +1128,7 @@ function ResourceTrace({ resources, trace }: { resources: ResourceSnapshot[]; tr
 
   return (
     <section className="resource-section" aria-labelledby="resource-title">
-      <SectionHeading id="resource-title" index="03" title="Resource trace" note="Synthetic replay · no GPU host attached" />
+      <SectionHeading id="resource-title" index="03" title={language === "zh" ? "资源轨迹" : "Resource trace"} note={language === "zh" ? "合成回放 · 未连接 GPU 主机" : "Synthetic replay · no GPU host attached"} />
       {resources.length ? (
         <div className="resource-plots">
           {resources.map((resource) => (
@@ -1112,7 +1146,7 @@ function ResourceTrace({ resources, trace }: { resources: ResourceSnapshot[]; tr
       )}
       <div className="micro-log" aria-label="Incremental control log">
         <div className="micro-log-head">
-          <span>CONTROL LOG</span>
+          <span>{language === "zh" ? "控制日志" : "CONTROL LOG"}</span>
           <span>{trace.length ? `${Math.min(visibleLogs, trace.length)}/${trace.length}` : "0/0"}</span>
         </div>
         <AnimatePresence initial={false}>
@@ -1145,18 +1179,19 @@ function ApprovalPanel({
   operatorReady: boolean;
   onDecision: (decision: "approve" | "reject") => void;
 }) {
+  const { language, t } = useI18n();
   return (
     <section className="approval-panel" aria-labelledby="approval-title">
       <div className="approval-sigil" aria-hidden="true"><ShieldCheck size={22} /></div>
       <div className="approval-copy">
-        <div className="section-kicker">HUMAN CHECKPOINT · {gate.riskLevel}</div>
-        <h2 id="approval-title">Execution is policy-blocked</h2>
+        <div className="section-kicker">{language === "zh" ? "人工检查点" : "HUMAN CHECKPOINT"} · {gate.riskLevel}</div>
+        <h2 id="approval-title">{language === "zh" ? "执行已被策略门禁阻断" : "Execution is policy-blocked"}</h2>
         <p>{gate.summary}</p>
         <dl className="approval-facts">
-          <div><dt>Requested by</dt><dd>{gate.requestedBy}</dd></div>
-          <div><dt>Estimated compute</dt><dd>{gate.estimatedGpuHours ? `${gate.estimatedGpuHours} modeled GPU·h` : "not supplied"}</dd></div>
-          <div><dt>Rollback point</dt><dd>{gate.rollbackPoint ?? "not supplied"}</dd></div>
-          <div><dt>Expected digest</dt><dd className="mono-cell">{gate.expectedDigest || "missing — cannot approve"}</dd></div>
+          <div><dt>{language === "zh" ? "请求者" : "Requested by"}</dt><dd>{gate.requestedBy}</dd></div>
+          <div><dt>{language === "zh" ? "预计算力" : "Estimated compute"}</dt><dd>{gate.estimatedGpuHours ? `${gate.estimatedGpuHours} modeled GPU·h` : t("task.notSupplied")}</dd></div>
+          <div><dt>{language === "zh" ? "回滚点" : "Rollback point"}</dt><dd>{gate.rollbackPoint ?? t("task.notSupplied")}</dd></div>
+          <div><dt>{language === "zh" ? "期望摘要" : "Expected digest"}</dt><dd className="mono-cell">{gate.expectedDigest || (language === "zh" ? "缺失，无法批准" : "missing — cannot approve")}</dd></div>
         </dl>
       </div>
       <div className="approval-actions">
@@ -1165,14 +1200,14 @@ function ApprovalPanel({
           onClick={() => onDecision("reject")}
           disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
-          {busy === "reject" ? "Recording…" : "Reject"}
+          {busy === "reject" ? t("action.recording") : t("action.reject")}
         </button>
         <button
           className="button primary"
           onClick={() => onDecision("approve")}
           disabled={Boolean(busy) || !gate.expectedDigest || !operatorReady}
         >
-          {busy === "approve" ? "Recording…" : "Approve digest"}
+          {busy === "approve" ? t("action.recording") : t("action.approve")}
           {busy !== "approve" && <ArrowRight size={14} />}
         </button>
       </div>
@@ -1193,17 +1228,18 @@ function EvidenceLedger({
   gateStatus: ResearchTask["gateStatus"];
   onInspect: (item: EvidenceItem) => void;
 }) {
+  const { status, t } = useI18n();
   const percent = required ? Math.min(100, (present / required) * 100) : 0;
-  const verdict = gateStatus === "pass" ? "PASS" : gateStatus === "fail" ? "FAIL" : "HOLD";
+  const verdict = gateStatus === "pass" ? t("status.pass") : gateStatus === "fail" ? t("status.fail") : t("status.hold");
   return (
     <section className="ledger-section" id="evidence" aria-labelledby="ledger-title">
-      <SectionHeading id="ledger-title" index="04" title="Evidence ledger" note="SYNTHETIC artifacts before narrative claims" />
+      <SectionHeading id="ledger-title" index="04" title={t("evidence.title")} note={t("evidence.note")} />
       <div className="gate-meter">
         <div>
-          <span>DECISION GATE</span>
-          <strong>{present} / {required} artifacts present</strong>
+          <span>{t("evidence.decisionGate")}</span>
+          <strong>{t("evidence.artifactsPresent", { present, required })}</strong>
         </div>
-        <div className="meter-track" aria-label={`${Math.round(percent)} percent evidence complete`}>
+        <div className="meter-track" aria-label={t("evidence.progress", { percent: Math.round(percent) })}>
           <span style={{ width: `${percent}%` }} />
         </div>
         <span className={`gate-verdict ${gateStatus}`}>{verdict}</span>
@@ -1211,60 +1247,61 @@ function EvidenceLedger({
       {evidence.length ? (
         <div className="ledger-list">
           {evidence.map((item, index) => (
-            <button className="ledger-row" onClick={() => onInspect(item)} key={item.id} aria-label={`Inspect ${item.label}`}>
+            <button className="ledger-row" onClick={() => onInspect(item)} key={item.id} aria-label={t("evidence.inspect", { label: item.label })}>
               <span className="ledger-number">{String(index + 1).padStart(2, "0")}</span>
               <span className={`evidence-kind ${item.status}`}>{item.kind.replaceAll("_", " ")}</span>
               <span className="ledger-artifact">
                 <strong>{item.label}</strong>
-                <small>{item.source ?? "source not emitted"}</small>
+                <small>{item.source ?? t("evidence.sourceMissing")}</small>
               </span>
               <span className="ledger-digest">{item.digest ?? "—"}</span>
-              <span className={`ledger-status ${item.status}`}><StatusDot status={item.status} />{item.status}</span>
+              <span className={`ledger-status ${item.status}`}><StatusDot status={item.status} />{status(item.status)}</span>
               <ArrowRight size={13} aria-hidden="true" />
             </button>
           ))}
         </div>
       ) : (
-        <InlineEmpty icon={Database} text="The evidence ledger is empty. A decision cannot be committed." />
+        <InlineEmpty icon={Database} text={t("evidence.empty")} />
       )}
     </section>
   );
 }
 
 function MetricComparison({ experiments }: { experiments: Experiment[] }) {
+  const { language } = useI18n();
   return (
     <section className="metrics-section" aria-labelledby="metrics-title">
-      <SectionHeading id="metrics-title" index="05" title="Raw metric comparison" note="SYNTHETIC fixture values · not Agent summaries" />
+      <SectionHeading id="metrics-title" index="05" title={language === "zh" ? "原始指标对比" : "Raw metric comparison"} note={language === "zh" ? "合成样例数值 · 非 Agent 总结" : "SYNTHETIC fixture values · not Agent summaries"} />
       {experiments.length ? (
         <div className="table-scroll metrics-scroll">
           <table className="metric-table">
             <thead>
               <tr>
-                <th>Metric</th>
+                <th>{language === "zh" ? "指标" : "Metric"}</th>
                 {experiments.map((item) => <th key={item.id}>{item.name}</th>)}
-                <th>Acceptance</th>
+                <th>{language === "zh" ? "验收条件" : "Acceptance"}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th>FPS <small>higher</small></th>
+                <th>FPS <small>{language === "zh" ? "越高越好" : "higher"}</small></th>
                 {experiments.map((item) => <td key={item.id}>{formatMetric(item.fps)}</td>)}
                 <td className="target-cell">≥ 10</td>
               </tr>
               <tr>
-                <th>MPJPE <small>mm · lower</small></th>
+                <th>MPJPE <small>{language === "zh" ? "mm · 越低越好" : "mm · lower"}</small></th>
                 {experiments.map((item) => <td key={item.id}>{formatMetric(item.mpjpe)}</td>)}
                 <td className="target-cell">≤ +5%</td>
               </tr>
               <tr>
-                <th>Latency <small>ms · lower</small></th>
+                <th>{language === "zh" ? "延迟" : "Latency"} <small>{language === "zh" ? "ms · 越低越好" : "ms · lower"}</small></th>
                 {experiments.map((item) => <td key={item.id}>{formatMetric(item.latency)}</td>)}
-                <td className="target-cell">reported</td>
+                <td className="target-cell">{language === "zh" ? "需报告" : "reported"}</td>
               </tr>
               <tr>
-                <th>VRAM <small>GB · lower</small></th>
+                <th>VRAM <small>{language === "zh" ? "GB · 越低越好" : "GB · lower"}</small></th>
                 {experiments.map((item) => <td key={item.id}>{formatMetric(item.vram)}</td>)}
-                <td className="target-cell">reported</td>
+                <td className="target-cell">{language === "zh" ? "需报告" : "reported"}</td>
               </tr>
             </tbody>
           </table>
@@ -1310,11 +1347,12 @@ function Inspector({
 }
 
 function TraceInspector({ trace }: { trace: TraceEvent[] }) {
+  const { language } = useI18n();
   return (
     <section className="inspector-section trace-inspector" id="trace" aria-labelledby="trace-title">
       <div className="inspector-title">
-        <div><span>AUDIT EVENT REPLAY</span><h2 id="trace-title">Control-plane audit</h2></div>
-        <span className="tiny-status"><span className="status-dot running" />{trace.length} events</span>
+        <div><span>{language === "zh" ? "审计事件回放" : "AUDIT EVENT REPLAY"}</span><h2 id="trace-title">{language === "zh" ? "控制平面审计" : "Control-plane audit"}</h2></div>
+        <span className="tiny-status"><span className="status-dot running" />{trace.length} {language === "zh" ? "个事件" : "events"}</span>
       </div>
       {trace.length ? (
         <div className="trace-list">
@@ -1341,27 +1379,28 @@ function TraceInspector({ trace }: { trace: TraceEvent[] }) {
 }
 
 function MemoryPromotion({ task }: { task: ResearchTask }) {
+  const { t } = useI18n();
   const proposal = task.memoryProposal;
   return (
-    <section className="inspector-section memory-section" aria-labelledby="memory-title">
+    <section className="inspector-section memory-section" id="memory" aria-labelledby="memory-title">
       <div className="inspector-title">
-          <div><span>EVIDENCE → MEMORY → SKILL</span><h2 id="memory-title">Promotion candidate</h2></div>
+          <div><span>{t("memory.flow")}</span><h2 id="memory-title">{t("memory.title")}</h2></div>
       </div>
       {proposal ? (
         <div className="memory-flow">
           <div className="memory-observation">
-            <span>OBSERVATION</span>
+            <span>{t("memory.observation")}</span>
             <strong>{proposal.title}</strong>
             <p>{proposal.observation}</p>
           </div>
           <div className="promotion-line"><span /><ArrowRight size={13} /></div>
           <div className="skill-candidate">
-            <span>SKILL CANDIDATE</span>
+            <span>{t("memory.skillCandidate")}</span>
             <div><strong>{proposal.candidateSkill}</strong><code>{proposal.version}</code></div>
-            <p>{proposal.supportCount}/3 independently verified outcomes</p>
+            <p>{t("memory.outcomes", { count: proposal.supportCount })}</p>
             <div className="promotion-meter"><span style={{ width: `${Math.min(100, (proposal.supportCount / 3) * 100)}%` }} /></div>
           </div>
-          <div className="promotion-hold"><ShieldCheck size={13} /> Promotion remains human-gated</div>
+          <div className="promotion-hold"><ShieldCheck size={13} /> {t("memory.humanGated")}</div>
         </div>
       ) : (
         <InlineEmpty icon={GitBranch} text="No procedure is eligible for skill review." />
@@ -1371,12 +1410,13 @@ function MemoryPromotion({ task }: { task: ResearchTask }) {
 }
 
 function IntegrationPanel({ integrations }: { integrations: IntegrationTruth[] }) {
+  const { language, status } = useI18n();
   return (
     <section className="inspector-section integration-section" id="integrations" aria-labelledby="integration-title">
       <div className="inspector-title">
-        <div><span>CONNECTION CLAIMS</span><h2 id="integration-title">Integration truth</h2></div>
+        <div><span>{language === "zh" ? "连接声明" : "CONNECTION CLAIMS"}</span><h2 id="integration-title">{language === "zh" ? "集成事实" : "Integration truth"}</h2></div>
       </div>
-      <p className="truth-note">Only “connected” rows represent a verified endpoint in this running stack.</p>
+      <p className="truth-note">{language === "zh" ? "只有“已连接”的条目代表此运行栈中经过验证的端点。" : "Only “connected” rows represent a verified endpoint in this running stack."}</p>
       {integrations.length ? (
         <div className="integration-list">
           {integrations.map((item) => (
@@ -1387,7 +1427,7 @@ function IntegrationPanel({ integrations }: { integrations: IntegrationTruth[] }
                 <ChevronDown size={13} />
               </summary>
               <p>{item.detail}</p>
-              <span className={`truth-state ${item.status}`}>{item.status}</span>
+              <span className={`truth-state ${item.status}`}>{status(item.status)}</span>
             </details>
           ))}
         </div>
@@ -1399,6 +1439,7 @@ function IntegrationPanel({ integrations }: { integrations: IntegrationTruth[] }
 }
 
 function EvidenceInspector({ item, onClose }: { item: EvidenceItem; onClose: () => void }) {
+  const { language, status, t } = useI18n();
   return (
     <motion.section
       key={item.id}
@@ -1408,27 +1449,27 @@ function EvidenceInspector({ item, onClose }: { item: EvidenceItem; onClose: () 
       exit={{ opacity: 0, x: 12 }}
       aria-labelledby="evidence-inspector-title"
     >
-      <button className="inspector-close" onClick={onClose} aria-label="Close evidence inspector"><X size={16} /></button>
+      <button className="inspector-close" onClick={onClose} aria-label={language === "zh" ? "关闭证据详情" : "Close evidence inspector"}><X size={16} /></button>
       <span className="evidence-kind detail-kind">{item.kind.replaceAll("_", " ")}</span>
       <h2 id="evidence-inspector-title">{item.label}</h2>
-      <p className="detail-intro">Evidence metadata from the selected runtime. Static replay records are illustrative SYNTHETIC fixtures; no generated summary substitutes for an underlying artifact.</p>
+      <p className="detail-intro">{language === "zh" ? "来自所选运行时的证据元数据。静态回放记录是明确标记的合成样例；任何生成式总结都不能替代底层产物。" : "Evidence metadata from the selected runtime. Static replay records are illustrative SYNTHETIC fixtures; no generated summary substitutes for an underlying artifact."}</p>
       <dl className="detail-list">
-        <div><dt>Status</dt><dd><span className={`ledger-status ${item.status}`}><StatusDot status={item.status} />{item.status}</span></dd></div>
-        <div><dt>Digest</dt><dd><code>{item.digest ?? "not emitted"}</code></dd></div>
-        <div><dt>Source</dt><dd>{item.source ?? "not emitted"}</dd></div>
-        <div><dt>Verified by</dt><dd>{item.verifiedBy ?? "not independently verified"}</dd></div>
-        <div><dt>Recorded at</dt><dd>{item.createdAt ?? "not emitted"}</dd></div>
-        <div><dt>Evidence ID</dt><dd><code>{item.id}</code></dd></div>
+        <div><dt>{language === "zh" ? "状态" : "Status"}</dt><dd><span className={`ledger-status ${item.status}`}><StatusDot status={item.status} />{status(item.status)}</span></dd></div>
+        <div><dt>{language === "zh" ? "摘要" : "Digest"}</dt><dd><code>{item.digest ?? t("common.notEmitted")}</code></dd></div>
+        <div><dt>{language === "zh" ? "来源" : "Source"}</dt><dd>{item.source ?? t("common.notEmitted")}</dd></div>
+        <div><dt>{language === "zh" ? "验证者" : "Verified by"}</dt><dd>{item.verifiedBy ?? (language === "zh" ? "未独立验证" : "not independently verified")}</dd></div>
+        <div><dt>{language === "zh" ? "记录时间" : "Recorded at"}</dt><dd>{item.createdAt ?? t("common.notEmitted")}</dd></div>
+        <div><dt>{language === "zh" ? "证据 ID" : "Evidence ID"}</dt><dd><code>{item.id}</code></dd></div>
       </dl>
       {item.raw && (
         <details className="raw-payload">
-          <summary>Raw evidence payload <ChevronDown size={13} /></summary>
+          <summary>{language === "zh" ? "原始证据负载" : "Raw evidence payload"} <ChevronDown size={13} /></summary>
           <pre>{JSON.stringify(item.raw, null, 2)}</pre>
         </details>
       )}
       <div className="inspector-rule">
         <ShieldCheck size={15} />
-        <p><strong>Decision invariant</strong> Missing or unverified required evidence keeps the decision gate closed.</p>
+        <p><strong>{language === "zh" ? "决策不变量" : "Decision invariant"}</strong> {language === "zh" ? "必需证据缺失或未经验证时，决策门保持关闭。" : "Missing or unverified required evidence keeps the decision gate closed."}</p>
       </div>
     </motion.section>
   );
@@ -1453,6 +1494,7 @@ function ActionDock({
   runtimeMode: DashboardData["runtimeMode"];
   operatorConnected: boolean;
 }) {
+  const { language, stage, t } = useI18n();
   const approvalBlocked = task.stage === "APPROVAL" && !approvalToken;
   const operatorLocked = runtimeMode === "local_api" && !operatorConnected;
   const terminal = task.stage === "COMPLETED";
@@ -1460,24 +1502,24 @@ function ActionDock({
     <div className="action-dock" aria-label="Task controls">
       <div className="dock-state">
         <span className="status-dot running" />
-        <div><small>{runtimeMode === "static_replay" ? "BROWSER REPLAY" : "CONTROL PLANE"}</small><strong>{task.stage.replaceAll("_", " ")}</strong></div>
+        <div><small>{runtimeMode === "static_replay" ? t("runtime.browserReplay") : (language === "zh" ? "控制平面" : "CONTROL PLANE")}</small><strong>{stage(task.stage)}</strong></div>
       </div>
       <div className="dock-actions">
         <button className="button ghost" onClick={onReset} disabled={Boolean(busy) || operatorLocked}>
-          <RotateCcw size={13} />{busy === "reset" ? "Resetting…" : "Reset demo"}
+          <RotateCcw size={13} />{busy === "reset" ? t("action.resetting") : t("action.reset")}
         </button>
         <button className="button secondary" onClick={onAdvance} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
-          {busy === "advance" ? "Advancing…" : "Advance once"}
+          {busy === "advance" ? t("action.advancing") : t("action.advance")}
         </button>
         <button className="button primary" onClick={onAutorun} disabled={Boolean(busy) || operatorLocked || approvalBlocked || terminal}>
-          <Play size={13} fill="currentColor" />{busy === "autorun" ? "Running…" : "Run to next gate"}
+          <Play size={13} fill="currentColor" />{busy === "autorun" ? t("action.running") : t("action.run")}
         </button>
       </div>
       {(operatorLocked || approvalBlocked) && (
         <span className="dock-hint">
           {operatorLocked
-            ? "Connect operator session to mutate"
-            : runtimeMode === "static_replay" ? "Synthetic browser grant required" : "Approval token required"}
+            ? (language === "zh" ? "连接操作者会话后才能执行写操作" : "Connect operator session to mutate")
+            : runtimeMode === "static_replay" ? (language === "zh" ? "需要合成浏览器授权" : "Synthetic browser grant required") : (language === "zh" ? "需要审批令牌" : "Approval token required")}
         </span>
       )}
     </div>
@@ -1494,43 +1536,46 @@ function InlineEmpty({ icon: Icon, text }: { icon: typeof Activity; text: string
 }
 
 function LoadingScreen() {
+  const { t } = useI18n();
   return (
     <div className="state-screen loading-screen" role="status">
       <NoiseField />
       <div className="loading-brand"><span className="brand-glyph">E</span><strong>EgoAgentOS</strong></div>
       <div className="loader-line"><span /></div>
-      <p>Preparing the ResearchOps runtime…</p>
+      <p>{t("common.loading")}</p>
       <div className="skeleton-lines" aria-hidden="true"><i /><i /><i /></div>
     </div>
   );
 }
 
 function ErrorScreen({ message, onRetry, onFixture }: { message: string; onRetry: () => void; onFixture: () => void }) {
+  const { language, t } = useI18n();
   return (
     <div className="state-screen error-screen">
       <NoiseField />
       <div className="state-icon"><CircleAlert size={23} /></div>
-      <span className="eyebrow">CONTROL PLANE UNAVAILABLE</span>
-      <h1>The cockpit could not establish a verified data path.</h1>
+      <span className="eyebrow">{language === "zh" ? "控制平面不可用" : "CONTROL PLANE UNAVAILABLE"}</span>
+      <h1>{language === "zh" ? "科研控制台无法建立已验证的数据链路。" : "The cockpit could not establish a verified data path."}</h1>
       <p>{message}</p>
       <div className="state-actions">
-        <button className="button primary" onClick={onRetry}><RefreshCcw size={14} />Retry connection</button>
-        <button className="button secondary" onClick={onFixture}>Open labeled fixture</button>
+        <button className="button primary" onClick={onRetry}><RefreshCcw size={14} />{t("action.retry")}</button>
+        <button className="button secondary" onClick={onFixture}>{t("action.openFixture")}</button>
       </div>
-      <small>The local fixture is synthetic and disables automatic refresh.</small>
+      <small>{language === "zh" ? "本地样例是合成数据，并会关闭自动刷新。" : "The local fixture is synthetic and disables automatic refresh."}</small>
     </div>
   );
 }
 
 function EmptyScreen({ onReset }: { onReset: () => void }) {
+  const { language, t } = useI18n();
   return (
     <div className="state-screen empty-screen">
       <NoiseField />
       <div className="state-icon"><Database size={22} /></div>
-      <span className="eyebrow">NO ACTIVE RESEARCH TASK</span>
-      <h1>The control plane is ready, but the task ledger is empty.</h1>
-      <p>Restore the bounded synthetic scenario to inspect the complete evidence-gated workflow.</p>
-      <button className="button primary" onClick={onReset}><RotateCcw size={14} />Reset synthetic demo</button>
+      <span className="eyebrow">{language === "zh" ? "没有活动研究任务" : "NO ACTIVE RESEARCH TASK"}</span>
+      <h1>{language === "zh" ? "控制平面已就绪，但任务账本为空。" : "The control plane is ready, but the task ledger is empty."}</h1>
+      <p>{language === "zh" ? "恢复受控的合成场景，以检查完整的证据门禁工作流。" : "Restore the bounded synthetic scenario to inspect the complete evidence-gated workflow."}</p>
+      <button className="button primary" onClick={onReset}><RotateCcw size={14} />{t("action.reset")}</button>
     </div>
   );
 }
