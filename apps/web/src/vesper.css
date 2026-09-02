@@ -752,13 +752,25 @@ summary:focus-visible,
   max-width: 44ch;
   justify-self: end;
   color: #8f8f8f;
-  font-size: max(11px, 0.72rem);
+  font-size: 12px;
   line-height: 1.45;
   text-align: right;
   white-space: normal;
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;
+}
+
+.research-cockpit .section-heading span {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+}
+
+.research-cockpit .section-heading h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 
 .research-cockpit .composer-copy h1 {
@@ -831,16 +843,180 @@ summary:focus-visible,
   scrollbar-color: #444 #090909;
 }
 
+.research-cockpit .composer-levels button {
+  min-height: 78px;
+  padding: 14px 16px;
+}
+
+.research-cockpit .composer-levels button > small {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.research-cockpit .composer-levels strong {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.research-cockpit .composer-levels em {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.research-cockpit .chain-node {
+  min-height: 118px;
+  padding: 17px;
+}
+
+.research-cockpit .chain-node > span {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.research-cockpit .chain-node > strong {
+  margin-top: 10px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.research-cockpit .chain-node > small {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .research-cockpit .rxp-chain {
   width: 100%;
   min-width: 0;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #444 #090909;
+}
+
+.research-cockpit .rxp-chain-step {
+  min-width: 150px;
+  min-height: 116px;
+  padding-top: 23px;
+  padding-bottom: 21px;
+}
+
+.research-cockpit .rxp-chain-step > span,
+.research-cockpit .live-acceptance-step > span {
+  margin-bottom: 11px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.research-cockpit .rxp-chain-step strong {
+  margin-bottom: 7px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.research-cockpit .rxp-chain-step small {
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.research-cockpit .rxp-chain-step svg {
+  top: 39px;
+  width: 16px;
+  height: 16px;
+}
+
+.research-cockpit .live-acceptance-flow {
+  grid-template-columns: repeat(7, minmax(138px, 1fr));
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   scrollbar-width: thin;
 }
 
-.research-cockpit .rxp-chain-step {
-  min-width: 118px;
+.research-cockpit .live-acceptance-step {
+  min-height: 120px;
+  padding-top: 23px;
+  padding-bottom: 21px;
+}
+
+.research-cockpit .live-acceptance-step strong {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.research-cockpit .live-acceptance-step small {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+
+.research-cockpit .live-acceptance-step svg {
+  top: 39px;
+  right: 5px;
+  width: 15px;
+  height: 15px;
+}
+
+.research-cockpit .database-principle strong {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.research-cockpit .database-principle small {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.research-cockpit .stage-spine {
+  min-width: 1220px;
+  padding-block: 31px 30px;
+}
+
+.research-cockpit .stage-track {
+  top: 57px;
+}
+
+.research-cockpit .stage-index {
+  margin-bottom: 11px;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.research-cockpit .stage-pip {
+  width: 11px;
+  height: 11px;
+  margin-bottom: 13px;
+}
+
+.research-cockpit .stage-label {
+  max-width: 88px;
+  color: #777;
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.research-cockpit .stage-node.complete .stage-label {
+  color: rgba(174, 247, 199, 0.72);
+}
+
+.research-cockpit .stage-node.current .stage-label {
+  color: #caffdc;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .research-cockpit :is(
@@ -1046,7 +1222,7 @@ summary:focus-visible,
   .research-cockpit .inspector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 }
 
-@media (max-width: 1360px) {
+@media (max-width: 1599px) {
   .research-cockpit .workspace-grid { grid-template-columns: 1fr; }
   .research-cockpit .inspector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 }
