@@ -17,6 +17,9 @@ class FakeLiveGateway:
     model = "test-live-model"
     base_url = "https://model.invalid/v1"
 
+    def __init__(self) -> None:
+        self.max_tokens_by_role: Dict[str, int] = {}
+
     def list_models(self) -> list[str]:
         return [self.model]
 
@@ -28,6 +31,7 @@ class FakeLiveGateway:
         input_payload: Mapping[str, Any],
         max_tokens: int,
     ) -> ModelCall:
+        self.max_tokens_by_role[role] = max_tokens
         digest_match = re.search(r"input_digest MUST equal ([0-9a-f]{64})", system_prompt)
         review_match = re.search(r"reviewed_digest MUST equal ([0-9a-f]{64})", system_prompt)
         input_digest = digest_match.group(1) if digest_match else ""
@@ -140,6 +144,12 @@ def test_live_expert_run_calls_all_roles_and_freezes_auditable_result(tmp_path: 
     )
     assert all(item["receipt"]["http_status"] == 200 for item in run["roles"])
     assert all(item["memory_receipt"]["compacted"] is True for item in run["roles"])
+    assert client.app.state.expert_runs.gateway.max_tokens_by_role == {
+        "research-pi": 2400,
+        "scout": 2400,
+        "experiment-architect": 4096,
+        "reviewer": 4096,
+    }
     assert run["compile"]["matrix_cell_count"] > 0
     assert run["decision"] == {
         "status": "PLAN_READY_FOR_HUMAN_REVIEW",

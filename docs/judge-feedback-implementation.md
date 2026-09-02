@@ -193,7 +193,7 @@ Release gate 的不可妥协指标是：
 
 以下项目需要新的外部资源或操作授权，本仓库当前不声称已完成：
 
-- 官方 AgentTeams Controller、Team/Worker、Matrix 同一运行链；
+- 官方 AgentTeams Project 从委派、Skill/tool 到 R2 恢复和终态 Decision 的完整运行链；
 - 一次真实单 GPU Fashion-MNIST 受控实验及可认证调度来源；
 - PolarDB-PG writer/reader、四个专用登录和 provider identity；
 - PITR、备份恢复、多可用区 failover 与实测 RPO/RTO；
@@ -202,3 +202,8 @@ Release gate 的不可妥协指标是：
 建议的最低成本 live 验收预算为一张 GPU、一次 physical launch、最多 900 秒 / 0.25
 GPU-hour；云数据库演练必须另设费用上限、临时恢复实例和 teardown owner。任何实际运行前仍需
 操作者确认资源、凭据与费用授权。
+
+已完成的基础设施前置验收单独记录为 `LIVE_LOCAL`：官方 Controller/Manager、Active Team、
+四个 Running Worker 资源、暂停 Project、Bridge handshake，以及来自四个 Agent 身份的
+Matrix smoke。它不等价于上面的完整实验链；证据见
+[`acceptance/live-local-2026-09-02.md`](acceptance/live-local-2026-09-02.md)。

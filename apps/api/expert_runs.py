@@ -37,6 +37,12 @@ from .research_os.service import ResearchOSService
 
 ZERO_HASH = "0" * 64
 ROLE_ORDER = ("research-pi", "scout", "experiment-architect", "reviewer")
+ROLE_MAX_TOKENS = {
+    "research-pi": 2400,
+    "scout": 2400,
+    "experiment-architect": 4096,
+    "reviewer": 4096,
+}
 
 
 def _now() -> str:
@@ -239,7 +245,7 @@ class ExpertRunService:
     ) -> "ExpertRunService":
         base_url = os.getenv("EGO_AGENT_MODEL_BASE_URL", "").strip()
         api_key = os.getenv("EGO_AGENT_MODEL_API_KEY", "")
-        model = os.getenv("EGO_AGENT_MODEL", "agnes-2.5-flash").strip()
+        model = os.getenv("EGO_AGENT_MODEL", "agnes-2.5-pro").strip()
         gateway = None
         if base_url and api_key:
             gateway = OpenAICompatibleModelGateway(base_url, api_key, model)
@@ -424,7 +430,7 @@ class ExpertRunService:
                     role=role,
                     system_prompt=prompt,
                     input_payload=payload,
-                    max_tokens=1800,
+                    max_tokens=ROLE_MAX_TOKENS[role],
                 )
                 _validate_role_output(
                     role,

@@ -1,7 +1,10 @@
 """Application service implementing the deterministic ResearchOps workflow."""
 
 import hashlib
+import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +69,7 @@ GPU_CONFIG_RELATIVE_PATH = "apps/api/fixtures/egolite-mcp-launch.yaml"
 GPU_ROLLBACK_POINT = (
     "Restore the baseline-ltx configuration pointer and preserve all failed-run evidence."
 )
+DIRECT_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 AGENT_ROLES = [
     ("research-pi", "Research PI", "Decomposes goals and owns state transitions"),
@@ -1511,27 +1515,67 @@ class ResearchOpsService:
         ]
         states = []
         for integration_id, name, role, environment_key in definitions:
-            configured = bool(os.getenv(environment_key))
+            endpoint = os.getenv(environment_key, "").strip()
+            configured = bool(endpoint)
+            status = (
+                IntegrationTruth.CONFIGURED_UNVERIFIED
+                if configured
+                else IntegrationTruth.NOT_CONFIGURED
+            )
+            detail = (
+                "Endpoint is configured, but this local adapter does not claim a live handshake."
+                if configured
+                else "Optional external adapter is not configured; deterministic local mode remains available."
+            )
+            if integration_id == "hiclaw" and configured:
+                try:
+                    with DIRECT_HTTP.open(endpoint, timeout=3) as response:
+                        payload = json.loads(response.read())
+                    if not isinstance(payload, dict):
+                        raise TypeError("AgentTeams Bridge payload must be an object")
+                    team = payload.get("team")
+                    if (
+                        response.status == 200
+                        and payload.get("live") is True
+                        and isinstance(team, dict)
+                    ):
+                        status = IntegrationTruth.READY
+                        detail = (
+                            "Verified through AgentTeams Bridge: Team %s is %s; "
+                            "leaderReady=%s and subordinate Workers=%s/%s."
+                            % (
+                                team.get("name", "unknown"),
+                                team.get("phase", "unknown"),
+                                team.get("leaderReady", False),
+                                team.get("readyWorkers", 0),
+                                team.get("totalWorkers", 0),
+                            )
+                        )
+                    else:
+                        status = IntegrationTruth.UNAVAILABLE
+                        detail = "AgentTeams Bridge responded without a verified live handshake."
+                except (
+                    OSError,
+                    TypeError,
+                    json.JSONDecodeError,
+                    urllib.error.URLError,
+                ):
+                    status = IntegrationTruth.UNAVAILABLE
+                    detail = (
+                        "AgentTeams Bridge is configured but its live handshake is unavailable."
+                    )
             state = IntegrationState(
                 id=integration_id,
                 name=name,
                 role=role,
-                status=(
-                    IntegrationTruth.CONFIGURED_UNVERIFIED
-                    if configured
-                    else IntegrationTruth.NOT_CONFIGURED
-                ),
+                status=status,
                 endpoint_configured=configured,
                 checked_at=now,
-                detail=(
-                    "Endpoint is configured, but this local adapter does not claim a live handshake."
-                    if configured
-                    else "Optional external adapter is not configured; deterministic local mode remains available."
-                ),
+                detail=detail,
             )
             states.append(state.model_dump(mode="json"))
         return {
-            "mode": "adapter_metadata_only",
+            "mode": "verified_handshake_or_metadata",
             "truth_policy": (
                 "No external integration is reported ready without a verified handshake. "
                 "This build intentionally performs no fake cloud calls."

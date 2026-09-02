@@ -10,7 +10,7 @@
 | 复赛维度 | 权重 | EgoAgentOS 设计回应 | 已落库证据 | 当前真实边界 |
 |---|---:|---|---|---|
 | 场景价值与可迁移性 | 20% | 把具身 AI 的高成本实验从聊天式黑盒改为目标、矩阵、授权、执行、复核和决策闭环 | `apps/api/`、`protocols/rxp/`、6 个 Skills、14 场景 benchmark、真实 Fashion-MNIST 单 GPU adapter | adapter 与验收器已实现，但官方 GPU/AgentTeams origin 未验证；尚无真实科研用户基线和跨领域验收 |
-| 多 Agent 协作 | 25% | AgentTeams 负责真实团队协作；PI、Scout、Architect、Runtime、Evaluator、Reviewer、Memory Curator 分权；中间结果可 replan，超时可改派，重启可恢复 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook | bridge 与合同已完成；官方 live 服务与逐场景 fault/replay harness 均未验收，所以不能声称核心链已接通 |
+| 多 Agent 协作 | 25% | AgentTeams 负责真实团队协作；PI、Scout、Architect、Runtime、Evaluator、Reviewer、Memory Curator 分权；中间结果可 replan，超时可改派，重启可恢复 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook、四 Agent Matrix receipt | 官方 Controller/Manager/Team/Workers/Matrix 已 `LIVE_LOCAL`；完整委派/Skill/R2/终态与逐场景 fault harness 尚未验收 |
 | Skill 工程化 | 20% | Skill 不是提示词附件，而是可发现、版本固定、可调用、可追踪、可回滚的运行时资产 | `skills/`、`skill_runtime/`、`/api/v1/skills/*`、`tests/skills/` | 本地 runtime 已验证；真实 Worker 的 discovery/tool invocation 仍待 live trace |
 | 工程实现与安全审计 | 30% | 确定性控制面拥有状态、授权、幂等、证据和最终验收；RXP 固化实验承诺链；benchmark 与 acceptance bundle 独立验证 adapter 证据 | RXP schemas/verifier、PostgreSQL 生产路径与四类角色、R2 token、append-only hash-chain、LISTEN/NOTIFY、PolarDB preflight、evidence gate、persistent bundle | 本地/contract 证据不等于生产安全认证，也不证明真实 GPU/AgentTeams/PolarDB/PITR |
 | 开源贡献 | 5% | 发布代码、协议文档、JSON Schema、Skill 包、adapter、负对照与可复现测试 | Apache-2.0 repository、README、runbooks、CI commands | 尚无正式 release/adoption 证据；RXP 是项目协议，不是行业标准 |
@@ -59,9 +59,9 @@ gate 中 `SKIP` 与 `FAIL`/`ERROR` 一样阻止放行。
 
 | 能力 | Code | 本地/contract 证据 | 官方 live 证据 |
 |---|:---:|:---:|:---:|
-| AgentTeams resource + official contract pin | ✓ | ✓ | — |
+| AgentTeams resource + official contract pin | ✓ | ✓ | ✓ `LIVE_LOCAL` |
 | Project create/pause/resume/replan/complete 与 task cancel/replacement bridge | ✓ | ✓ | — |
-| Matrix structured dispatch 与 response correlation | ✓ | ✓ | — |
+| Matrix structured dispatch 与 response correlation | ✓ | ✓ | ✓ 四 Agent smoke；非完整 workflow |
 | conflict/replan、timeout/reassign、restart/resume、compensation | ✓ | ✓ | — |
 | R2 Grant 进入恢复链 | ✓ | ✓ | — |
 | PostgreSQL bridge checkpoint/event/receipt、append-only 与最小权限 | ✓ | ✓，本地 16.14 | — PolarDB/PITR |
@@ -83,10 +83,10 @@ live evidence。
 
 当前可安全使用的总述是：
 
-> EgoAgentOS 已实现并本地验证一个面向官方 AgentTeams Project/TeamHarness/Matrix 的
-> fail-closed bridge、PostgreSQL 生产数据合同、RXP 实验承诺层、真实 Fashion-MNIST 单
-> GPU adapter 与一键证据验收层；官方 AgentTeams/GPU origin、PolarDB/PITR 和 14 场景
-> target release benchmark 尚待部署环境验收，当前外部结果明确为 `UNVERIFIED`/`SKIP`。
+> EgoAgentOS 已在本地运行官方 AgentTeams Controller/Manager、Active Team、四个 Worker
+> 资源和 Matrix 四 Agent smoke，并验证 fail-closed bridge、PostgreSQL 数据合同、RXP、
+> Fashion-MNIST 单 GPU adapter 与一键验收层；完整 AgentTeams Project/Skill/R2/Decision、
+> GPU origin、Nexa/PITR 和 14 场景 target release benchmark 尚待验收。
 
 详细 release 判据见 [`semifinal-scorecard.md`](semifinal-scorecard.md)，live 操作见
 [`agentteams-live-runbook.md`](agentteams-live-runbook.md)，claim 状态见

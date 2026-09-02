@@ -55,7 +55,7 @@ digest，并在任何实验执行之前给出 `PASS/WARN/FAIL`。
 
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-flash
+export EGO_AGENT_MODEL=agnes-2.5-pro
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 export EGO_OPERATOR_KEY="$(openssl rand -hex 32)"
@@ -69,6 +69,37 @@ VITE_API_ROOT=http://127.0.0.1:8000/api/v1 npm --prefix apps/web run dev -- --po
 点击“启动真实专家团队”。公开 GitHub Pages 仍故意保持无密钥静态模式；要让公网评委直接运行
 真实专家，必须另行部署 HTTPS FastAPI 服务并在构建时把 `VITE_API_ROOT` 指向它，不能把供应商
 API key 塞进 GitHub Pages。
+
+### 官方 AgentTeams 本地实机路径（GPU 延后）
+
+下面的一键部署固定使用官方 AgentTeams `v1.2.3`，创建 1 个 Manager、4 个 Worker、Team、
+L2 Human/Matrix 身份、GPU 门控 Project/Workflow，并启动 PostgreSQL、EgoAgentOS API、Web 与
+AgentTeams Bridge。密钥通过隐藏提示输入，之后只保存在 gitignored 的 `.runtime/live-stack.env`
+（0600）；命令和公开验收清单都不打印原值。
+
+```bash
+python3 scripts/deploy_local_live_stack.py all
+```
+
+本机入口：
+
+- Web：<http://127.0.0.1:4173>
+- EgoAgentOS API / OpenAPI：<http://127.0.0.1:8000> / <http://127.0.0.1:8000/docs>
+- AgentTeams Bridge：<http://127.0.0.1:8020>
+- Controller（只绑定本机）：<http://127.0.0.1:18090>
+- Matrix / Element：<http://127.0.0.1:18080> / <http://127.0.0.1:18088>
+
+Team 为 `ego-researchops`，Project 为 `egoagentos-gpu-gated-v1`。在 GPU 主机接入前，Workflow
+必须保持 `paused`，原因是 `GPU Worker intentionally not attached yet`。官方 Team 状态把 Leader
+单独计数，因此显示 `leaderReady=true + readyWorkers=3/3`；Controller 中实际存在并运行的是
+4 个 Worker 资源。可公开的地址、状态、房间 ID、digest 与验收结果写入
+`.runtime/live-stack-public.json`，Token、Matrix 初始密码和两个互不复用的操作密钥只在私有 env 中。
+
+2026-09-02 的真实验收区分两条链：官方 Matrix Team room 收到 4/4 个不同 Agent 的实时回复，
+基础设施为 `LIVE_LOCAL PASS`；同日自定义输入专家链真实调用 `agnes-2.5-pro`，PI 与 Scout 完成并
+写入 compact receipt，但 Architect 连续两次返回非合同 JSON，因而 `FAILED_CLOSED`，没有生成
+矩阵或执行任务。完整、无密钥的证据边界见
+[`docs/acceptance/live-local-2026-09-02.md`](docs/acceptance/live-local-2026-09-02.md)。
 
 本地评委复现的目标路径只需要 Docker：
 
@@ -90,10 +121,8 @@ docker compose up --build
 
 默认场景明确标记为 **SYNTHETIC DEMO DATA**。它真实运行控制面、本地 PostgreSQL 16 状态、审批、哈希、评测、证据门禁与审计，但不会声称已经使用 8×RTX 4090 训练，也不会伪造 TDSQL Nexa、TencentDB Agent Memory、AgentTeams、Nacos 或 Higress 在线状态。生产数据权威通过 `EGO_NEXA_DATABASE_URL` 指向 Nexa；直接启动 API 且不设置外部数据库时，使用 SQLite 开发 fallback。
 
-截至 2026-08-29，本机已通过 `docker compose config` 和真实 PostgreSQL 16.14
-数据层的 32/32 集成测试；API/Web 镜像构建在拉取 Docker Hub metadata 时网络超时，
-因此本仓库不把这次 `docker compose up --build` 记作已验证镜像构建。评委网络可用时可
-直接走上述一键路径；原生启动路径不依赖镜像拉取：
+截至 2026-09-02，本机已经完成 Compose 镜像构建、PostgreSQL 数据迁移与权限初始化、API/Web/
+Bridge 启动和端到端健康检查。原生启动路径仍可用于不希望运行完整 AgentTeams 的开发场景：
 
 若不使用 Docker：
 

@@ -1,0 +1,50 @@
+[
+  {
+    "taskId": "intake",
+    "title": "Classify the input mode and freeze the research objective",
+    "assignedRole": "ego-research-lead",
+    "dependsOn": []
+  },
+  {
+    "taskId": "experiment-matrix",
+    "title": "Build the falsifiable experiment tree, controls, and budget",
+    "assignedRole": "ego-architect",
+    "dependsOn": ["intake"]
+  },
+  {
+    "taskId": "plan-review",
+    "title": "Independently review leakage, duplication, resource use, and stop conditions",
+    "assignedRole": "ego-reviewer",
+    "dependsOn": ["experiment-matrix"]
+  },
+  {
+    "taskId": "human-r2",
+    "title": "Wait for a scoped one-use EgoAgentOS R2 grant",
+    "assignedRole": "ego-research-lead",
+    "dependsOn": ["plan-review"]
+  },
+  {
+    "taskId": "gpu-execution",
+    "title": "Execute only after the GPU Worker and allowlisted MCP tools are attached",
+    "assignedRole": "ego-research-lead",
+    "dependsOn": ["human-r2"]
+  },
+  {
+    "taskId": "deterministic-evaluation",
+    "title": "Evaluate raw artifacts with the frozen metric implementation",
+    "assignedRole": "ego-reviewer",
+    "dependsOn": ["gpu-execution"]
+  },
+  {
+    "taskId": "memory-compact",
+    "title": "Commit validated findings and compact each agent context",
+    "assignedRole": "ego-memory-curator",
+    "dependsOn": ["deterministic-evaluation"]
+  },
+  {
+    "taskId": "decision",
+    "title": "Issue KEEP, REJECT, or REVISE from independent evidence review",
+    "assignedRole": "ego-reviewer",
+    "dependsOn": ["memory-compact"]
+  }
+]

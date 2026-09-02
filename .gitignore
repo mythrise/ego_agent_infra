@@ -25,6 +25,7 @@ artifacts/runtime/
 data/agent-memory/
 submission/dist/
 .tmp/
+.runtime/
 
 # Local/stale setup output is not a submission input.
 ps.txt

@@ -36,5 +36,7 @@ EgoAgentOS 的主输入不是一句开放式 prompt，而是一组冻结、可�
 消费/状态机回放、独立复核、`acceptance.json` 和 `SHA256SUMS.json`。
 
 真实性标签必须一起阅读：外部模型调用为 `LIVE`，本地控制面为 `LIVE_LOCAL`，EgoLite
-指标仍为 `SYNTHETIC_FIXTURE`，官方 AgentTeams Controller、Matrix 与物理 GPU 均为
-`NOT_RUN`。后两者只有连接官方部署并取得相应 receipt 后才能升级。
+指标仍为 `SYNTHETIC_FIXTURE`。2026-09-02 的独立本地验收已将官方 AgentTeams Controller、
+Manager、四个 Worker 与 Matrix 升级为 `LIVE_LOCAL`；Project 保持 GPU gate 暂停，物理 GPU、
+完整 workflow、Skill tool trace 与终态 Decision 仍为 `NOT_RUN`。详见
+[`acceptance/live-local-2026-09-02.md`](acceptance/live-local-2026-09-02.md)。

@@ -1,6 +1,24 @@
 name: egoagentos-researchops
 
 services:
+  agentteams-controller-proxy:
+    profiles: ["agentteams"]
+    image: python:3.11-slim
+    command: ["python", "/opt/egoagentos/controller_proxy.py"]
+    pull_policy: ${EGO_BASE_IMAGE_PULL_POLICY:-missing}
+    environment:
+      NO_PROXY: 127.0.0.1,localhost,agentteams-controller
+      no_proxy: 127.0.0.1,localhost,agentteams-controller
+    volumes:
+      - ./deploy/agentteams/controller_proxy.py:/opt/egoagentos/controller_proxy.py:ro
+    networks:
+      - agentteams-official
+    ports:
+      - "127.0.0.1:${AGENTTEAMS_CONTROLLER_PORT:-18090}:8080"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -21,9 +39,9 @@ services:
       - no-new-privileges:true
 
   api-migrate:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
+    platform: linux/amd64
+    image: egoagentos-local-api:latest
+    pull_policy: never
     command:
       - python
       - -c
@@ -63,7 +81,27 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  api-storage-init:
+    image: python:3.11-slim
+    platform: linux/amd64
+    pull_policy: ${EGO_BASE_IMAGE_PULL_POLICY:-missing}
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p /var/lib/egoagentos/agent-memory /data/artifacts &&
+        chown -R 100:101 /var/lib/egoagentos/agent-memory /data
+    volumes:
+      - egoagentos-agent-memory:/var/lib/egoagentos/agent-memory
+      - egoagentos-artifacts:/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
   backend:
+    platform: linux/amd64
+    image: egoagentos-local-api:latest
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -72,7 +110,7 @@ services:
       EGO_NEXA_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-}
       EGO_DATABASE_MIGRATION_MODE: verify
       EGO_TENANT_ID: ${EGO_TENANT_ID:-local}
-      EGO_CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
+      EGO_CORS_ORIGINS: ${EGO_CORS_ORIGINS:-http://localhost:4173,http://127.0.0.1:4173}
       EGO_MCP_APPROVAL_HMAC_SECRET: ${EGO_MCP_APPROVAL_HMAC_SECRET:-}
       EGO_OPERATOR_KEY: ${EGO_OPERATOR_KEY:?Set EGO_OPERATOR_KEY in .env}
       EGO_OPERATOR_ID: ${EGO_OPERATOR_ID:-operator}
@@ -83,40 +121,59 @@ services:
       TENCENT_AGENT_MEMORY_API_KEY: ${TENCENT_AGENT_MEMORY_API_KEY:-}
       TENCENT_AGENT_MEMORY_SERVICE_ID: ${TENCENT_AGENT_MEMORY_SERVICE_ID:-}
       TENCENT_AGENT_MEMORY_SPACE_ID: ${TENCENT_AGENT_MEMORY_SPACE_ID:-}
-      EGO_HICLAW_URL: ${EGO_HICLAW_URL:-}
+      EGO_HICLAW_URL: ${EGO_HICLAW_URL:-http://agentteams-bridge:8010/api/v1/agentteams/health?team=ego-researchops}
       EGO_NACOS_URL: ${EGO_NACOS_URL:-}
       EGO_HIGRESS_URL: ${EGO_HIGRESS_URL:-}
+      EGO_AGENT_MODEL_BASE_URL: ${EGO_AGENT_MODEL_BASE_URL:-}
+      EGO_AGENT_MODEL_API_KEY: ${EGO_AGENT_MODEL_API_KEY:-}
+      EGO_AGENT_MODEL: ${EGO_AGENT_MODEL:-agnes-2.5-pro}
+      EGO_ARTIFACT_ROOT: /data/artifacts
+      NO_PROXY: 127.0.0.1,localhost,postgres,agentteams-controller
+      no_proxy: 127.0.0.1,localhost,postgres,agentteams-controller
     volumes:
       - egoagentos-agent-memory:/var/lib/egoagentos/agent-memory
+      - egoagentos-artifacts:/data
     depends_on:
       postgres:
         condition: service_healthy
       api-security:
         condition: service_completed_successfully
+      api-storage-init:
+        condition: service_completed_successfully
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${EGO_API_PORT:-8000}:8000"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
 
   web:
-    build:
-      context: apps/web
-      dockerfile: Dockerfile
+    image: python:3.11-slim
+    platform: linux/amd64
+    command: ["python", "/opt/egoagentos/local_server.py"]
+    pull_policy: ${EGO_BASE_IMAGE_PULL_POLICY:-missing}
+    environment:
+      EGO_WEB_ROOT: /usr/share/egoagentos
+      EGO_WEB_BACKEND_HOST: backend
+      EGO_WEB_BACKEND_PORT: "8000"
+      NO_PROXY: 127.0.0.1,localhost,backend
+      no_proxy: 127.0.0.1,localhost,backend
+    volumes:
+      - ./apps/web/dist:/usr/share/egoagentos:ro
+      - ./deploy/web/local_server.py:/opt/egoagentos/local_server.py:ro
     depends_on:
       backend:
         condition: service_healthy
     ports:
-      - "127.0.0.1:4173:80"
+      - "127.0.0.1:${EGO_WEB_PORT:-4173}:80"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
 
   agentteams-bridge-migrate:
     profiles: ["agentteams"]
-    build:
-      context: .
-      dockerfile: apps/agentteams_bridge/Dockerfile
+    platform: linux/amd64
+    image: egoagentos-local-agentteams-bridge:latest
+    pull_policy: never
     command:
       - python
       - -c
@@ -158,6 +215,8 @@ services:
 
   agentteams-bridge:
     profiles: ["agentteams"]
+    platform: linux/amd64
+    image: egoagentos-local-agentteams-bridge:latest
     build:
       context: .
       dockerfile: apps/agentteams_bridge/Dockerfile
@@ -183,10 +242,15 @@ services:
       AGENTTEAMS_AUTH_TOKEN: ${AGENTTEAMS_AUTH_TOKEN:-}
       AGENTTEAMS_MATRIX_URL: ${AGENTTEAMS_MATRIX_URL:-http://host.docker.internal:18080}
       AGENTTEAMS_MATRIX_ACCESS_TOKEN: ${AGENTTEAMS_MATRIX_ACCESS_TOKEN:-}
+      NO_PROXY: 127.0.0.1,localhost,backend,postgres,agentteams-controller
+      no_proxy: 127.0.0.1,localhost,backend,postgres,agentteams-controller
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - agentteams-official
     ports:
-      - "127.0.0.1:8010:8010"
+      - "127.0.0.1:${EGO_AGENTTEAMS_BRIDGE_PORT:-8010}:8010"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -194,3 +258,9 @@ services:
 volumes:
   egoagentos-postgres:
   egoagentos-agent-memory:
+  egoagentos-artifacts:
+
+networks:
+  agentteams-official:
+    external: true
+    name: agentteams-net

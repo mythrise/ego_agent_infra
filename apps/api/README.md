@@ -84,16 +84,18 @@ Configure the model plane only on the API process:
 
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-flash
+export EGO_AGENT_MODEL=agnes-2.5-pro
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 ```
 
 The returned truth boundary is intentionally narrower than an AgentTeams or experiment claim:
-the four provider responses are `LIVE`; deterministic compilation and private focus memory are
-`LIVE_LOCAL`; official AgentTeams/Matrix, repository or literature retrieval, and physical GPU
-execution remain `NOT_RUN` until their own receipts exist. A reviewer `PASS` or `WARN` produces
-`PLAN_READY_FOR_HUMAN_REVIEW`, never an automatic experiment dispatch.
+provider responses are `LIVE`; deterministic compilation and private focus memory are
+`LIVE_LOCAL`; repository/literature retrieval and physical GPU execution remain `NOT_RUN` until
+their own receipts exist. AgentTeams/Matrix truth is evaluated separately: the 2026-09-02 local
+stack has infrastructure-level `LIVE_LOCAL` receipts, but no completed Project workflow or GPU
+Decision. A reviewer `PASS` or `WARN` produces `PLAN_READY_FOR_HUMAN_REVIEW`, never an automatic
+experiment dispatch.
 
 Send the operator credential on every mutation, for example:
 

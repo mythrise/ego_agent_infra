@@ -10,10 +10,10 @@
 Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据路径，以及成本受控的
 真实 Fashion-MNIST GPU adapter + content-addressed 一键验收包。
 
-最大剩余缺口没有被文档掩盖：当前没有官方 AgentTeams live stack、真实 Worker/Matrix
-事件、逐场景 fault/replay harness、GPU receipt 和 PolarDB/PITR 演练，所以外部 origin 只达到
-`CONTRACT_PASS_ORIGIN_UNVERIFIED`，canonical target benchmark 为 `SKIP`，不能申报
-“已接通”“动态多 Agent 已跑通”或“真实 GPU 实验已完成”。
+最大剩余缺口没有被文档掩盖：官方 AgentTeams Controller/Manager、Active Team、四个
+Worker 资源和 Matrix 四 Agent smoke 已在本地运行；但完整委派/Skill/R2/Decision、逐场景
+fault/replay harness、GPU receipt 和 Nexa/PITR 演练尚缺，所以实验 origin 仍只达到
+`CONTRACT_PASS_ORIGIN_UNVERIFIED`，canonical target benchmark 为 `SKIP`。
 
 ## 初版 → 复赛差异
 
@@ -21,7 +21,7 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 |---|---|---|---|---|
 | 实验确定性 | approval token、RunManifest、七类 EvidenceGate；一个任务内的控制语义 | RXP/1 将完整实验矩阵拆成 per-cell Intent → Grant → Receipt → Evidence → Decision，并记录 missing decisions | `protocols/rxp/`、committed schemas、canonical/Merkle vectors、protocol tests | 随机模型结果的科学正确性、任意 GPU 的字节确定性 |
 | Benchmark | 静态 judge replay 与普通单元测试 | 14 个版本化场景、负对照、deterministic core、AgentTeams target、独立 oracle、置信区间、persistent evidence bundle、release replay | `benchmarks/`、committed raw JSON/Markdown/hash、benchmark tests | AgentTeams target 尚未真实通过；逐场景 harness 未实现，committed target 是 70/70 `SKIP` |
-| AgentTeams | CRD/resource template 与 message envelope；没有 runtime bridge | 官方 commit 契约锁；Project/TeamHarness/Matrix bridge；动态 replan；timeout reassign；restart/resume；compensation；R2 恢复；artifact digest 验收 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook | 官方服务、真实 Matrix room、3+ Worker 真实协作与场景 fault injection |
+| AgentTeams | CRD/resource template 与 message envelope；没有 runtime bridge | 官方 commit 契约锁；Project/TeamHarness/Matrix bridge；动态 replan；timeout reassign；restart/resume；compensation；R2 恢复；artifact digest 验收 | `apps/agentteams_bridge/`、`integrations/agentteams/`、`tests/agentteams/`、live runbook、`LIVE_LOCAL` receipt | 完整 task lifecycle、Skill tool、R2/Decision 与场景 fault injection |
 | Trace 真值 | 可读 audit/event 模型 | `egoagentos.agentteams-trace/v1` schema；project/task/correlation/context 绑定；3+ Worker、Skill、HITL、review、Decision、RXP 五链与 official response 校验 | benchmark-owned schema/verifier；adapter 自报值不作为真值 | 外部系统实际产生的合格 trace |
 | Skill 工程化 | 6 个 `SKILL.md` 合同 | 文件系统 discovery、package digest/version pin、typed invocation、idempotent correlation、failure trace、canary/retire/rollback、FastAPI endpoints | `skill_runtime/`、`apps/api/skill_runtime_api.py`、`tests/skills/` | 真实 AgentTeams Worker 已安装并成功调用这些 Skill |
 | 数据持久化 | SQLite 开发状态 | PostgreSQL 生产路径；控制面和 bridge 分库 URL；MVCC/row lock/CAS；四类最小权限角色；candidate→validator→validated memory；append-only trigger；commit-only LISTEN/NOTIFY；校验和迁移与 fail-closed PolarDB preflight | `apps/api/migrations/postgres/`、`apps/agentteams_bridge/migrations/postgres/`、`deploy/postgres/`、`tests/postgres/`、recovery runbook | PolarDB-PG 云实例、只读节点、备份/PITR、跨区容灾和实测 RPO/RTO |
@@ -59,11 +59,12 @@ Skill runtime、可持久恢复的 AgentTeams bridge、PostgreSQL 生产数据�
 
 ### 仍需 live 验收
 
-1. 在官方 AgentTeams pin 或兼容 release 上部署 Team/Worker/Manager；
-2. 使用非 synthetic Ego task 和真实 Matrix credential 跑通至少 3 个不同 Worker；
-3. 为 14 个 canonical scenario 分别执行 fault driver，不能复用一条 generic trace；
-4. 持久化每个 trial 的 trace/manifest/artifacts 并执行 `make benchmark-release`；
-5. 只有 release gate 无 `FAIL`、`ERROR`、`SKIP` 后，才更新 live claim。
+1. 已完成：在官方 AgentTeams `v1.2.3` pin 上部署 Manager、Team 和四个 Worker；
+2. 已完成基础 smoke：真实 Matrix room 收到四个 Agent 身份的响应；
+3. 待完成：非 synthetic Project 的委派、ACK、Skill/tool、R2、review 与终态 Decision；
+4. 待完成：为 14 个 canonical scenario 分别执行 fault driver，不能复用一条 generic trace；
+5. 待完成：持久化每个 trial 的 trace/manifest/artifacts 并执行 `make benchmark-release`；
+6. 只有 release gate 无 `FAIL`、`ERROR`、`SKIP` 后，才更新完整实验 live claim。
 
 ## 与评分权重的变化关系
 
@@ -95,7 +96,7 @@ final newline 与 tab 检查。
 
 | 旧表述风险 | 当前允许表述 |
 |---|---|
-| “EgoAgentOS 使用 AgentTeams 完成了实验” | “EgoAgentOS 提供面向官方 AgentTeams 的可执行 bridge；合同测试已通过，live 尚未验收” |
+| “EgoAgentOS 使用 AgentTeams 完成了实验” | “官方 AgentTeams 基础设施与四 Agent Matrix smoke 已 `LIVE_LOCAL`；完整实验 workflow/GPU 未运行” |
 | “多 Agent 动态协作已证明” | “replan/reassign/recovery 逻辑已通过本地 fault contract；仍需官方事件链” |
 | “Skill 已在 Worker 中调用” | “本地 Skill runtime 已调用；AgentTeams `TOOL_INVOKED` 证据尚缺” |
 | “RXP 让 AI 实验确定” | “RXP 固化实验承诺、授权、验收和完整性边界，不保证随机训练结果或科学结论” |

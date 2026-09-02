@@ -1341,7 +1341,7 @@ function AcceptanceReadiness({
       </AnimatePresence>
       <div className="acceptance-boundary">
         <span>{language === "zh" ? "本地每 Agent 数据库 + FOCUS.MD · 合同已验证" : "LOCAL PER-AGENT DB + FOCUS.MD · CONTRACT VERIFIED"}</span>
-        <span>{language === "zh" ? "TDSQL NEXA / AGENT MEMORY / 官方 AGENTTEAMS / GPU · 未运行" : "TDSQL NEXA / AGENT MEMORY / OFFICIAL AGENTTEAMS / GPU · NOT RUN"}</span>
+        <span>{language === "zh" ? "TDSQL NEXA / AGENT MEMORY / GPU · 未运行 · AGENTTEAMS 状态见集成事实" : "TDSQL NEXA / AGENT MEMORY / GPU · NOT RUN · SEE INTEGRATION TRUTH FOR AGENTTEAMS"}</span>
         <a
           href="https://github.com/mythrise/ego_agent_infra/blob/main/docs/judge-feedback-implementation.md"
           target="_blank"

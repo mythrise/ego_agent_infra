@@ -1,3 +1,5 @@
+import io
+import json
 import sqlite3
 from pathlib import Path
 
@@ -52,7 +54,7 @@ def test_health_cors_and_truthful_integrations(client: TestClient) -> None:
     assert health.json()["mode"] == "deterministic-local"
 
     integrations = client.get("/api/v1/integrations").json()
-    assert integrations["mode"] == "adapter_metadata_only"
+    assert integrations["mode"] == "verified_handshake_or_metadata"
     assert "ready" not in {item["status"] for item in integrations["items"]}
 
     preflight = client.options(
@@ -64,6 +66,90 @@ def test_health_cors_and_truthful_integrations(client: TestClient) -> None:
     )
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == "http://localhost:4173"
+
+
+def test_agentteams_integration_requires_a_live_bridge_handshake(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    payload = {
+        "live": True,
+        "team": {
+            "name": "ego-researchops",
+            "phase": "Active",
+            "leaderReady": True,
+            "readyWorkers": 3,
+            "totalWorkers": 3,
+        },
+    }
+    monkeypatch.setenv("EGO_HICLAW_URL", "http://127.0.0.1:18090/bridge-health")
+    monkeypatch.setattr(
+        "apps.api.service.DIRECT_HTTP.open",
+        lambda *_args, **_kwargs: Response(json.dumps(payload).encode()),
+    )
+
+    integrations = client.get("/api/v1/integrations").json()
+    agentteams = next(item for item in integrations["items"] if item["id"] == "hiclaw")
+    assert agentteams["status"] == "ready"
+    assert "leaderReady=True" in agentteams["detail"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"live": True, "team": []},
+        {"live": False, "team": {"name": "ego-researchops"}},
+    ],
+)
+def test_agentteams_integration_fails_closed_on_invalid_bridge_payload(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    class Response(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setenv("EGO_HICLAW_URL", "http://127.0.0.1:18090/bridge-health")
+    monkeypatch.setattr(
+        "apps.api.service.DIRECT_HTTP.open",
+        lambda *_args, **_kwargs: Response(json.dumps(payload).encode()),
+    )
+
+    integrations = client.get("/api/v1/integrations").json()
+    agentteams = next(item for item in integrations["items"] if item["id"] == "hiclaw")
+    assert agentteams["status"] == "unavailable"
+    assert "ready" not in {item["status"] for item in integrations["items"]}
+
+
+def test_agentteams_integration_is_unavailable_when_bridge_cannot_be_reached(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unreachable(*_args, **_kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setenv("EGO_HICLAW_URL", "http://127.0.0.1:18090/bridge-health")
+    monkeypatch.setattr(
+        "apps.api.service.DIRECT_HTTP.open",
+        unreachable,
+    )
+
+    integrations = client.get("/api/v1/integrations").json()
+    agentteams = next(item for item in integrations["items"] if item["id"] == "hiclaw")
+    assert agentteams["status"] == "unavailable"
+    assert agentteams["endpoint_configured"] is True
 
 
 def test_e2e_happy_path_pauses_for_human_then_completes(client: TestClient) -> None:

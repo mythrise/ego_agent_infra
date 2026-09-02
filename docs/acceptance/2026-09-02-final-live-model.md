@@ -1,5 +1,9 @@
 # 最终真实模型验收：ResearchOS + compact memory
 
+> 这是 17:44 CST 冻结的模型面验收快照。随后完成的官方 AgentTeams/Matrix 本地基础设施
+> 验收见 [`live-local-2026-09-02.md`](live-local-2026-09-02.md)；本表中的 `NOT_RUN` 只描述
+> 此旧快照本身，不能代表当天稍后的当前状态。
+
 时间：2026-09-02 17:44 CST
 
 Trace：`trace_fd42c6c404304e139b1ec86ee3114f39`
@@ -24,7 +28,7 @@ Trace：`trace_fd42c6c404304e139b1ec86ee3114f39`
 
 ## 完整输入
 
-控制面输入是 [`examples/egolite/research-goal.yaml`](../../examples/egolite/research-goal.yaml)
+控制面输入是 [`examples/egolite/goal.yaml`](../../examples/egolite/goal.yaml)
 和 [`examples/egolite/experiment-plan.yaml`](../../examples/egolite/experiment-plan.yaml)：目标任务
 `ego-lite-001`，三种轻量 backbone，R2 人工审批，24 GPU-hour 上限，验收阈值为 FPS 不低于
 10 且 MPJPE 相对退化不超过 5%。两份输入摘要分别为：
