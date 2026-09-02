@@ -18,6 +18,8 @@ Gate 决定是否采信，并在每个阶段把各 Agent 的注意力压缩成�
    人类审批不能覆盖 VETO，只能修改计划；声明的 fold/cell 数必须与编译产物精确相等。
 5. **Agent-native data authority**：TDSQL Nexa 是生产事务/证据权威，复用 SQL 事务、权限、
    append-only 和事件通知；腾讯端未配置时 fail closed。
+6. **受限失败恢复**：模型输出先过确定性 schema/binding gate；单角色最多 3 次带错误回执的
+   修复机会，仍失败则整条 trace 终止。系统不自动补字段，也不把坏输出伪装成成功。
 
 ## 输入
 
@@ -56,12 +58,12 @@ CPU/GPU 预算、并发、row shards、checkpoint/resume、缓存、barrier、va
 | per-agent SQLite + FOCUS.md compact | `LIVE_LOCAL · PASS` |
 | secure memory / control-plane / RXP tests | `LIVE_LOCAL · PASS` |
 | Agnes 风格静态 Demo | `SYNTHETIC_FIXTURE · browser-tested` |
-| OpenAI-compatible 外部模型 harness | `LIVE · PASS`：4/4 HTTP 200，4 角色 schema 校验、独立复核与离线哈希重验通过 |
+| OpenAI-compatible 外部模型 harness | `LIVE · PASS`：最终 4/4 HTTP 200；此前 3 条坏 trace 均 fail-closed，最终包同时冻结失败恢复证据 |
 | TDSQL Nexa instance | `NOT_CONFIGURED / NOT_RUN` |
 | TencentDB Agent Memory instance | `NOT_CONFIGURED / NOT_RUN` |
 | 官方 AgentTeams Controller + Matrix + GPU | `NOT_RUN`，不能由本地角色标签代替 |
 
-本轮 receipt：`trace_a85ed1b8233b4cb48970c5e2aff6cc6b`。它验证的不是 Ego3D 模型精度，
+本轮 receipt：`trace_fd42c6c404304e139b1ec86ee3114f39`。它验证的不是 Ego3D 模型精度，
 而是外部模型角色输出进入本地确定性 Research Compiler、资源门、13 阶段控制面和 per-agent
 compact 后仍可完整离线复核。完整输入、输出、时序、摘要与限制见
 [`acceptance/2026-09-02-final-live-model.md`](acceptance/2026-09-02-final-live-model.md)。
@@ -79,9 +81,12 @@ compact 后仍可完整离线复核。完整输入、输出、时序、摘要与
 
 ```bash
 uv run --python 3.9 python scripts/build_final_release.py \
-  --evidence-dir artifacts/runtime/egolite-agentteam-20260902-dcd6210
+  --evidence-dir artifacts/runtime/egolite-agentteam-20260902-1992629 \
+  --recovery-dir artifacts/runtime/egolite-agentteam-20260902-3ee8891 \
+  --recovery-dir artifacts/runtime/egolite-agentteam-20260902-3ee8891-retry1 \
+  --recovery-dir artifacts/runtime/egolite-agentteam-20260902-3ee8891-retry2
 ```
 
 构建器先调用独立 verifier 校验 evidence 目录，再扫描凭据，最后把源码、B 支线编译结果、
-四角色原始输入/输出/receipt、控制面、私有 SQLite/`FOCUS.md` 与 `SHA256SUMS.json` 一起写入
-确定性 ZIP。任何哈希不一致或疑似密钥都会拒绝出包。
+四角色原始输入/输出/receipt、控制面、私有 SQLite/`FOCUS.md`、三次 fail-closed 恢复证据与
+`SHA256SUMS.json` 一起写入确定性 ZIP。任何哈希不一致或疑似密钥都会拒绝出包。

@@ -1,12 +1,12 @@
 # 最终真实模型验收：ResearchOS + compact memory
 
-时间：2026-09-02 17:32 CST
+时间：2026-09-02 17:44 CST
 
-Trace：`trace_a85ed1b8233b4cb48970c5e2aff6cc6b`
+Trace：`trace_fd42c6c404304e139b1ec86ee3114f39`
 
 模型网关：`https://apihub.agnes-ai.com/v1`，model=`agnes-2.5-flash`
 
-源码快照：`dcd621024af83edb5252095ac5c3960c27f4f1bd`
+源码快照：`1992629fd9cb8bd091a1825c7df3c934ad38f328`
 
 ## 验收结论
 
@@ -66,10 +66,10 @@ API key 只从进程环境读取；receipt 固定记录 `credential_persisted=fa
 
 | 角色 | HTTP | 延迟 | request SHA-256 | response SHA-256 |
 |---|---:|---:|---|---|
-| research-pi | 200 | 5164 ms | `5bf6759242ec376c88a698be85d6a4fdeb773409476e3b4baf057bc8e097e09b` | `f43e4d9d2ca1d477fc91d9f7163e98eaeebff7c7d219f07f34afc829cbb7d9cc` |
-| scout | 200 | 7490 ms | `f305466aa842abfbe7ea5de63a5333f8c56cb6c9fd872844cd86420a81a69e93` | `f09361bfdd69b2dfbee50d3a36c6e004a1c608bc274b6ded9be6331aa2a5d3f3` |
-| experiment-architect | 200 | 9822 ms | `bdba37c2a0954f1cc5d6432a5c4c870e2c2e7db8a889358fdc59b6fff3b0a2a0` | `532062f586d25489be8280774f5b98587b6278aff3a14a61385477610e223af7` |
-| reviewer | 200 | 6139 ms | `a79c3ef22be31b7856127ef89a8f2f8e16e8941914e0b24e97d36e40b90acb39` | `f514927a633a9a33954ac967e2753ffa3373e9cc75c486d4df351833932a0a83` |
+| research-pi | 200 | 3525 ms | `5ea8f95a2990ed8450c64df9a60f9b3688353f9856107ffb6406821263ef5c30` | `99478c7677c0e7facc7f45e880a0b5948589ce0c4d8a40060b0a602ca2d83c83` |
+| scout | 200 | 6685 ms | `4f9cbb799f11264a097566ec1910129bf3dd8e48ecbd45e5b0ca949acbbfb572` | `1e75978f83a7e428304e2bc00abe5a2b45f1011f324711cbcdc218a03c082bb4` |
+| experiment-architect | 200 | 7864 ms | `84b7eccf66dc3fd61a723c3a3a0723508ba343fa38298f9fbe4ad812a3cb0b83` | `709748656e270802119ba1c7f7776050a94c0e2f3aea3bfcbebfbfa9a11ed497` |
+| reviewer | 200 | 5123 ms | `e868bedf2f34191ae02c9f86e461c91a4d6217e90236626d9d6261fc374b187d` | `6f855bb8f04a7586c4ecf853879b9a6c3f15a47bb2d239a5d73fb324b9e6b862` |
 
 ## 实际输出
 
@@ -82,14 +82,20 @@ API key 只从进程环境读取；receipt 固定记录 `credential_persisted=fa
 - control plane 最终 `COMPLETED`，Decision=`KEEP`；
 - 离线 verifier 校验 41 个文件，`verified=true`、errors=`[]`。
 
+成功 trace 的四个角色都在第 1 次通过，因此 `model_call_count=4`、`model_retry_count=0`。
+成功前真实发生了三次被拒 trace：非 JSON、`scout` 缺少 `uncertainties`、以及
+`research-pi.approval_required != true`。它们都没有进入 `COMPLETED`；恢复始终创建新目录，
+最终 ZIP 同时保存这三份失败材料。当前代码又把恢复收紧为单角色最多 3 次，并在最终 receipt
+中核对 `attempt/prior_failures/model_retry_count`；单测覆盖“第 1 次失败、第 2 次成功”。
+
 ## compact 细节
 
 | Agent | 阶段 | 原始字符 | FOCUS 字符 | compact receipt SHA-256 |
 |---|---|---:|---:|---|
-| research-pi | INTAKE | 1673 | 699 | `a850eca59c323da275152156c0b552899cba6d299921d2865c82752d9e8615fc` |
-| scout | CONTEXT | 753 | 682 | `abb4548b96fad30b3dec446e9a8cdd4399d6afe7b0bce15932f276d8924e8438` |
-| experiment-architect | PLAN | 964 | 724 | `1b1874cc7586c74bbd61dce358d0115bf7963e752e52d909055cbe3c9184cfef` |
-| reviewer | VERIFY | 857 | 690 | `0dea65ac32b44237f352c070a0f358646e6b267b76fab4cfd7319abc25e950cc` |
+| research-pi | INTAKE | 199 | 699 | `8fef3f074470e78cf022c4ef1ce0526358106f9f06c5cec35ec6c8c4c2c572cd` |
+| scout | CONTEXT | 550 | 682 | `af7bf88a3e9b34d3115213735152f9e2bc712d3313d4e5d809beef2e4e310702` |
+| experiment-architect | PLAN | 790 | 724 | `1038544f8e14d5a3bd0624d07990ba57caed7ce8a98b32021a9a1e8305a7299a` |
+| reviewer | VERIFY | 777 | 690 | `04f12f1dba9cf3c258786ee19f1c945f377666f703a196029e1c69548e6a0764` |
 
 `FOCUS.md` 不是简单截断聊天，而是只保留 validated facts、decisions、evidence、blockers 和
 next actions；SQLite 保存原始 L0 与链式 receipt，下一阶段从新的 focus 投影继续。
@@ -98,12 +104,12 @@ next actions；SQLite 保存原始 L0 与链式 receipt，下一阶段从新的 
 
 ```bash
 uv run --python 3.9 python -m experiments.egolite_agentteam.verify \
-  artifacts/runtime/egolite-agentteam-20260902-dcd6210
+  artifacts/runtime/egolite-agentteam-20260902-1992629
 ```
 
 预期唯一成功条件是 `verified=true` 且 `errors=[]`。修改任意被记录文件、删除任一角色 receipt、
 改变 truth boundary、减少 165 cells 或把远端 memory 冒充为已配置，都会使 verifier 失败。
 
-最终回归还通过：Python 默认套件 661 项（660 passed，1 个已有条件性 skip）、MCP 51 passed、
+最终回归还通过：Python 默认套件 662 项（661 passed，1 个已有条件性 skip）、MCP 51 passed、
 Web 16 passed、TypeScript/Vite production build、全仓 Ruff、B 支线 compileall 与
 `docker compose config --quiet`。这些是本地代码/配置证据，不改变云端和 GPU 的 `NOT_RUN`。

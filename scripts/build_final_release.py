@@ -66,7 +66,34 @@ def _zip_info(name: str, executable: bool) -> zipfile.ZipInfo:
     return info
 
 
-def _release_files(evidence_dir: Optional[Path] = None) -> List[Tuple[str, bytes, bool]]:
+def _append_directory(
+    files: List[Tuple[str, bytes, bool]], source: Path, archive_prefix: str
+) -> None:
+    for path in sorted(source.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = "%s/%s" % (archive_prefix, path.relative_to(source).as_posix())
+        payload = path.read_bytes()
+        _scan(relative, payload)
+        files.append((relative, payload, False))
+
+
+def _validate_recovery_evidence(source: Path) -> None:
+    try:
+        failure = json.loads((source / "failure.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("recovery evidence has no readable failure.json") from error
+    if failure.get("schema") != "egoagentos.egolite-model-team-failure/v1":
+        raise ValueError("recovery evidence schema mismatch")
+    if failure.get("credential_persisted") is not False:
+        raise ValueError("recovery evidence does not deny credential persistence")
+    if (source / "acceptance.json").exists():
+        raise ValueError("recovery evidence must not also claim acceptance")
+
+
+def _release_files(
+    evidence_dir: Optional[Path] = None, recovery_dirs: Sequence[Path] = ()
+) -> List[Tuple[str, bytes, bool]]:
     files: List[Tuple[str, bytes, bool]] = []
     for path in _tracked_files():
         if not path.is_file() or path.is_symlink():
@@ -94,20 +121,25 @@ def _release_files(evidence_dir: Optional[Path] = None) -> List[Tuple[str, bytes
                 "refusing unverified live evidence: %s"
                 % json.dumps(verification.get("errors", []), ensure_ascii=False)
             )
-        for path in sorted(evidence_dir.rglob("*")):
-            if not path.is_file() or path.is_symlink():
-                continue
-            relative = "evidence/live-model-acceptance/%s" % path.relative_to(
-                evidence_dir
-            ).as_posix()
-            payload = path.read_bytes()
-            _scan(relative, payload)
-            files.append((relative, payload, False))
+        _append_directory(files, evidence_dir, "evidence/live-model-acceptance")
+
+    for index, recovery_dir in enumerate(recovery_dirs, start=1):
+        recovery_dir = recovery_dir.resolve()
+        _validate_recovery_evidence(recovery_dir)
+        _append_directory(
+            files,
+            recovery_dir,
+            "evidence/live-model-recovery/%02d-%s" % (index, recovery_dir.name),
+        )
     return sorted(files, key=lambda value: value[0])
 
 
-def build(output: Path, evidence_dir: Optional[Path] = None) -> Dict[str, object]:
-    files = _release_files(evidence_dir)
+def build(
+    output: Path,
+    evidence_dir: Optional[Path] = None,
+    recovery_dirs: Sequence[Path] = (),
+) -> Dict[str, object]:
+    files = _release_files(evidence_dir, recovery_dirs)
     records = [
         {"path": relative, "bytes": len(payload), "sha256": _sha(payload)}
         for relative, payload, _ in files
@@ -128,6 +160,7 @@ def build(output: Path, evidence_dir: Optional[Path] = None) -> Dict[str, object
         "live_evidence": (
             "verified_and_packaged" if evidence_dir is not None else "not_packaged"
         ),
+        "recovery_evidence_count": len(recovery_dirs),
         "files": records,
     }
     manifest_payload = (
@@ -174,8 +207,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "verifier before it is secret-scanned and packaged"
         ),
     )
+    parser.add_argument(
+        "--recovery-dir",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "optional failed live run directory; may be repeated and must contain a "
+            "credential-safe fail-closed receipt"
+        ),
+    )
     args = parser.parse_args(argv)
-    print(json.dumps(build(args.output, args.evidence_dir), sort_keys=True))
+    print(
+        json.dumps(
+            build(args.output, args.evidence_dir, args.recovery_dir), sort_keys=True
+        )
+    )
     return 0
 
 
