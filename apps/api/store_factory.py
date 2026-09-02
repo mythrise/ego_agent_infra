@@ -23,12 +23,20 @@ def create_store(
     if sqlite_path is not None:
         return SQLiteStore(sqlite_path)
 
-    configured_url = os.getenv("EGO_DATABASE_URL", "").strip()
+    # A Nexa SQL endpoint is the production authority when configured. The
+    # current public interface is PostgreSQL-compatible, so it deliberately
+    # reuses the mature transaction/append-only store instead of inventing a
+    # second set of persistence semantics.
+    nexa_url = os.getenv("EGO_NEXA_DATABASE_URL", "").strip()
+    configured_url = nexa_url or os.getenv("EGO_DATABASE_URL", "").strip()
     if configured_url:
         if configured_url.startswith(("postgresql://", "postgres://")):
             return PostgresStore(configured_url)
         if configured_url.startswith("sqlite:///"):
             return SQLiteStore(configured_url[len("sqlite:///") :])
-        raise ValueError("EGO_DATABASE_URL must use postgresql://, postgres://, or sqlite:///")
+        raise ValueError(
+            "EGO_NEXA_DATABASE_URL/EGO_DATABASE_URL must use postgresql://, "
+            "postgres://, or sqlite:///"
+        )
 
     return SQLiteStore(os.getenv("EGO_DB_PATH", "/tmp/egoagentos-researchops.sqlite3"))

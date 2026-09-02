@@ -213,6 +213,22 @@ export const syntheticDashboard: DashboardData = {
       detail: "No GPU host is attached. Resource traces are labeled synthetic.",
     },
     {
+      id: "nexa",
+      name: "TDSQL Nexa data authority",
+      category: "Database",
+      status: "unconfigured",
+      mode: "PostgreSQL-compatible adapter",
+      detail: "No Nexa endpoint is configured in the static page; local replay is not presented as Nexa.",
+    },
+    {
+      id: "tencent-agent-memory",
+      name: "TencentDB Agent Memory",
+      category: "Memory",
+      status: "unconfigured",
+      mode: "v3 L0–L3 isolation contract",
+      detail: "Per-agent SQLite and FOCUS.md are the browser-visible design; no remote memory receipt exists here.",
+    },
+    {
       id: "nacos",
       name: "Nacos Skill Registry",
       category: "Skills",

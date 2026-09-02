@@ -6,6 +6,12 @@
 
 ## 当前结论
 
+> 2026-09-02 最终版更新：数据库生产目标已由 PolarDB PG 更新为 TDSQL Nexa SQL 数据权威，
+> 上下文层接入 TencentDB Agent Memory v3 合同；本地已经验证 per-agent SQLite + `FOCUS.md`
+> 自动 compact、三级输入编译、实验树/矩阵和不可被人类审批覆盖的资源否决。腾讯云实例仍未
+> 配置，因此 live 状态是 `NOT_CONFIGURED/NOT_RUN`。下文保留的 PolarDB 记录是上一轮评委意见
+> 的历史验收，不代表本轮已跑 Nexa。
+
 **工程候选已形成，但复赛 AgentTeams 硬门槛仍为 `BLOCKED`。** 仓库已经提供可执行
 Controller/Matrix bridge、PostgreSQL checkpoint/receipt/event backend、动态 replan、超时
 改派、恢复与补偿、R2 HITL 恢复链、结构化 correlation envelope、Skill 证据分级、
@@ -51,7 +57,7 @@ benchmark 中 `agentteams-rxp-target` 为 70/70 `SKIP`；live opt-in 仍明确�
 | 场景价值与可迁移性 | 20% | 面向具身 AI 实验的目标→矩阵→执行→评测→复核→决策闭环；RXP 与 adapter 为领域无关合同；真实 Fashion-MNIST FP32/AMP 工作负载已代码就绪 | 一次官方 AgentTeams+GPU 同源运行、研究员手工基线，以及第二领域的迁移映射 | `PARTIAL` |
 | 多 Agent 协作 | 25% | 7 个职责分离 Worker；bridge 映射 Project/TeamHarness/Matrix；实现 conflict/replan、timeout/reassign/resume/compensation | 一条官方 live trace 证明至少 3 Worker 的动态协作与终态验收 | `BLOCKED` |
 | Skill 工程化 | 20% | 6 个版本化 Skill 包；本地 discovery、digest pin、invocation trace、canary/retire/rollback 已实现并测试 | 在真实 Worker 上证明包存在、spawn 授权、成功调用、失败与版本回滚 | `PARTIAL` |
-| 工程实现与安全审计 | 30% | RXP/1 reference implementation、14 场景 benchmark、独立 trace oracle、content-addressed acceptance bundle、PostgreSQL 事务/最小权限/append-only/LISTEN-NOTIFY、R2/重放/篡改门禁 | 官方 AgentTeams live fault injection、PolarDB/PITR 演练、外部 effect exactly-once 与真实恢复时间 | `PARTIAL` |
+| 工程实现与安全审计 | 30% | RXP/1、14 场景 benchmark、独立 trace oracle、content-addressed bundle、TDSQL Nexa SQL adapter、TencentDB Agent Memory v3、per-agent compact、PostgreSQL-compatible 事务/最小权限/append-only/LISTEN-NOTIFY、R2/重放/篡改门禁 | 官方 AgentTeams live fault injection、Nexa/Agent Memory 实例验收、外部 effect exactly-once 与真实恢复时间 | `PARTIAL` |
 | 开源贡献 | 5% | Apache-2.0 代码、JSON Schema、Skill、adapter、测试、runbook 与可复现实验协议均公开可读 | tag/release、干净机安装记录，以及外部 issue、复用或反馈证据 | `PARTIAL` |
 
 ## AgentTeams live 证据门
@@ -114,7 +120,7 @@ live evidence；任一 `FAIL`、`ERROR` 或 `SKIP` 都使 release 失败。安�
 7. Receipt、原始 metric Evidence、独立 Reviewer 与 Decision gate；
 8. Grant replay、artifact tamper 或 forged review 被拒绝；
 9. bridge 重启、PostgreSQL checkpoint 恢复，以及最终 evidence bundle 的离线 replay；
-10. 单独展示 PolarDB preflight 与恢复演练记录；若未实跑，明确标记 `NOT RUN`。
+10. 单独展示 TDSQL Nexa 与 TencentDB Agent Memory 的 provider receipt；若未配置，明确标记 `NOT CONFIGURED / NOT RUN`。
 
 在上述 live 证据产生前，演示文案必须使用“可执行 bridge + contract-verified”，不能使用
 “已接通 AgentTeams”“已完成真实多 Agent 实验”或“14 场景已通过”。

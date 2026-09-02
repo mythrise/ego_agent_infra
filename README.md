@@ -12,6 +12,19 @@ Research Goal → Context → Hypothesis / Plan → Approval → Execution
 → Validated Memory / Skill Candidate
 ```
 
+最终版新增了一个位于这条状态机之前的 **Research Compiler**：它接受三种原始输入——完整
+实验方案、模糊 idea + baseline、或只有 baseline——统一编译为可质疑的实验树、fold × seed ×
+branch 矩阵，以及每个 cell 唯一的 RXP Intent Token。执行前还有一个独立于人类审批的资源
+审查员；即使人类同意，也不能绕过 fold 重算、单 CPU 长任务、无 row shard/checkpoint、输出
+碰撞、全局 barrier 和评测耦合等硬否决。
+
+每个 Agent 现在拥有单独的物理 SQLite 和 `FOCUS.md` 本地投影。每个小阶段完成时，完整对话
+写入 L0，决策/证据/阻塞/下一步压缩进 Markdown，并用前一阶段 digest 串成 receipt chain；配置
+TencentDB Agent Memory 后，同一操作会自动调用 v3 `conversation/add` 与
+`conversation/force-archive`。生产事务权威目标更新为 **TDSQL Nexa** 的
+PostgreSQL-compatible SQL 端点；没有腾讯实例凭据时，系统明确报告 `NOT_CONFIGURED`，不会把
+本地 SQLite/PostgreSQL 冒充为 Nexa。
+
 系统采用 **Deterministic Core + LLM Residual**：Agent 可以理解目标、提出假设和解释结果；状态迁移、风险策略、审批范围、指标计算、证据完整性、哈希与审计由确定性代码执行。Planner、Executor、Evaluator、Reviewer 相互分离，任何 Agent 都不能自证闭环。
 
 ## 复赛评委一键路径
@@ -48,7 +61,7 @@ docker compose up --build
 - OpenAPI：<http://localhost:8000/docs>
 - Health：<http://localhost:8000/api/v1/health>
 
-默认场景明确标记为 **SYNTHETIC DEMO DATA**。它真实运行控制面、PostgreSQL 16 状态、审批、哈希、评测、证据门禁与审计，但不会声称已经使用 8×RTX 4090 训练，也不会伪造 PolarDB/PITR、AgentTeams、Nacos 或 Higress 在线状态。生产数据路径是 PostgreSQL；直接启动 API 且不设置 `EGO_DATABASE_URL` 时，才使用 SQLite 开发 fallback。
+默认场景明确标记为 **SYNTHETIC DEMO DATA**。它真实运行控制面、本地 PostgreSQL 16 状态、审批、哈希、评测、证据门禁与审计，但不会声称已经使用 8×RTX 4090 训练，也不会伪造 TDSQL Nexa、TencentDB Agent Memory、AgentTeams、Nacos 或 Higress 在线状态。生产数据权威通过 `EGO_NEXA_DATABASE_URL` 指向 Nexa；直接启动 API 且不设置外部数据库时，使用 SQLite 开发 fallback。
 
 截至 2026-08-29，本机已通过 `docker compose config` 和真实 PostgreSQL 16.14
 数据层的 32/32 集成测试；API/Web 镜像构建在拉取 Docker Hub metadata 时网络超时，
@@ -77,7 +90,19 @@ VITE_API_ROOT=http://127.0.0.1:8000/api/v1 npm --prefix apps/web run dev -- --po
 curl --fail http://127.0.0.1:8000/api/v1/rxp/schemas
 curl --fail http://127.0.0.1:8000/api/v1/rxp/demo
 curl --fail http://127.0.0.1:8000/api/v1/skills
+curl --fail http://127.0.0.1:8000/api/v1/research/storage
 ```
+
+三级输入与 Ego3D B 支线可直接编译：
+
+```bash
+ego-research-compile examples/ego3d_b_branch/input.yaml artifacts/ego3d-b-compiled
+```
+
+输出包含 `experiment-tree.json`、`experiment-matrix.json`、`resource-review.json` 和统一
+`compile.json`。详细的 t/R 可辨识推导、fold 4 诊断、腕部 seam 方案与核心 PyTorch 代码位于
+[`examples/ego3d_b_branch/`](examples/ego3d_b_branch/)。数据面与 auto-compact 合同见
+[`docs/agent-native-data-plane.md`](docs/agent-native-data-plane.md)。
 
 `POST /api/v1/rxp/verify` 会重新校验上传 ledger 的 schema、因果链、root chain、
 Evidence Gate 与矩阵完整性；`POST /api/v1/skills/{name}/invoke` 支持 version/package
@@ -108,7 +133,9 @@ flowchart TB
   H["Researcher / Human Approver"] --> UI["Research Cockpit"]
   UI --> CP["Deterministic Control Plane\nstate · policy · approval · evidence · audit"]
   CP --> A["Local deterministic role handlers\n7 Agent identity contracts"]
-  CP --> DB["PostgreSQL production path\nSQLite dev fallback"]
+  CP --> DB["TDSQL Nexa production authority\nPostgreSQL-compatible SQL"]
+  CP --> AM["TencentDB Agent Memory\nL0-L3 isolated compact"]
+  AM --> FM["Per-agent SQLite + FOCUS.md\nLIVE_LOCAL projection"]
   CP --> X["Explicitly synthetic EgoLite execution"]
   CP --> SR["In-process Skill runtime\n6 packages · 3 allowlisted handlers"]
   S["Portable Skill contracts"] -. workflow contract .-> A

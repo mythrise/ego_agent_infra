@@ -35,7 +35,7 @@ def register_research_os_routes(application: FastAPI) -> None:
         agent_id: str,
         body: StageCommitRequest,
         request: Request,
-        sync_remote: bool = Query(default=False),
+        sync_remote: Optional[bool] = Query(default=None),
         authorization: Optional[str] = Header(default=None, alias="Authorization"),
     ) -> Dict[str, Any]:
         request.app.state.operator_auth.authenticate(authorization)

@@ -43,11 +43,12 @@ class ResearchOSService:
         return self.reviewer.review(body)
 
     def commit_stage(
-        self, agent_id: str, body: StageCommitRequest, *, sync_remote: bool = False
+        self, agent_id: str, body: StageCommitRequest, *, sync_remote: Optional[bool] = None
     ) -> Dict[str, Any]:
         local = self.memories.for_agent(agent_id).commit(body)
         remote: Dict[str, Any] = self.tencent_memory.status()
-        if sync_remote:
+        should_sync_remote = self.tencent_memory.configured if sync_remote is None else sync_remote
+        if should_sync_remote:
             remote = self.tencent_memory.commit_and_compact(
                 team_id=body.team_id,
                 agent_id=agent_id,
@@ -57,7 +58,12 @@ class ResearchOSService:
                 stage_id=body.stage_id,
                 messages=body.messages,
             )
-        return {"local": local, "remote": remote, "remote_requested": sync_remote}
+        return {
+            "local": local,
+            "remote": remote,
+            "remote_requested": should_sync_remote,
+            "policy": "auto-sync when TencentDB Agent Memory is configured",
+        }
 
     def focus(self, agent_id: str) -> Dict[str, Any]:
         return self.memories.for_agent(agent_id).read()

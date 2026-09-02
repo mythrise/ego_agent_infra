@@ -31,7 +31,7 @@ services:
         import os; from apps.api.postgres_store import PostgresStore;
         PostgresStore(os.environ["EGO_DATABASE_URL"], migration_mode="apply")
     environment:
-      EGO_DATABASE_URL: postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
       EGO_TENANT_ID: ${EGO_TENANT_ID:-local}
     depends_on:
       postgres:
@@ -68,7 +68,8 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
-      EGO_DATABASE_URL: postgresql://${EGO_RUNTIME_USER:-egoagentos_api_runtime}:${EGO_RUNTIME_PASSWORD:?Set EGO_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-postgresql://${EGO_RUNTIME_USER:-egoagentos_api_runtime}:${EGO_RUNTIME_PASSWORD:?Set EGO_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
+      EGO_NEXA_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-}
       EGO_DATABASE_MIGRATION_MODE: verify
       EGO_TENANT_ID: ${EGO_TENANT_ID:-local}
       EGO_CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
@@ -77,9 +78,16 @@ services:
       EGO_OPERATOR_ID: ${EGO_OPERATOR_ID:-operator}
       EGO_ALLOW_UNAUTHENTICATED_DEMO: ${EGO_ALLOW_UNAUTHENTICATED_DEMO:-false}
       EGO_TRUSTED_MEMORY_SERVICE_TOKEN: ${EGO_TRUSTED_MEMORY_SERVICE_TOKEN:-}
+      EGO_AGENT_MEMORY_ROOT: /var/lib/egoagentos/agent-memory
+      TENCENT_AGENT_MEMORY_ENDPOINT: ${TENCENT_AGENT_MEMORY_ENDPOINT:-}
+      TENCENT_AGENT_MEMORY_API_KEY: ${TENCENT_AGENT_MEMORY_API_KEY:-}
+      TENCENT_AGENT_MEMORY_SERVICE_ID: ${TENCENT_AGENT_MEMORY_SERVICE_ID:-}
+      TENCENT_AGENT_MEMORY_SPACE_ID: ${TENCENT_AGENT_MEMORY_SPACE_ID:-}
       EGO_HICLAW_URL: ${EGO_HICLAW_URL:-}
       EGO_NACOS_URL: ${EGO_NACOS_URL:-}
       EGO_HIGRESS_URL: ${EGO_HIGRESS_URL:-}
+    volumes:
+      - egoagentos-agent-memory:/var/lib/egoagentos/agent-memory
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,7 +124,7 @@ services:
         import os; from apps.agentteams_bridge.postgres_store import PostgresBridgeStore;
         PostgresBridgeStore(os.environ["EGO_AGENTTEAMS_DATABASE_URL"], migration_mode="apply")
     environment:
-      EGO_AGENTTEAMS_DATABASE_URL: postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_AGENTTEAMS_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-postgresql://${EGO_POSTGRES_USER:-egoagentos_owner}:${EGO_POSTGRES_PASSWORD:?Set EGO_POSTGRES_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
     depends_on:
       api-security:
         condition: service_completed_successfully
@@ -160,7 +168,7 @@ services:
         condition: service_completed_successfully
     environment:
       EGO_API_URL: http://backend:8000
-      EGO_AGENTTEAMS_DATABASE_URL: postgresql://${EGO_AGENTTEAMS_RUNTIME_USER:-egoagentos_bridge_runtime_login}:${EGO_AGENTTEAMS_RUNTIME_PASSWORD:?Set EGO_AGENTTEAMS_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}
+      EGO_AGENTTEAMS_DATABASE_URL: ${EGO_NEXA_DATABASE_URL:-postgresql://${EGO_AGENTTEAMS_RUNTIME_USER:-egoagentos_bridge_runtime_login}:${EGO_AGENTTEAMS_RUNTIME_PASSWORD:?Set EGO_AGENTTEAMS_RUNTIME_PASSWORD in .env}@postgres:5432/${EGO_POSTGRES_DB:-egoagentos}}
       EGO_AGENTTEAMS_MIGRATION_MODE: verify
       EGO_OPERATOR_KEY: ${EGO_OPERATOR_KEY:?Set EGO_OPERATOR_KEY in .env}
       EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY: ${EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY:?Set EGO_AGENTTEAMS_BRIDGE_OPERATOR_KEY in .env}
@@ -185,3 +193,4 @@ services:
 
 volumes:
   egoagentos-postgres:
+  egoagentos-agent-memory:

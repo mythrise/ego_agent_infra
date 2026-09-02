@@ -60,6 +60,7 @@ function approvalTokenForGeneration(
 }
 
 const navItems = [
+  { id: "compose", label: "Research composer", icon: Bot },
   { id: "cockpit", label: "Task cockpit", icon: Gauge },
   { id: "acceptance", label: "Semifinal acceptance", icon: ShieldCheck },
   { id: "experiments", label: "Experiments", icon: FlaskConical },
@@ -329,6 +330,7 @@ function App() {
 
         <div className="workspace-grid">
           <div className="primary-column">
+            <ResearchComposer runtimeMode={dashboard.runtimeMode} />
             <TaskCommand task={activeTask} runtimeMode={dashboard.runtimeMode} />
             <RXPProtocolView data={rxp} runtimeMode={dashboard.runtimeMode} />
             <AcceptanceReadiness runtimeMode={dashboard.runtimeMode} />
@@ -495,7 +497,7 @@ function Rail({
     <>
       {open && <button className="nav-scrim" aria-label="Close navigation" onClick={onClose} />}
       <aside className={`rail ${open ? "is-open" : ""}`} aria-label="Primary navigation">
-        <a className="brand-mark" href="#cockpit" aria-label="EgoAgentOS ResearchOps home" onClick={onClose}>
+        <a className="brand-mark" href="#compose" aria-label="EgoAgentOS ResearchOps home" onClick={onClose}>
           <span className="brand-glyph">E</span>
           <span className="brand-type">EgoAgentOS</span>
         </a>
@@ -608,7 +610,7 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
             ? task.stage === "COMPLETED" ? "Completed synthetic replay" : "Synthetic replay checkpoint"
             : task.stage === "COMPLETED" ? "Completed research task" : "Active research goal"}
         </div>
-        <h1 id="task-title">{task.title}</h1>
+        <h2 id="task-title">{task.title}</h2>
         <p>{task.objective}</p>
       </div>
       <div className="acceptance-strip" aria-label="Acceptance thresholds">
@@ -638,6 +640,113 @@ function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: D
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+type ComposerLevel = "detailed" | "idea" | "baseline";
+
+const composerLevels: Array<{ id: ComposerLevel; label: string; detail: string }> = [
+  { id: "detailed", label: "Full protocol", detail: "Plan + branches + code" },
+  { id: "idea", label: "Rough idea", detail: "Idea + frozen baseline" },
+  { id: "baseline", label: "Baseline only", detail: "Discover bounded branches" },
+];
+
+function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtimeMode"] }) {
+  const [level, setLevel] = useState<ComposerLevel>("detailed");
+  const [prompt, setPrompt] = useState(
+    "Freeze C7 RTMW-G5. Replace the zero head-to-optical-center assumption, isolate t and R, then repair the wrist seam.",
+  );
+  const [compiled, setCompiled] = useState(false);
+
+  return (
+    <section className="research-composer" id="compose" aria-labelledby="composer-title">
+      <div className="composer-hero">
+        <div className="composer-copy">
+          <div className="composer-badge"><span /> AGENT-NATIVE RESEARCH CONTROL PLANE</div>
+          <h1 id="composer-title">From one research question<br />to a decision you can replay.</h1>
+          <p>
+            AgentOS turns a complete protocol, a rough idea, or only a baseline into an explicit
+            experiment tree—then binds every run, review, and memory update to evidence.
+          </p>
+        </div>
+        <div className="composer-proof" aria-label="System properties">
+          <div><strong>13</strong><span>sealed stages</span></div>
+          <div><strong>RXP</strong><span>per-run identity</span></div>
+          <div><strong>L0–L3</strong><span>isolated memory</span></div>
+        </div>
+      </div>
+
+      <div className="composer-surface">
+        <div className="composer-levels" role="tablist" aria-label="Research input level">
+          {composerLevels.map((item, index) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={level === item.id}
+              className={level === item.id ? "active" : ""}
+              onClick={() => { setLevel(item.id); setCompiled(false); }}
+              key={item.id}
+            >
+              <small>0{index + 1}</small>
+              <span><strong>{item.label}</strong><em>{item.detail}</em></span>
+            </button>
+          ))}
+        </div>
+        <div className="composer-input">
+          <label htmlFor="research-prompt">Describe the next research move</label>
+          <textarea
+            id="research-prompt"
+            value={prompt}
+            onChange={(event) => { setPrompt(event.target.value); setCompiled(false); }}
+            rows={3}
+          />
+          <div className="composer-input-foot">
+            <span>
+              {runtimeMode === "static_replay"
+                ? "BROWSER EXPLAINER · NO MODEL OR API CALL"
+                : "LOCAL CONTROL PLANE · OPERATOR AUTH REQUIRED FOR MUTATIONS"}
+            </span>
+            <button type="button" onClick={() => setCompiled(true)} disabled={!prompt.trim()}>
+              Compile research tree <ArrowRight size={15} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          className={`composer-chain ${compiled ? "is-compiled" : ""}`}
+          key={`${level}-${compiled}`}
+          initial={{ opacity: 0.75, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="chain-node source">
+            <span>INPUT</span><strong>{composerLevels.find((item) => item.id === level)?.label}</strong>
+            <small>{compiled ? "normalized + hashed" : "waiting to compile"}</small>
+          </div>
+          <ArrowRight className="chain-arrow" size={16} />
+          <div className="chain-node tree">
+            <span>TREE</span><strong>Root · t · R · wrists</strong>
+            <div className="mini-tree" aria-hidden="true"><i /><i /><i /><i /></div>
+          </div>
+          <ArrowRight className="chain-arrow" size={16} />
+          <div className="chain-node matrix">
+            <span>MATRIX</span><strong>{compiled ? "165 deterministic cells" : "fold × seed × branch"}</strong>
+            <small>one intent token per cell</small>
+          </div>
+          <ArrowRight className="chain-arrow" size={16} />
+          <div className="chain-node evidence">
+            <span>GATE</span><strong>Evidence before decision</strong>
+            <small>reviewer can veto approval</small>
+          </div>
+          <ArrowRight className="chain-arrow" size={16} />
+          <div className="chain-node memory">
+            <span>COMPACT</span><strong>Agent / FOCUS.md</strong>
+            <small>{compiled ? "context 18.4k → 1.7k" : "per-stage freshness"}</small>
+          </div>
+        </motion.div>
+      </AnimatePresence>
     </section>
   );
 }
@@ -793,8 +902,8 @@ function AcceptanceReadiness({
           className={layer === "database" ? "active" : ""}
           onClick={() => setLayer("database")}
         >
-          PostgreSQL + PolarDB
-          <small>durability and access boundary</small>
+          Nexa + Agent Memory
+          <small>authority and compact context</small>
         </button>
       </div>
       <AnimatePresence mode="wait" initial={false}>
@@ -829,8 +938,8 @@ function AcceptanceReadiness({
               <Database size={20} strokeWidth={1.4} />
               <div>
                 <span>SOURCE OF TRUTH</span>
-                <strong>PostgreSQL MVCC + JSONB</strong>
-                <small>RLS · immutable ledgers · commit-only NOTIFY · checksum replay</small>
+                <strong>TDSQL Nexa · SQL authority</strong>
+                <small>MVCC · immutable ledgers · per-agent L0–L3 · checksum replay</small>
               </div>
             </div>
             <div className="role-matrix" aria-label="Database role write boundaries">
@@ -846,8 +955,8 @@ function AcceptanceReadiness({
         )}
       </AnimatePresence>
       <div className="acceptance-boundary">
-        <span>LOCAL POSTGRESQL 16 · CONTRACT VERIFIED</span>
-        <span>POLARDB / PITR / OFFICIAL AGENTTEAMS / GPU · NOT RUN</span>
+        <span>LOCAL PER-AGENT DB + FOCUS.MD · CONTRACT VERIFIED</span>
+        <span>TDSQL NEXA / AGENT MEMORY / OFFICIAL AGENTTEAMS / GPU · NOT RUN</span>
         <a
           href="https://github.com/mythrise/ego_agent_infra/blob/main/docs/judge-feedback-implementation.md"
           target="_blank"
