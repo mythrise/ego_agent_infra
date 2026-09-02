@@ -77,6 +77,16 @@ apps/api/policy.py
 apps/api/postgres_store.py
 apps/api/provenance.py
 apps/api/rxp_runtime.py
+apps/api/research_os/__init__.py
+apps/api/research_os/agent_memory.py
+apps/api/research_os/cli.py
+apps/api/research_os/ladder.py
+apps/api/research_os/models.py
+apps/api/research_os/nexa.py
+apps/api/research_os/resource_reviewer.py
+apps/api/research_os/routes.py
+apps/api/research_os/service.py
+apps/api/research_os/tencent_memory.py
 apps/api/service.py
 apps/api/skill_runtime_api.py
 apps/api/state_machine.py

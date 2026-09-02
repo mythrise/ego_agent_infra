@@ -31,6 +31,7 @@ ego-real-gpu-verify = "experiments.fashion_mnist_amp.verify:main"
 ego-egolite-agentteam-live = "experiments.egolite_agentteam.run:main"
 ego-egolite-agentteam-verify = "experiments.egolite_agentteam.verify:main"
 ego-semifinal-bundle = "semifinal_acceptance.cli:main"
+ego-research-compile = "apps.api.research_os.cli:main"
 
 [tool.setuptools]
 py-modules = ["worker_distribution"]
@@ -42,6 +43,7 @@ include = [
   "apps.api.migrations",
   "apps.api.migrations.postgres",
   "apps.api.trusted_memory",
+  "apps.api.research_os",
   "apps.agentteams_bridge",
   "apps.agentteams_bridge.extensions",
   "apps.agentteams_bridge.migrations",

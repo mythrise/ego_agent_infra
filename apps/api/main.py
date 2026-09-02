@@ -27,6 +27,7 @@ from .models import (
 from .operator_auth import OperatorAuthenticator, OperatorIdentity
 from .provenance import canonical_sha256
 from .rxp_runtime import demo_ledger, schema_catalog, verify_uploaded_ledger
+from .research_os import ResearchOSService, register_research_os_routes
 from .service import ResearchOpsService
 from .skill_runtime_api import SkillInvokeRequest, create_skill_registry, invoke_skill
 from .store_factory import create_store
@@ -170,6 +171,7 @@ def create_app(
         tenant_id=resolved_tenant_id,
     )
     application.state.trusted_memory_service_token = resolved_focus_token
+    application.state.research_os = ResearchOSService()
 
     default_origins = ",".join(
         [
@@ -238,6 +240,7 @@ def create_app(
         )
 
     register_trusted_memory_focus_routes(application)
+    register_research_os_routes(application)
 
     @application.get("/api/v1/health", tags=["system"])
     def health(request: Request) -> Dict[str, Any]:
