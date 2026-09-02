@@ -169,6 +169,34 @@ describe("backend contract normalization", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("posts custom research input only to the authenticated server-side expert runner", async () => {
+    const response = {
+      schema: "egoagentos.live-expert-run/v1",
+      run_id: "expert_test",
+      status: "queued",
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(response), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    connectOperatorSession("operator-key-kept-in-memory-only-123456");
+    const api = createResearchApi(false);
+    await api.dashboard().catch(() => undefined);
+
+    // A successful dashboard response selects local API mode before the mutation.
+    const result = await api.startExpertRun({
+      input_mode: "idea",
+      content: "A frozen baseline and a bounded research idea that is long enough.",
+      locale: "en",
+    });
+
+    expect(result.run_id).toBe("expert_test");
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    expect(new Headers(init.headers).get("Authorization")).toMatch(/^Bearer /);
+    expect(JSON.parse(String(init.body))).toMatchObject({ input_mode: "idea", locale: "en" });
+  });
+
   it("normalizes the RXP causal ledger without inventing production trust", () => {
     const rxp = normalizeRXP({
       protocol: "RXP/1.0",

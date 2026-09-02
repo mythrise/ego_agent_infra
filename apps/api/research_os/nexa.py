@@ -43,6 +43,8 @@ class NexaDataPlane:
 
             with psycopg.connect(self.database_url, connect_timeout=5) as connection:
                 row = connection.execute("SELECT current_database(), version()").fetchone()
+            if row is None:
+                raise RuntimeError("database identity probe returned no row")
             return {
                 **base,
                 "status": "reachable",

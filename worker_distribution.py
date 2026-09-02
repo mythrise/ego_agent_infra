@@ -68,6 +68,7 @@ apps/api/__init__.py
 apps/api/errors.py
 apps/api/event_stream.py
 apps/api/evidence.py
+apps/api/expert_runs.py
 apps/api/main.py
 apps/api/memory.py
 apps/api/models.py

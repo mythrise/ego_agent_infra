@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("ResearchOps cockpit primitives", () => {
-  it("accepts custom input for all three judge modes and can load a visible example", () => {
+  it("accepts custom input for all three judge modes and never fakes a live run in static replay", async () => {
     render(<ResearchComposer runtimeMode="static_replay" />);
 
     const editor = screen.getByRole("textbox", { name: /paste a real project brief/i });
@@ -46,8 +46,9 @@ describe("ResearchOps cockpit primitives", () => {
       "Frozen baseline plus a bounded translation-residual idea.",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /compile research tree/i }));
-    expect(screen.getByText("normalized + hashed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /run live expert team/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/requires the server-side api/i);
+    expect(screen.getByText("BACKEND REQUIRED")).toBeInTheDocument();
   });
 
   it("marks the current deterministic workflow stage", () => {

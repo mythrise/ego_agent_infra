@@ -165,3 +165,105 @@ export interface DecisionRequest {
   decision: "approved" | "denied";
   expected_digest: string;
 }
+
+export type ExpertRole = "research-pi" | "scout" | "experiment-architect" | "reviewer";
+export type ExpertRunStatus = "queued" | "running" | "completed" | "rejected" | "failed";
+
+export interface ExpertModelReceipt {
+  schema?: string;
+  truth_boundary?: string;
+  role?: string;
+  model?: string;
+  response_id?: string | null;
+  http_status?: number;
+  request_sha256?: string;
+  response_sha256?: string;
+  latency_ms?: number;
+  usage?: Record<string, unknown>;
+  attempt?: number;
+}
+
+export interface ExpertMemoryReceipt {
+  truth_class?: string;
+  receipt_sha256?: string;
+  markdown_sha256?: string;
+  raw_context_chars?: number;
+  focus_chars?: number;
+  compacted?: boolean;
+}
+
+export interface ExpertRoleState {
+  role: ExpertRole;
+  status: "queued" | "running" | "completed" | "failed";
+  context_receipt?: {
+    payload_sha256: string;
+    payload_fields: string[];
+    upstream_roles: ExpertRole[];
+    input_sha256: string;
+  } | null;
+  output: Record<string, unknown> | null;
+  receipt: ExpertModelReceipt | null;
+  memory_receipt?: ExpertMemoryReceipt | null;
+  error?: string | null;
+}
+
+export interface ExpertRunEvent {
+  sequence: number;
+  event_type: string;
+  role: ExpertRole | null;
+  status: string;
+  message: string;
+  details: Record<string, unknown>;
+  created_at: string;
+  previous_hash: string;
+  event_hash: string;
+}
+
+export interface ExpertRun {
+  schema: "egoagentos.live-expert-run/v1";
+  run_id: string;
+  status: ExpertRunStatus;
+  created_at: string;
+  updated_at: string;
+  input: {
+    mode: "detailed" | "idea" | "baseline";
+    content: string;
+    locale: "en" | "zh-CN";
+    sha256: string;
+  };
+  provider: {
+    configured: boolean;
+    model: string | null;
+    provider: string;
+    credential_location: string;
+    truth_boundary: string;
+  };
+  roles: ExpertRoleState[];
+  events: ExpertRunEvent[];
+  compile: {
+    compile_sha256: string;
+    tree_sha256: string;
+    matrix_sha256: string;
+    matrix_cell_count: number;
+    tier: string;
+    tree_children: string[];
+    next_gate: string;
+    resource_review: Record<string, unknown>;
+  } | null;
+  decision: {
+    status: string;
+    reviewer_verdict?: "PASS" | "WARN" | "FAIL";
+    reviewed_digest?: string;
+    execution_started: boolean;
+    error?: string;
+  } | null;
+  truth_boundary: Record<string, string>;
+  event_chain_sha256?: string;
+  event_chain_valid?: boolean;
+}
+
+export interface StartExpertRunRequest {
+  input_mode: "detailed" | "idea" | "baseline";
+  content: string;
+  locale: "en" | "zh-CN";
+}

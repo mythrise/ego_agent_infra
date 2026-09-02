@@ -9,15 +9,17 @@ import type {
   DecisionRequest,
   EvidenceItem,
   Experiment,
+  ExpertRun,
   IntegrationTruth,
   ResearchStage,
   ResearchTask,
   RXPProtocolData,
   ResourceSnapshot,
+  StartExpertRunRequest,
   TraceEvent,
 } from "./types";
 
-const API_ROOT = import.meta.env.VITE_API_ROOT ?? "/api/v1";
+const API_ROOT = import.meta.env.VITE_API_ROOT || "/api/v1";
 const FORCE_STATIC_REPLAY = import.meta.env.VITE_STATIC_DEMO === "true";
 const APPROVAL_TOKEN_HEADER = "X-Ego-Approval-Token";
 const MIN_OPERATOR_KEY_BYTES = 32;
@@ -498,6 +500,17 @@ const backendApi = {
   async rxpDemo(): Promise<RXPProtocolData> {
     return normalizeRXP(await request<unknown>("/rxp/demo"));
   },
+
+  async startExpertRun(payload: StartExpertRunRequest): Promise<ExpertRun> {
+    return request<ExpertRun>("/expert-runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async expertRun(runId: string): Promise<ExpertRun> {
+    return request<ExpertRun>(`/expert-runs/${encodeURIComponent(runId)}`);
+  },
 };
 
 export function createResearchApi(forceStaticReplay = FORCE_STATIC_REPLAY) {
@@ -546,6 +559,23 @@ export function createResearchApi(forceStaticReplay = FORCE_STATIC_REPLAY) {
 
     async rxpDemo(): Promise<RXPProtocolData> {
       return mode === "static_replay" ? structuredClone(syntheticRXP) : backendApi.rxpDemo();
+    },
+
+    async startExpertRun(payload: StartExpertRunRequest): Promise<ExpertRun> {
+      if (mode === "static_replay") {
+        throw new ApiError(
+          503,
+          "Live expert execution requires the server-side API; static replay never calls a model.",
+        );
+      }
+      return backendApi.startExpertRun(payload);
+    },
+
+    async expertRun(runId: string): Promise<ExpertRun> {
+      if (mode === "static_replay") {
+        throw new ApiError(503, "Static replay has no live expert run.");
+      }
+      return backendApi.expertRun(runId);
     },
   };
 }

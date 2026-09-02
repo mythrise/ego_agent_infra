@@ -71,6 +71,30 @@ The happy-path demo is deliberately two-part:
    token only in `X-Ego-Approval-Token`, with `Cache-Control: no-store`. Send that token as
    `approval_token` to enter `EXECUTE`; an idempotent replay never returns it again.
 
+## Live model expert runs
+
+`POST /api/v1/expert-runs` accepts one of the three input levels (`detailed`, `idea`, or
+`baseline`) and starts four real server-side model calls. `GET /api/v1/expert-runs/{run_id}`
+returns progressive role state, schema-validated outputs, credential-free HTTP receipts,
+per-Agent focus-memory receipts, the deterministic tree/matrix summary, and the append-only
+event hash chain. Both routes require the operator Bearer credential because the payload can
+contain private research material.
+
+Configure the model plane only on the API process:
+
+```bash
+export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
+export EGO_AGENT_MODEL=agnes-2.5-flash
+read -s EGO_AGENT_MODEL_API_KEY
+export EGO_AGENT_MODEL_API_KEY
+```
+
+The returned truth boundary is intentionally narrower than an AgentTeams or experiment claim:
+the four provider responses are `LIVE`; deterministic compilation and private focus memory are
+`LIVE_LOCAL`; official AgentTeams/Matrix, repository or literature retrieval, and physical GPU
+execution remain `NOT_RUN` until their own receipts exist. A reviewer `PASS` or `WARN` produces
+`PLAN_READY_FOR_HUMAN_REVIEW`, never an automatic experiment dispatch.
+
 Send the operator credential on every mutation, for example:
 
 ```bash

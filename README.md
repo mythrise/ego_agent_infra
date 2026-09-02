@@ -43,6 +43,33 @@ VITE_STATIC_DEMO=true VITE_BASE_PATH=/ego_agent_infra/ npm --prefix apps/web run
 
 完整本地 API 模式与静态回放共用同一个 Research Cockpit：未强制设置 `VITE_STATIC_DEMO=true` 时，Web 会先连接 `VITE_API_ROOT`；只有在初始连接不可达时才自动降级为静态回放。一旦已连接本地 API，后续故障会显式报错，不会悄然切换成 fixture。
 
+### 真实专家团队模式
+
+研究编排器的三种输入现在可以启动一个真实的服务端模型工作流。`Research PI → Context
+Scout → Experiment Architect → Independent Reviewer` 四个角色依次接收摘要绑定的上下文；网页
+逐步展示每次请求的模型名、HTTP 状态、延迟、request/response SHA-256、结构化输出、每个 Agent
+独立的 SQLite + `FOCUS.md` 压缩回执，以及最终只追加事件链。审查员读取确定性编译后的精确
+digest，并在任何实验执行之前给出 `PASS/WARN/FAIL`。
+
+模型密钥只由 FastAPI 进程从环境读取，绝不会进入网页 bundle、浏览器存储、URL 或返回体：
+
+```bash
+export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
+export EGO_AGENT_MODEL=agnes-2.5-flash
+read -s EGO_AGENT_MODEL_API_KEY
+export EGO_AGENT_MODEL_API_KEY
+export EGO_OPERATOR_KEY="$(openssl rand -hex 32)"
+export EGO_OPERATOR_ID=local.judge
+uv run --python 3.9 --extra dev uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+
+VITE_API_ROOT=http://127.0.0.1:8000/api/v1 npm --prefix apps/web run dev -- --port 4173
+```
+
+在页面顶部只把 `EGO_OPERATOR_KEY` 作为会话操作者密钥连接，然后载入示例或输入自己的研究问题，
+点击“启动真实专家团队”。公开 GitHub Pages 仍故意保持无密钥静态模式；要让公网评委直接运行
+真实专家，必须另行部署 HTTPS FastAPI 服务并在构建时把 `VITE_API_ROOT` 指向它，不能把供应商
+API key 塞进 GitHub Pages。
+
 本地评委复现的目标路径只需要 Docker：
 
 ```bash

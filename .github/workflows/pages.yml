@@ -45,12 +45,16 @@ jobs:
         run: npm test
         working-directory: apps/web
 
-      - name: Build browser-only synthetic replay
+      - name: Build judge cockpit
         run: npm run build
         working-directory: apps/web
         env:
           VITE_BASE_PATH: /ego_agent_infra/
-          VITE_STATIC_DEMO: "true"
+          # Default is a credential-free static replay. Set the repository variable
+          # EGO_PUBLIC_API_ROOT to an HTTPS FastAPI /api/v1 URL only after that service
+          # has its own server-side model secret, operator auth, and Pages CORS origin.
+          VITE_API_ROOT: ${{ vars.EGO_PUBLIC_API_ROOT }}
+          VITE_STATIC_DEMO: ${{ vars.EGO_PUBLIC_API_ROOT == '' }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

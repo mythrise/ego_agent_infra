@@ -45,6 +45,8 @@ import type {
   DashboardData,
   EvidenceItem,
   Experiment,
+  ExpertRoleState,
+  ExpertRun,
   IntegrationTruth,
   ResearchTask,
   RXPProtocolData,
@@ -335,7 +337,10 @@ function App() {
 
           <div className="workspace-grid">
           <div className="primary-column">
-            <ResearchComposer runtimeMode={dashboard.runtimeMode} />
+            <ResearchComposer
+              runtimeMode={dashboard.runtimeMode}
+              operatorConnected={operatorConnected}
+            />
             <TaskCommand task={activeTask} runtimeMode={dashboard.runtimeMode} />
             <RXPProtocolView data={rxp} runtimeMode={dashboard.runtimeMode} />
             <AcceptanceReadiness runtimeMode={dashboard.runtimeMode} />
@@ -705,25 +710,278 @@ const composerModeDefinitions: Record<ComposerLevel, {
   },
 };
 
-export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["runtimeMode"] }) {
-  const { t } = useI18n();
+function readableExpertField(key: string): string {
+  return key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function expertValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => String(item)).join(" · ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "—");
+}
+
+function ExpertRoleCard({ role }: { role: ExpertRoleState }) {
+  const { language, status } = useI18n();
+  const names: Record<ExpertRoleState["role"], [string, string]> = {
+    "research-pi": ["Research PI", "研究负责人"],
+    scout: ["Context Scout", "上下文侦察员"],
+    "experiment-architect": ["Experiment Architect", "实验架构师"],
+    reviewer: ["Independent Reviewer", "独立审查员"],
+  };
+  const descriptions: Record<ExpertRoleState["role"], [string, string]> = {
+    "research-pi": ["Freezes intent and success criteria", "冻结意图与成功标准"],
+    scout: ["Separates constraints from unknowns", "分离约束、未知项与证据缺口"],
+    "experiment-architect": ["Builds branches and matrix factors", "构造实验支线与矩阵因子"],
+    reviewer: ["Reviews the exact plan digest before decision", "在决策前审查精确方案摘要"],
+  };
+  const languageIndex = language === "zh" ? 1 : 0;
+  const output = role.output
+    ? Object.entries(role.output).filter(([key]) => !["role", "input_digest", "reviewed_digest"].includes(key))
+    : [];
+
+  return (
+    <article className={`expert-role-card status-${role.status}`}>
+      <header>
+        <div className="expert-role-index"><Bot size={17} aria-hidden="true" /></div>
+        <div>
+          <strong>{names[role.role][languageIndex]}</strong>
+          <span>{descriptions[role.role][languageIndex]}</span>
+        </div>
+        <em><i />{status(role.status)}</em>
+      </header>
+      {role.status === "queued" && (
+        <p className="expert-role-waiting">
+          {language === "zh" ? "等待上游上下文与摘要绑定。" : "Waiting for upstream context and digest binding."}
+        </p>
+      )}
+      {role.status === "running" && (
+        <div className="expert-role-running">
+          <Activity size={15} aria-hidden="true" />
+          {language === "zh" ? "模型正在推理，输出将先经过结构校验。" : "Model inference is live; output must pass schema validation."}
+        </div>
+      )}
+      {role.context_receipt && (
+        <div className="expert-context-receipt">
+          <span>
+            <b>{language === "zh" ? "收到上下文" : "CONTEXT RECEIVED"}</b>
+            {role.context_receipt.payload_fields.join(" · ")}
+          </span>
+          <span>
+            <b>{language === "zh" ? "上游角色" : "UPSTREAM"}</b>
+            {role.context_receipt.upstream_roles.length
+              ? role.context_receipt.upstream_roles.join(" → ")
+              : language === "zh" ? "冻结用户输入" : "frozen user input"}
+          </span>
+          <code title={role.context_receipt.payload_sha256}>
+            {compactDigest(role.context_receipt.payload_sha256)}
+          </code>
+        </div>
+      )}
+      {role.error && <p className="expert-role-error">{role.error}</p>}
+      {output.length > 0 && (
+        <dl className="expert-output">
+          {output.map(([key, value]) => (
+            <div key={key}>
+              <dt>{readableExpertField(key)}</dt>
+              <dd>{expertValue(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {role.receipt && (
+        <div className="expert-receipt">
+          <span><b>{language === "zh" ? "真实模型" : "LIVE MODEL"}</b>{role.receipt.model ?? "—"}</span>
+          <span><b>HTTP</b>{role.receipt.http_status ?? "—"}</span>
+          <span><b>{language === "zh" ? "耗时" : "LATENCY"}</b>{role.receipt.latency_ms ?? "—"} ms</span>
+          <span title={role.receipt.response_sha256}><b>RESPONSE</b>{compactDigest(role.receipt.response_sha256)}</span>
+        </div>
+      )}
+      {role.memory_receipt?.compacted && (
+        <div className="expert-memory-receipt">
+          <Database size={14} aria-hidden="true" />
+          <span>{language === "zh" ? "独立 FOCUS 记忆已提交" : "Private FOCUS memory committed"}</span>
+          <code title={role.memory_receipt.receipt_sha256}>{compactDigest(role.memory_receipt.receipt_sha256)}</code>
+          <small>{role.memory_receipt.raw_context_chars ?? 0} → {role.memory_receipt.focus_chars ?? 0} chars</small>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ExpertRunPanel({ run, error, runtimeMode }: {
+  run: ExpertRun | null;
+  error: string | null;
+  runtimeMode: DashboardData["runtimeMode"];
+}) {
+  const { language, status } = useI18n();
+  const emptyRoles: ExpertRoleState[] = (["research-pi", "scout", "experiment-architect", "reviewer"] as const)
+    .map((role) => ({ role, status: "queued", output: null, receipt: null }));
+  const roles = run?.roles ?? emptyRoles;
+  const liveCalls = roles.filter((item) => item.receipt?.http_status === 200).length;
+
+  return (
+    <section className="expert-run-panel" aria-live="polite" aria-labelledby="expert-run-title">
+      <div className="expert-run-heading">
+        <div>
+          <span>{language === "zh" ? "真实专家运行" : "LIVE EXPERT RUN"}</span>
+          <h2 id="expert-run-title">
+            {language === "zh" ? "查看每个 Agent 实际收到、产出与提交的内容" : "Inspect what every agent receives, emits, and commits"}
+          </h2>
+          <p>
+            {language === "zh"
+              ? "模型密钥只存在后端。每个响应先做结构校验，再生成 SHA-256 回执与独立 FOCUS 记忆。"
+              : "The model credential stays server-side. Every response is schema-validated, SHA-256 receipted, and compacted into private FOCUS memory."}
+          </p>
+        </div>
+        <div className={`expert-run-state state-${run?.status ?? "idle"}`}>
+          <i />
+          <strong>{run ? status(run.status) : runtimeMode === "static_replay" ? (language === "zh" ? "需要后端" : "BACKEND REQUIRED") : (language === "zh" ? "准备就绪" : "READY")}</strong>
+          <small>{run ? `${liveCalls}/4 ${language === "zh" ? "次真实模型调用" : "live model calls"}` : (language === "zh" ? "尚未提交输入" : "No input submitted")}</small>
+        </div>
+      </div>
+
+      {error && <div className="expert-run-error" role="alert"><CircleAlert size={17} />{error}</div>}
+
+      {run && (
+        <div className="expert-run-proofbar">
+          <span><b>RUN</b><code>{run.run_id}</code></span>
+          <span title={run.input.sha256}><b>INPUT SHA-256</b><code>{compactDigest(run.input.sha256)}</code></span>
+          <span><b>MODEL</b><code>{run.provider.model ?? "not configured"}</code></span>
+          <span><b>GPU</b><code>{run.truth_boundary.physical_gpu}</code></span>
+          <span><b>AGENTTEAMS</b><code>{run.truth_boundary.official_agentteams_controller}</code></span>
+          <span><b>CHAIN</b><code>{run.event_chain_valid === false ? "INVALID" : "VALID"}</code></span>
+        </div>
+      )}
+
+      <div className="expert-role-grid">
+        {roles.map((role) => <ExpertRoleCard role={role} key={role.role} />)}
+      </div>
+
+      {run?.compile && (
+        <div className="expert-compile-result">
+          <div>
+            <span>{language === "zh" ? "确定性编译结果" : "DETERMINISTIC COMPILE"}</span>
+            <strong>{run.compile.matrix_cell_count} {language === "zh" ? "个计划实验单元" : "planned experiment cells"}</strong>
+            <small>{run.compile.tier} · {run.compile.next_gate}</small>
+          </div>
+          <div>
+            <span>{language === "zh" ? "实验树一级节点" : "TREE ROOT CHILDREN"}</span>
+            <p>{run.compile.tree_children.join(" · ")}</p>
+          </div>
+          <div>
+            <span>{language === "zh" ? "最终状态" : "FINAL STATE"}</span>
+            <strong>{run.decision?.status ?? "—"}</strong>
+            <small>{language === "zh" ? "未启动实验执行" : "experiment execution not started"}</small>
+          </div>
+        </div>
+      )}
+
+      {run && run.events.length > 0 && (
+        <div className="expert-event-log">
+          <div className="expert-event-log-title">
+            <span>{language === "zh" ? "只追加运行轨迹" : "APPEND-ONLY RUN TRACE"}</span>
+            <code title={run.event_chain_sha256}>{compactDigest(run.event_chain_sha256)}</code>
+          </div>
+          <ol>
+            {run.events.map((event) => (
+              <li key={event.sequence}>
+                <span>{String(event.sequence).padStart(2, "0")}</span>
+                <time>{formatTime(event.created_at)}</time>
+                <strong>{event.role ?? "control-plane"}</strong>
+                <em>{event.event_type}</em>
+                <p>{event.message}</p>
+                <code title={event.event_hash}>{compactDigest(event.event_hash)}</code>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function ResearchComposer({
+  runtimeMode,
+  operatorConnected = false,
+}: {
+  runtimeMode: DashboardData["runtimeMode"];
+  operatorConnected?: boolean;
+}) {
+  const { language, t } = useI18n();
   const [level, setLevel] = useState<ComposerLevel>("detailed");
   const [inputs, setInputs] = useState<Record<ComposerLevel, string>>({
     detailed: "",
     idea: "",
     baseline: "",
   });
-  const [compiled, setCompiled] = useState(false);
+  const [run, setRun] = useState<ExpertRun | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const mode = composerModeDefinitions[level];
   const prompt = inputs[level];
+  const compiled = Boolean(run?.compile);
+  const compactedMemory = (run?.roles ?? []).reduce(
+    (total, item) => ({
+      before: total.before + (item.memory_receipt?.raw_context_chars ?? 0),
+      after: total.after + (item.memory_receipt?.focus_chars ?? 0),
+    }),
+    { before: 0, after: 0 },
+  );
 
   const updatePrompt = (value: string) => {
     setInputs((current) => ({ ...current, [level]: value }));
-    setCompiled(false);
+    setRun(null);
+    setRunError(null);
   };
 
   const loadExample = () => {
     updatePrompt(t(mode.exampleKey));
+  };
+
+  useEffect(() => {
+    if (!run || ["completed", "rejected", "failed"].includes(run.status)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await researchApi.expertRun(run.run_id);
+        if (!cancelled) setRun(next);
+      } catch (pollError) {
+        if (!cancelled) {
+          setRunError(pollError instanceof Error ? pollError.message : "Expert run polling failed.");
+        }
+      }
+    }, 650);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [run?.run_id, run?.status, run?.updated_at]);
+
+  const startRun = async () => {
+    setRunBusy(true);
+    setRunError(null);
+    setRun(null);
+    if (runtimeMode === "static_replay") {
+      setRunError(
+        language === "zh"
+          ? "真实专家运行需要连接后端 API；静态 GitHub Pages 不会在浏览器中调用模型。"
+          : "Live expert execution requires the server-side API; static replay never calls a model.",
+      );
+      setRunBusy(false);
+      return;
+    }
+    try {
+      const created = await researchApi.startExpertRun({
+        input_mode: level,
+        content: prompt.trim(),
+        locale: language === "zh" ? "zh-CN" : "en",
+      });
+      setRun(created);
+    } catch (runFailure) {
+      setRunError(runFailure instanceof Error ? runFailure.message : "Live expert run failed.");
+    } finally {
+      setRunBusy(false);
+    }
   };
 
   return (
@@ -749,7 +1007,7 @@ export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["
               role="tab"
               aria-selected={level === item.id}
               className={level === item.id ? "active" : ""}
-              onClick={() => { setLevel(item.id); setCompiled(false); }}
+              onClick={() => { setLevel(item.id); setRun(null); setRunError(null); }}
               key={item.id}
             >
               <small>0{index + 1}</small>
@@ -793,8 +1051,12 @@ export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["
                   : t("composer.localControlPlane")}
                 <em>{t("composer.characters", { count: prompt.length })}</em>
               </span>
-              <button type="button" onClick={() => setCompiled(true)} disabled={!prompt.trim()}>
-                {t("composer.compile")} <ArrowRight size={15} />
+              <button
+                type="button"
+                onClick={() => void startRun()}
+                disabled={!prompt.trim() || runBusy || (runtimeMode === "local_api" && !operatorConnected)}
+              >
+                {runBusy ? t("composer.compiling") : t("composer.compile")} <ArrowRight size={15} />
               </button>
             </div>
           </div>
@@ -832,7 +1094,7 @@ export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["
           </div>
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node matrix">
-            <span>{t("composer.chain.matrix")}</span><strong>{compiled ? t("composer.chain.cells", { count: 165 }) : t("composer.chain.matrixFormula")}</strong>
+            <span>{t("composer.chain.matrix")}</span><strong>{compiled ? t("composer.chain.cells", { count: run?.compile?.matrix_cell_count ?? 0 }) : t("composer.chain.matrixFormula")}</strong>
             <small>{t("composer.chain.intent")}</small>
           </div>
           <ArrowRight className="chain-arrow" size={16} />
@@ -843,10 +1105,16 @@ export function ResearchComposer({ runtimeMode }: { runtimeMode: DashboardData["
           <ArrowRight className="chain-arrow" size={16} />
           <div className="chain-node memory">
             <span>{t("composer.chain.compact")}</span><strong>{t("composer.chain.focus")}</strong>
-            <small>{compiled ? t("composer.chain.context", { before: "18.4k", after: "1.7k" }) : t("composer.chain.freshness")}</small>
+            <small>{compiled
+              ? t("composer.chain.context", {
+                before: String(compactedMemory.before),
+                after: String(compactedMemory.after),
+              })
+              : t("composer.chain.freshness")}</small>
           </div>
         </motion.div>
       </AnimatePresence>
+      <ExpertRunPanel run={run} error={runError} runtimeMode={runtimeMode} />
     </section>
   );
 }

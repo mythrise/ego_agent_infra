@@ -49,3 +49,13 @@ real database URL and is not included in the default 242.
 
 Never copy numeric claims from the unrelated legacy deck. Its old test, cache,
 determinism, hash, and rollback claims refer to a different project and absent evidence paths.
+
+## Live expert workflow addendum, 2026-09-02
+
+| Claim | Current state | Required evidence |
+|---|---|---|
+| Judge input can drive four visible expert roles through the server-side model gateway | implementation verified with a deterministic fake-gateway E2E; the same gateway has a separate four-call live-provider acceptance artifact, but this new endpoint has not been rerun against that provider in this checkout | authenticated `POST /api/v1/expert-runs`; four HTTP 200 role receipts from this endpoint; persisted run JSON; valid event chain |
+| Role hand-offs are inspectable | verified locally | each role exposes its payload field names, upstream-role list, payload SHA-256, schema-validated output, request/response digests, latency, and focus-memory receipt |
+| Architect output controls the compiled tree and matrix | verified locally | fake-gateway E2E compiles architect branches, metrics, folds, and seeds into a non-empty deterministic matrix |
+| Independent review occurs before physical execution | verified locally | reviewer receives the exact compiled-plan digest; final state is planning-only and `execution_started=false` |
+| Public GitHub Pages performs live model calls | not claimed unless `EGO_PUBLIC_API_ROOT` is configured to a separately deployed HTTPS API | deployed API health/config status, server-side secret injection, Pages CORS, operator authentication, and one browser-captured live run |

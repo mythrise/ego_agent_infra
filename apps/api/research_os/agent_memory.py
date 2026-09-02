@@ -183,6 +183,8 @@ class PerAgentFocusMemory:
                     receipt_sha256,
                 ),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("stage commit did not return a sequence")
             sequence = int(cursor.lastrowid)
             connection.executemany(
                 "INSERT INTO l0_conversation(sequence,message_index,role,content) VALUES(?,?,?,?)",

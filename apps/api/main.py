@@ -2,9 +2,10 @@
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import FastAPI, Header, Query, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .errors import ControlPlaneError
+from .expert_runs import ExpertRunRequest, ExpertRunService
 from .event_stream import iter_task_events
 from .models import (
     AdvanceRequest,
@@ -132,6 +134,8 @@ def create_app(
     allow_unauthenticated_demo: Optional[bool] = None,
     trusted_memory_service_token: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    expert_gateway: Optional[Any] = None,
+    expert_run_root: Optional[Path] = None,
 ) -> FastAPI:
     store = create_store(database_url=database_url, sqlite_path=db_path)
     service = ResearchOpsService(store, approval_hmac_secret=approval_hmac_secret)
@@ -171,7 +175,22 @@ def create_app(
         tenant_id=resolved_tenant_id,
     )
     application.state.trusted_memory_service_token = resolved_focus_token
-    application.state.research_os = ResearchOSService()
+    application.state.research_os = ResearchOSService(
+        memory_root=(expert_run_root / "agent-memory") if expert_run_root else None
+    )
+    application.state.expert_runs = (
+        ExpertRunService(
+            expert_gateway,
+            application.state.research_os,
+            expert_run_root
+            or Path(os.getenv("EGO_ARTIFACT_ROOT", "artifacts/runtime")),
+        )
+        if expert_gateway is not None
+        else ExpertRunService.from_environment(
+            application.state.research_os,
+            artifact_root=expert_run_root,
+        )
+    )
 
     default_origins = ",".join(
         [
@@ -251,6 +270,31 @@ def create_app(
     @application.get("/api/v1/integrations", tags=["system"])
     def integrations(request: Request) -> Dict[str, Any]:
         return request.app.state.service.integrations()
+
+    @application.get("/api/v1/expert-runs/status", tags=["research-os", "system"])
+    def expert_run_status(request: Request) -> Dict[str, Any]:
+        return request.app.state.expert_runs.status()
+
+    @application.post("/api/v1/expert-runs", tags=["research-os"], status_code=202)
+    def create_expert_run(
+        body: ExpertRunRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        run = request.app.state.expert_runs.create(body)
+        background_tasks.add_task(request.app.state.expert_runs.execute, run["run_id"])
+        return run
+
+    @application.get("/api/v1/expert-runs/{run_id}", tags=["research-os"])
+    def expert_run(
+        run_id: str,
+        request: Request,
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
+        request.app.state.operator_auth.authenticate(authorization)
+        return request.app.state.expert_runs.get(run_id)
 
     @application.get("/api/v1/skills", tags=["skills"])
     def skills(request: Request) -> Dict[str, Any]:

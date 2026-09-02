@@ -226,6 +226,29 @@
         "title": "CandidateArm",
         "type": "object"
       },
+      "CompileResearchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/ResearchInput"
+          },
+          "resource_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourcePlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "title": "CompileResearchRequest",
+        "type": "object"
+      },
       "CreateTaskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -298,6 +321,15 @@
         ],
         "title": "CreateTaskRequest",
         "type": "object"
+      },
+      "DecisionOutcome": {
+        "enum": [
+          "KEEP",
+          "DROP",
+          "INCONCLUSIVE"
+        ],
+        "title": "DecisionOutcome",
+        "type": "string"
       },
       "DemoResetRequest": {
         "additionalProperties": false,
@@ -516,6 +548,41 @@
         "title": "EvidenceKind",
         "type": "string"
       },
+      "ExpertRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 30000,
+            "minLength": 40,
+            "title": "Content",
+            "type": "string"
+          },
+          "input_mode": {
+            "enum": [
+              "detailed",
+              "idea",
+              "baseline"
+            ],
+            "title": "Input Mode",
+            "type": "string"
+          },
+          "locale": {
+            "default": "en",
+            "enum": [
+              "en",
+              "zh-CN"
+            ],
+            "title": "Locale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input_mode",
+          "content"
+        ],
+        "title": "ExpertRunRequest",
+        "type": "object"
+      },
       "ExternalArtifactRef": {
         "additionalProperties": false,
         "properties": {
@@ -602,6 +669,84 @@
         "title": "FinalizeTaskRequest",
         "type": "object"
       },
+      "FocusMemoryQuery": {
+        "additionalProperties": false,
+        "description": "Bounded project-level scan requested by the AgentTeams bridge.",
+        "properties": {
+          "max_items": {
+            "default": 64,
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Max Items",
+            "type": "integer"
+          },
+          "origins": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryOrigin"
+            },
+            "minItems": 1,
+            "title": "Origins",
+            "type": "array"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionOutcome"
+            },
+            "minItems": 1,
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "project_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "scan_limit": {
+            "default": 512,
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Scan Limit",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "project_id",
+          "outcomes",
+          "origins"
+        ],
+        "title": "FocusMemoryQuery",
+        "type": "object"
+      },
+      "FocusMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "pattern": "^(system|user|assistant|tool)$",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "FocusMessage",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -614,6 +759,15 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
+      },
+      "InputTier": {
+        "enum": [
+          "detailed_proposal",
+          "fuzzy_idea",
+          "baseline_only"
+        ],
+        "title": "InputTier",
+        "type": "string"
       },
       "LiveExecutionContract": {
         "additionalProperties": false,
@@ -712,6 +866,17 @@
         "title": "LiveSourceBinding",
         "type": "object"
       },
+      "MemoryOrigin": {
+        "enum": [
+          "LOCAL_TRUSTED",
+          "ATTESTED_EXTERNAL",
+          "ORIGIN_UNVERIFIED",
+          "SYNTHETIC",
+          "REVOKED"
+        ],
+        "title": "MemoryOrigin",
+        "type": "string"
+      },
       "MetricEvidencePayload": {
         "additionalProperties": false,
         "properties": {
@@ -802,6 +967,52 @@
           "synthetic"
         ],
         "title": "MetricEvidencePayload",
+        "type": "object"
+      },
+      "ModuleSpec": {
+        "additionalProperties": false,
+        "description": "A user-supplied module or alternative in a proposal hierarchy.",
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleSpec"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "hypothesis": {
+            "default": "",
+            "title": "Hypothesis",
+            "type": "string"
+          },
+          "kind": {
+            "default": "module",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "runnable": {
+            "default": false,
+            "title": "Runnable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleSpec",
         "type": "object"
       },
       "OfficialReceipt": {
@@ -966,6 +1177,238 @@
           "candidate_arms"
         ],
         "title": "ResearchGoal",
+        "type": "object"
+      },
+      "ResearchInput": {
+        "additionalProperties": false,
+        "description": "The common input accepted at all three capability levels.",
+        "properties": {
+          "baseline": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "title": "Baseline",
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Branches",
+            "type": "array"
+          },
+          "core_code": {
+            "anyOf": [
+              {
+                "maxLength": 60000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Core Code"
+          },
+          "folds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Folds",
+            "type": "array"
+          },
+          "hierarchy": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleSpec"
+            },
+            "title": "Hierarchy",
+            "type": "array"
+          },
+          "idea": {
+            "anyOf": [
+              {
+                "maxLength": 30000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idea"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Metrics",
+            "type": "array"
+          },
+          "objective": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "maxLength": 80000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal"
+          },
+          "requested_tier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputTier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seeds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Seeds",
+            "type": "array"
+          },
+          "source_repository": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Repository"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "objective",
+          "baseline"
+        ],
+        "title": "ResearchInput",
+        "type": "object"
+      },
+      "ResourcePlan": {
+        "additionalProperties": false,
+        "description": "Machine-readable execution plan inspected outside the normal approval path.",
+        "properties": {
+          "checkpoint_interval_minutes": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Interval Minutes"
+          },
+          "concurrent_cells": {
+            "minimum": 1.0,
+            "title": "Concurrent Cells",
+            "type": "integer"
+          },
+          "cpu_per_cell": {
+            "minimum": 1.0,
+            "title": "Cpu Per Cell",
+            "type": "integer"
+          },
+          "estimated_cpu_hours": {
+            "minimum": 0.0,
+            "title": "Estimated Cpu Hours",
+            "type": "number"
+          },
+          "estimated_gpu_hours": {
+            "minimum": 0.0,
+            "title": "Estimated Gpu Hours",
+            "type": "number"
+          },
+          "folds": {
+            "minimum": 1.0,
+            "title": "Folds",
+            "type": "integer"
+          },
+          "global_phase_barrier": {
+            "title": "Global Phase Barrier",
+            "type": "boolean"
+          },
+          "gpu_per_cell": {
+            "minimum": 0.0,
+            "title": "Gpu Per Cell",
+            "type": "number"
+          },
+          "human_approved": {
+            "default": false,
+            "title": "Human Approved",
+            "type": "boolean"
+          },
+          "matrix_cells": {
+            "minimum": 1.0,
+            "title": "Matrix Cells",
+            "type": "integer"
+          },
+          "output_partition_key": {
+            "default": "cell_id/row_shard",
+            "maxLength": 200,
+            "title": "Output Partition Key",
+            "type": "string"
+          },
+          "recomputes_fold_invariant_data": {
+            "title": "Recomputes Fold Invariant Data",
+            "type": "boolean"
+          },
+          "resume_supported": {
+            "title": "Resume Supported",
+            "type": "boolean"
+          },
+          "row_shards": {
+            "minimum": 1.0,
+            "title": "Row Shards",
+            "type": "integer"
+          },
+          "shared_dataset_cache": {
+            "title": "Shared Dataset Cache",
+            "type": "boolean"
+          },
+          "validation_coupled_to_compute": {
+            "title": "Validation Coupled To Compute",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "matrix_cells",
+          "folds",
+          "estimated_cpu_hours",
+          "estimated_gpu_hours",
+          "cpu_per_cell",
+          "gpu_per_cell",
+          "row_shards",
+          "resume_supported",
+          "shared_dataset_cache",
+          "recomputes_fold_invariant_data",
+          "concurrent_cells",
+          "global_phase_barrier",
+          "validation_coupled_to_compute"
+        ],
+        "title": "ResourcePlan",
         "type": "object"
       },
       "ReviewEvidencePayload": {
@@ -1134,6 +1577,100 @@
         "title": "Stage",
         "type": "string"
       },
+      "StageCommitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Blockers",
+            "type": "array"
+          },
+          "decisions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Decisions",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 80,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/FocusMessage"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          },
+          "next_actions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Next Actions",
+            "type": "array"
+          },
+          "session_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "stage_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "team_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Team Id",
+            "type": "string"
+          },
+          "user_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          },
+          "validated_facts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 80,
+            "title": "Validated Facts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "team_id",
+          "user_id",
+          "session_id",
+          "task_id",
+          "stage_id",
+          "messages"
+        ],
+        "title": "StageCommitRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -1172,7 +1709,7 @@
   "info": {
     "description": "Evidence-gated, deterministic control plane for multi-agent embodied-AI research. The bundled EgoLite run is explicitly synthetic.",
     "title": "EgoAgentOS ResearchOps API",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1369,6 +1906,151 @@
         ]
       }
     },
+    "/api/v1/expert-runs": {
+      "post": {
+        "operationId": "create_expert_run_api_v1_expert_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpertRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Expert Run Api V1 Expert Runs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Expert Run",
+        "tags": [
+          "research-os"
+        ]
+      }
+    },
+    "/api/v1/expert-runs/status": {
+      "get": {
+        "operationId": "expert_run_status_api_v1_expert_runs_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Expert Run Status Api V1 Expert Runs Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Expert Run Status",
+        "tags": [
+          "research-os",
+          "system"
+        ]
+      }
+    },
+    "/api/v1/expert-runs/{run_id}": {
+      "get": {
+        "operationId": "expert_run_api_v1_expert_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Expert Run Api V1 Expert Runs  Run Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Expert Run",
+        "tags": [
+          "research-os"
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "health_api_v1_health_get",
@@ -1411,6 +2093,378 @@
         },
         "summary": "Integrations",
         "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/internal/trusted-memory/focus": {
+      "post": {
+        "operationId": "trusted_memory_focus_api_v1_internal_trusted_memory_focus_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FocusMemoryQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trusted Memory Focus Api V1 Internal Trusted Memory Focus Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trusted Memory Focus",
+        "tags": [
+          "internal",
+          "trusted-memory"
+        ]
+      }
+    },
+    "/api/v1/research/agents/{agent_id}/focus": {
+      "get": {
+        "operationId": "focus_api_v1_research_agents__agent_id__focus_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Focus Api V1 Research Agents  Agent Id  Focus Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Focus",
+        "tags": [
+          "research-os",
+          "memory"
+        ]
+      }
+    },
+    "/api/v1/research/agents/{agent_id}/stages/commit": {
+      "post": {
+        "operationId": "commit_stage_api_v1_research_agents__agent_id__stages_commit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sync_remote",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sync Remote"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StageCommitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Commit Stage Api V1 Research Agents  Agent Id  Stages Commit Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Stage",
+        "tags": [
+          "research-os",
+          "memory"
+        ]
+      }
+    },
+    "/api/v1/research/compile": {
+      "post": {
+        "operationId": "compile_research_api_v1_research_compile_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompileResearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Compile Research Api V1 Research Compile Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compile Research",
+        "tags": [
+          "research-os"
+        ]
+      }
+    },
+    "/api/v1/research/resource-review": {
+      "post": {
+        "operationId": "review_resources_api_v1_research_resource_review_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourcePlan"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Resources Api V1 Research Resource Review Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Resources",
+        "tags": [
+          "research-os"
+        ]
+      }
+    },
+    "/api/v1/research/storage": {
+      "get": {
+        "operationId": "storage_api_v1_research_storage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "probe_nexa",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Probe Nexa",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Storage Api V1 Research Storage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Storage",
+        "tags": [
+          "research-os",
           "system"
         ]
       }

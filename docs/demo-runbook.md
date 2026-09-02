@@ -67,6 +67,23 @@ VITE_API_ROOT=http://127.0.0.1:8000/api/v1 \
   npm --prefix apps/web run dev -- --port 4173
 ```
 
+To let the judge run the four live model experts from the three-level input composer, add the
+model-plane environment to the API terminal before starting Uvicorn. Enter the secret without
+printing it:
+
+```bash
+export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
+export EGO_AGENT_MODEL=agnes-2.5-flash
+read -s EGO_AGENT_MODEL_API_KEY
+export EGO_AGENT_MODEL_API_KEY
+```
+
+Paste only `EGO_OPERATOR_KEY` into the browser's operator-session field. Never paste
+`EGO_AGENT_MODEL_API_KEY` into the page. A completed live planning run must show four HTTP 200
+model receipts, four per-Agent compact receipts, a valid event chain, a compiled matrix digest,
+and `execution_started=false`. It must still show official AgentTeams, Matrix transport,
+retrieval, and physical GPU as `NOT_RUN` unless separate receipts have been ingested.
+
 ## 2. Run the six-minute cockpit replay
 
 1. Open the task cockpit for `ego-lite-001`; confirm the `SYNTHETIC DEMO` marker.

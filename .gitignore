@@ -22,6 +22,7 @@ test-results/
 *.db
 agentteams-benchmark-bindings*.json
 artifacts/runtime/
+data/agent-memory/
 submission/dist/
 .tmp/
 

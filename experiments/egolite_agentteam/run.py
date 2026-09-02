@@ -182,7 +182,7 @@ def _call_role(
     bindings: Mapping[str, str],
     diagnostic_dir: Optional[Path] = None,
 ) -> ModelCall:
-    failures = []
+    failures: list[Dict[str, Any]] = []
     base_prompt = _system_prompt(role, bindings)
     for attempt in range(1, MAX_ROLE_ATTEMPTS + 1):
         prompt = base_prompt
