@@ -61,7 +61,7 @@ CPU/GPU 预算、并发、row shards、checkpoint/resume、缓存、barrier、va
 | TencentDB Agent Memory instance | `NOT_CONFIGURED / NOT_RUN` |
 | 官方 AgentTeams Controller + Matrix + GPU | `NOT_RUN`，不能由本地角色标签代替 |
 
-本轮 receipt：`trace_8f4e3f93754b4d4faafa4c7fa962373a`。它验证的不是 Ego3D 模型精度，
+本轮 receipt：`trace_a85ed1b8233b4cb48970c5e2aff6cc6b`。它验证的不是 Ego3D 模型精度，
 而是外部模型角色输出进入本地确定性 Research Compiler、资源门、13 阶段控制面和 per-agent
 compact 后仍可完整离线复核。完整输入、输出、时序、摘要与限制见
 [`acceptance/2026-09-02-final-live-model.md`](acceptance/2026-09-02-final-live-model.md)。
@@ -79,7 +79,7 @@ compact 后仍可完整离线复核。完整输入、输出、时序、摘要与
 
 ```bash
 uv run --python 3.9 python scripts/build_final_release.py \
-  --evidence-dir artifacts/runtime/egolite-agentteam-20260902-final
+  --evidence-dir artifacts/runtime/egolite-agentteam-20260902-dcd6210
 ```
 
 构建器先调用独立 verifier 校验 evidence 目录，再扫描凭据，最后把源码、B 支线编译结果、

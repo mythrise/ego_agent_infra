@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from apps.agentteams_bridge.extensions.focus_memory import FocusMemorySourceContext
 from apps.agentteams_bridge.focused_service import (

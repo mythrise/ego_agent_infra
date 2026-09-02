@@ -1,9 +1,12 @@
 # 最终真实模型验收：ResearchOS + compact memory
 
-时间：2026-09-02 17:27 CST  
-Trace：`trace_8f4e3f93754b4d4faafa4c7fa962373a`  
-模型网关：`https://apihub.agnes-ai.com/v1`，model=`agnes-2.5-flash`  
-源码快照：`e7faee4c2140e1fe5a98ebc9b1fd1faa7390ca74`
+时间：2026-09-02 17:32 CST
+
+Trace：`trace_a85ed1b8233b4cb48970c5e2aff6cc6b`
+
+模型网关：`https://apihub.agnes-ai.com/v1`，model=`agnes-2.5-flash`
+
+源码快照：`dcd621024af83edb5252095ac5c3960c27f4f1bd`
 
 ## 验收结论
 
@@ -60,10 +63,10 @@ API key 只从进程环境读取；receipt 固定记录 `credential_persisted=fa
 
 | 角色 | HTTP | 延迟 | request SHA-256 | response SHA-256 |
 |---|---:|---:|---|---|
-| research-pi | 200 | 4341 ms | `246326460e9a93ecfb26edecd5752de996598343ed4e67b0a82b618207a140db` | `4ce45b901bc96ad798d53212f03772676dffc61d90f5fd1103b3df74c7183136` |
-| scout | 200 | 4556 ms | `fcafa5d49e23e7e763d78c69692ac48bbccc0d6f8ee169189704d0de56f78c41` | `776e1a41d08b1a6f5db03ec0651766472e9d86895484dbcb8d3df22dd939f4a6` |
-| experiment-architect | 200 | 5151 ms | `df945d2dd4ed57b4bc8ee4378e13cb7e686198228ffc9f31bd7eff8295bf5966` | `a96cff10ea977066f1da1dc1830d60950d14e1bcd167fc8a5caa10e07b00682a` |
-| reviewer | 200 | 4384 ms | `c22059b9aa159a01c129bf41f488a28736668e3d0861319255e6a9fc5cd53285` | `429d32da0fcc39a6ebd9e09be0283210ef709ddd38a91ef42785b24fb54ecd50` |
+| research-pi | 200 | 5164 ms | `5bf6759242ec376c88a698be85d6a4fdeb773409476e3b4baf057bc8e097e09b` | `f43e4d9d2ca1d477fc91d9f7163e98eaeebff7c7d219f07f34afc829cbb7d9cc` |
+| scout | 200 | 7490 ms | `f305466aa842abfbe7ea5de63a5333f8c56cb6c9fd872844cd86420a81a69e93` | `f09361bfdd69b2dfbee50d3a36c6e004a1c608bc274b6ded9be6331aa2a5d3f3` |
+| experiment-architect | 200 | 9822 ms | `bdba37c2a0954f1cc5d6432a5c4c870e2c2e7db8a889358fdc59b6fff3b0a2a0` | `532062f586d25489be8280774f5b98587b6278aff3a14a61385477610e223af7` |
+| reviewer | 200 | 6139 ms | `a79c3ef22be31b7856127ef89a8f2f8e16e8941914e0b24e97d36e40b90acb39` | `f514927a633a9a33954ac967e2753ffa3373e9cc75c486d4df351833932a0a83` |
 
 ## 实际输出
 
@@ -80,10 +83,10 @@ API key 只从进程环境读取；receipt 固定记录 `credential_persisted=fa
 
 | Agent | 阶段 | 原始字符 | FOCUS 字符 | compact receipt SHA-256 |
 |---|---|---:|---:|---|
-| research-pi | INTAKE | 321 | 699 | `af4acc22e012dd6c361249a96fc162cb248eeb98600869d56e0843f783d47dd6` |
-| scout | CONTEXT | 850 | 682 | `ca9c53effb6a025de05ad2384e5060036dea2b5b2907e8f63135135be71d853d` |
-| experiment-architect | PLAN | 800 | 724 | `11fe639db4179defebba938c70fd5d6ee869cc27bcfed6ad4b1324830ea9a7d9` |
-| reviewer | VERIFY | 888 | 690 | `7d2c02d46fb5493244d89dd1a5591a41f8b34ab851e01d2fc49e0e1a83f119b4` |
+| research-pi | INTAKE | 1673 | 699 | `a850eca59c323da275152156c0b552899cba6d299921d2865c82752d9e8615fc` |
+| scout | CONTEXT | 753 | 682 | `abb4548b96fad30b3dec446e9a8cdd4399d6afe7b0bce15932f276d8924e8438` |
+| experiment-architect | PLAN | 964 | 724 | `1b1874cc7586c74bbd61dce358d0115bf7963e752e52d909055cbe3c9184cfef` |
+| reviewer | VERIFY | 857 | 690 | `0dea65ac32b44237f352c070a0f358646e6b267b76fab4cfd7319abc25e950cc` |
 
 `FOCUS.md` 不是简单截断聊天，而是只保留 validated facts、decisions、evidence、blockers 和
 next actions；SQLite 保存原始 L0 与链式 receipt，下一阶段从新的 focus 投影继续。
@@ -92,8 +95,12 @@ next actions；SQLite 保存原始 L0 与链式 receipt，下一阶段从新的 
 
 ```bash
 uv run --python 3.9 python -m experiments.egolite_agentteam.verify \
-  artifacts/runtime/egolite-agentteam-20260902-final
+  artifacts/runtime/egolite-agentteam-20260902-dcd6210
 ```
 
 预期唯一成功条件是 `verified=true` 且 `errors=[]`。修改任意被记录文件、删除任一角色 receipt、
 改变 truth boundary、减少 165 cells 或把远端 memory 冒充为已配置，都会使 verifier 失败。
+
+最终回归还通过：Python 默认套件 661 项（660 passed，1 个已有条件性 skip）、MCP 51 passed、
+Web 16 passed、TypeScript/Vite production build、全仓 Ruff、B 支线 compileall 与
+`docker compose config --quiet`。这些是本地代码/配置证据，不改变云端和 GPU 的 `NOT_RUN`。

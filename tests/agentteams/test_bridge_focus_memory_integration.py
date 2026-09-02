@@ -12,7 +12,6 @@ from apps.agentteams_bridge.models import (
     CollaborationEnvelope,
     EnvelopeKind,
     StartRunRequest,
-    WorkerResultEnvelope,
     canonical_sha256,
 )
 from apps.agentteams_bridge.store import BridgeStore as SQLiteBridgeStore

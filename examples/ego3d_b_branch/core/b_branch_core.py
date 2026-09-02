@@ -9,7 +9,7 @@ read validation GT.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 from torch import Tensor, nn
