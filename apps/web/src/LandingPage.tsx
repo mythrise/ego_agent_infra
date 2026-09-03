@@ -68,7 +68,7 @@ export function LandingPage() {
               <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}>EN</button>
               <button className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")} aria-pressed={language === "zh"}>中</button>
             </div>
-            <a className="liquid-button liquid-solid landing-header-cta" href="#cockpit">
+            <a className="liquid-button liquid-solid landing-header-cta" href="#acceptance-environment">
               {zh ? "进入系统" : "Open cockpit"}
             </a>
             <button
@@ -104,7 +104,7 @@ export function LandingPage() {
                 : "Compile any baseline or research idea into bounded runs, independent review, and fresh agent memory."}
             </p>
             <div className="landing-actions">
-              <a className="liquid-button liquid-solid landing-appear landing-button-in" href="#cockpit">
+              <a className="liquid-button liquid-solid landing-appear landing-button-in" href="#acceptance-environment">
                 {zh ? "进入科研控制台" : "Open research cockpit"}<ArrowRight size={15} />
               </a>
               <a className="liquid-button liquid-ghost landing-appear landing-side" href="#evidence">
@@ -134,7 +134,7 @@ function LandingStat({ icon, value, label }: { icon: React.ReactNode; value: str
   );
 }
 
-function LogoMark() {
+export function LogoMark() {
   return (
     <svg className="landing-logo-mark" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <g transform="rotate(-30 12 12)">

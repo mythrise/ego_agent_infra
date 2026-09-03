@@ -50,11 +50,13 @@ jobs:
         working-directory: apps/web
         env:
           VITE_BASE_PATH: /ego_agent_infra/
-          # Default is a credential-free static replay. Set the repository variable
-          # EGO_PUBLIC_API_ROOT to an HTTPS FastAPI /api/v1 URL only after that service
-          # has its own server-side model secret, operator auth, and Pages CORS origin.
+          # The judge page keeps deterministic control-plane data in browser memory,
+          # while the explicitly public demo credential enables live model-only calls.
           VITE_API_ROOT: ${{ vars.EGO_PUBLIC_API_ROOT }}
           VITE_STATIC_DEMO: ${{ vars.EGO_PUBLIC_API_ROOT == '' }}
+          VITE_PUBLIC_MODEL_BASE_URL: https://api.deepseek.com
+          VITE_PUBLIC_MODEL: deepseek-v4-flash
+          VITE_PUBLIC_MODEL_API_KEY: ${{ secrets.EGO_PUBLIC_MODEL_API_KEY }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

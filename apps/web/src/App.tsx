@@ -37,7 +37,12 @@ import {
 import { syntheticDashboard } from "./demoData";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n";
-import { LandingPage } from "./LandingPage";
+import { LandingPage, LogoMark } from "./LandingPage";
+import {
+  defaultJudgeDemoConfig,
+  runPublicExpertTeam,
+} from "./publicExpertApi";
+import type { JudgeDemoConfig } from "./publicExpertApi";
 import { syntheticRXP } from "./rxpDemoData";
 import { STAGES } from "./types";
 import type {
@@ -135,6 +140,7 @@ function App() {
   const [busy, setBusy] = useState<BusyAction>(null);
   const [approvalGrant, setApprovalGrant] = useState<SessionApprovalGrant>(null);
   const [operatorConnected, setOperatorConnected] = useState(operatorSessionConnected);
+  const [judgeConfig, setJudgeConfig] = useState<JudgeDemoConfig>(() => ({ ...defaultJudgeDemoConfig }));
   const [navOpen, setNavOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const prefersReducedMotion = useReducedMotion();
@@ -311,7 +317,9 @@ function App() {
           onToggleAuto={() => setAutoRefresh((value) => !value)}
           onRefresh={() => void load(true)}
           runtimeMode={dashboard.runtimeMode}
+          publicModelReady={Boolean(judgeConfig.apiKey.trim())}
         />
+        <JudgeAcceptanceConfig config={judgeConfig} onChange={setJudgeConfig} />
         {dashboard.runtimeMode === "local_api" && (
           <OperatorSessionBar
             connected={operatorConnected}
@@ -340,6 +348,7 @@ function App() {
             <ResearchComposer
               runtimeMode={dashboard.runtimeMode}
               operatorConnected={operatorConnected}
+              judgeConfig={judgeConfig}
             />
             <TaskCommand task={activeTask} runtimeMode={dashboard.runtimeMode} />
             <RXPProtocolView data={rxp} runtimeMode={dashboard.runtimeMode} />
@@ -511,7 +520,7 @@ function Rail({
       {open && <button className="nav-scrim" aria-label={t("nav.close")} onClick={onClose} />}
       <aside className={`rail ${open ? "is-open" : ""}`} aria-label={t("nav.primary")}>
         <a className="brand-mark" href="#compose" aria-label="EgoAgentOS ResearchOps home" onClick={onClose}>
-          <span className="brand-glyph">E</span>
+          <span className="brand-glyph"><LogoMark /></span>
           <span className="brand-type">EgoAgentOS</span>
         </a>
         <nav className="rail-nav">
@@ -560,6 +569,7 @@ function Topbar({
   onToggleAuto,
   onRefresh,
   runtimeMode,
+  publicModelReady,
 }: {
   task: ResearchTask;
   tasks: ResearchTask[];
@@ -571,9 +581,11 @@ function Topbar({
   onToggleAuto: () => void;
   onRefresh: () => void;
   runtimeMode: DashboardData["runtimeMode"];
+  publicModelReady: boolean;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const staticReplay = runtimeMode === "static_replay";
+  const browserModelReady = staticReplay && publicModelReady;
   return (
     <header className="topbar">
       <button className="icon-button mobile-menu" onClick={onMenu} aria-label={t("nav.open")}>
@@ -594,10 +606,16 @@ function Topbar({
       <div className="topbar-meta">
         <span
           className="demo-stamp"
-          title={staticReplay ? "Browser-only fixture: no API, MCP, AgentTeams, or GPU connection" : "Synthetic scenario served by the local API"}
+          title={browserModelReady
+            ? "Live browser model calls; GPU, Controller, and Matrix remain assumption-only"
+            : staticReplay ? "Browser-only fixture: no live credential configured" : "Scenario served by the local API"}
         >
-          <span className="demo-label-full">{staticReplay ? t("runtime.staticBadge") : t("runtime.localBadge")}</span>
-          <span className="demo-label-mobile">{staticReplay ? t("runtime.staticBadgeShort") : t("runtime.localBadgeShort")}</span>
+          <span className="demo-label-full">{browserModelReady
+            ? (language === "zh" ? "真实模型 · 假设验收 · 无 GPU" : "LIVE MODEL · ASSUMPTION MODE · NO GPU")
+            : staticReplay ? t("runtime.staticBadge") : t("runtime.localBadge")}</span>
+          <span className="demo-label-mobile">{browserModelReady
+            ? (language === "zh" ? "真实模型 · 假设" : "LIVE · ASSUMED")
+            : staticReplay ? t("runtime.staticBadgeShort") : t("runtime.localBadgeShort")}</span>
         </span>
         <span className="sync-time">{t("runtime.updated", { time: formatTime(task.updatedAt) })}</span>
         {!staticReplay && (
@@ -618,11 +636,99 @@ function Topbar({
   );
 }
 
+export function JudgeAcceptanceConfig({
+  config,
+  onChange,
+}: {
+  config: JudgeDemoConfig;
+  onChange: (config: JudgeDemoConfig) => void;
+}) {
+  const { language } = useI18n();
+  const zh = language === "zh";
+  const update = <K extends keyof JudgeDemoConfig,>(key: K, value: JudgeDemoConfig[K]) => {
+    onChange({ ...config, [key]: value });
+  };
+
+  return (
+    <section className="judge-config" id="acceptance-environment" aria-labelledby="judge-config-title">
+      <div className="judge-config-intro">
+        <span>00 / {zh ? "验收环境" : "ACCEPTANCE ENVIRONMENT"}</span>
+        <h2 id="judge-config-title">{zh ? "先声明资源假设，再进入科研控制台" : "Declare assumptions before entering the cockpit"}</h2>
+        <p>{zh
+          ? "评委现场没有 GPU 也能完整检查规划、证据门与独立复核。下列资源只作为计划约束，不会伪装成真实执行回执。"
+          : "Judges can inspect planning, evidence gates, and independent review without a GPU. These resources constrain the plan and never masquerade as execution receipts."}</p>
+      </div>
+
+      <div className="judge-config-grid">
+        <label className="config-model">
+          <span>{zh ? "模型" : "MODEL"}</span>
+          <input value={config.model} onChange={(event) => update("model", event.target.value)} />
+        </label>
+        <label className="config-url">
+          <span>BASE URL</span>
+          <input type="url" value={config.modelBaseUrl} onChange={(event) => update("modelBaseUrl", event.target.value)} />
+        </label>
+        <label className="config-key">
+          <span>{zh ? "公开 Demo Key" : "PUBLIC DEMO KEY"}</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            aria-label={zh ? "公开 Demo API 密钥" : "Public demo API key"}
+            value={config.apiKey}
+            onChange={(event) => update("apiKey", event.target.value)}
+            placeholder={zh ? "可替换为评委自己的 Key" : "Replace with a judge-owned key"}
+          />
+          <small>{config.apiKey ? (zh ? "已载入 · 可编辑" : "LOADED · EDITABLE") : (zh ? "未配置" : "NOT CONFIGURED")}</small>
+        </label>
+        <label className="config-gpu">
+          <span>{zh ? "假设 GPU" : "ASSUMED GPU"}</span>
+          <input value={config.gpuProfile} onChange={(event) => update("gpuProfile", event.target.value)} disabled={!config.assumeGpu} />
+        </label>
+        <label className="config-number">
+          <span>{zh ? "数量" : "COUNT"}</span>
+          <input type="number" min="1" max="16" value={config.gpuCount} onChange={(event) => update("gpuCount", Math.max(1, Number(event.target.value) || 1))} disabled={!config.assumeGpu} />
+        </label>
+        <label className="config-number">
+          <span>{zh ? "预算 GPU·h" : "GPU HOURS"}</span>
+          <input type="number" min="0.25" max="168" step="0.25" value={config.maxGpuHours} onChange={(event) => update("maxGpuHours", Math.max(0.25, Number(event.target.value) || 0.25))} disabled={!config.assumeGpu} />
+        </label>
+        <label className="config-controller">
+          <span>CONTROLLER</span>
+          <input value={config.controllerUrl} onChange={(event) => update("controllerUrl", event.target.value)} disabled={!config.assumeAgentTeams} />
+        </label>
+        <label className="config-team">
+          <span>TEAM</span>
+          <input value={config.team} onChange={(event) => update("team", event.target.value)} disabled={!config.assumeAgentTeams} />
+        </label>
+        <label className="config-room">
+          <span>MATRIX ROOM</span>
+          <input value={config.matrixRoom} onChange={(event) => update("matrixRoom", event.target.value)} disabled={!config.assumeAgentTeams} />
+        </label>
+      </div>
+
+      <div className="judge-assumption-toggles">
+        <label>
+          <input type="checkbox" checked={config.assumeGpu} onChange={(event) => update("assumeGpu", event.target.checked)} />
+          <span><i />{zh ? "按上述 GPU 约束做计划验收" : "Plan against the GPU profile"}</span>
+        </label>
+        <label>
+          <input type="checkbox" checked={config.assumeAgentTeams} onChange={(event) => update("assumeAgentTeams", event.target.checked)} />
+          <span><i />{zh ? "假设 Controller、4 Workers 与 Matrix 就绪" : "Assume Controller, 4 Workers, and Matrix are ready"}</span>
+        </label>
+        <button type="button" onClick={() => onChange({ ...defaultJudgeDemoConfig })}>
+          <RotateCcw size={13} /> {zh ? "恢复演示配置" : "Reset demo profile"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function TaskCommand({ task, runtimeMode }: { task: ResearchTask; runtimeMode: DashboardData["runtimeMode"] }) {
   const { t } = useI18n();
   const staticReplay = runtimeMode === "static_replay";
   return (
-    <section className="task-command" id="cockpit" aria-labelledby="task-title">
+    <section className="task-command" id="task-cockpit" aria-labelledby="task-title">
       <div className="command-main">
         <div className="section-kicker">
           <span className={`live-mark ${task.stage === "COMPLETED" || staticReplay ? "settled" : ""}`} />
@@ -799,7 +905,9 @@ function ExpertRoleCard({ role }: { role: ExpertRoleState }) {
       {role.memory_receipt?.compacted && (
         <div className="expert-memory-receipt">
           <Database size={14} aria-hidden="true" />
-          <span>{language === "zh" ? "独立 FOCUS 记忆已提交" : "Private FOCUS memory committed"}</span>
+          <span>{role.memory_receipt.truth_class === "LIVE_BROWSER_SESSION"
+            ? (language === "zh" ? "本次会话 FOCUS 已压缩 · 未持久化" : "Session FOCUS compacted · not persisted")
+            : (language === "zh" ? "独立 FOCUS 记忆已提交" : "Private FOCUS memory committed")}</span>
           <code title={role.memory_receipt.receipt_sha256}>{compactDigest(role.memory_receipt.receipt_sha256)}</code>
           <small>{role.memory_receipt.raw_context_chars ?? 0} → {role.memory_receipt.focus_chars ?? 0} chars</small>
         </div>
@@ -808,10 +916,11 @@ function ExpertRoleCard({ role }: { role: ExpertRoleState }) {
   );
 }
 
-function ExpertRunPanel({ run, error, runtimeMode }: {
+function ExpertRunPanel({ run, error, runtimeMode, browserModelReady }: {
   run: ExpertRun | null;
   error: string | null;
   runtimeMode: DashboardData["runtimeMode"];
+  browserModelReady: boolean;
 }) {
   const { language, status } = useI18n();
   const emptyRoles: ExpertRoleState[] = (["research-pi", "scout", "experiment-architect", "reviewer"] as const)
@@ -828,15 +937,27 @@ function ExpertRunPanel({ run, error, runtimeMode }: {
             {language === "zh" ? "查看每个 Agent 实际收到、产出与提交的内容" : "Inspect what every agent receives, emits, and commits"}
           </h2>
           <p>
-            {language === "zh"
-              ? "模型密钥只存在后端。每个响应先做结构校验，再生成 SHA-256 回执与独立 FOCUS 记忆。"
-              : "The model credential stays server-side. Every response is schema-validated, SHA-256 receipted, and compacted into private FOCUS memory."}
+            {run?.provider.credential_location === "PUBLIC_DEMO_BUNDLE_OR_JUDGE_INPUT"
+              ? (language === "zh"
+                  ? "此公开 Demo 直接调用模型。每个响应先做结构校验，再生成 SHA-256 回执；GPU 与 AgentTeams 仍为假设验收。"
+                  : "This public demo calls the model directly. Every response is schema-validated and SHA-256 receipted; GPU and AgentTeams remain assumptions.")
+              : (language === "zh"
+                  ? "每个响应先做结构校验，再生成 SHA-256 回执与独立 FOCUS 记忆。"
+                  : "Every response is schema-validated, SHA-256 receipted, and compacted into private FOCUS memory.")}
           </p>
         </div>
         <div className={`expert-run-state state-${run?.status ?? "idle"}`}>
           <i />
-          <strong>{run ? status(run.status) : runtimeMode === "static_replay" ? (language === "zh" ? "需要后端" : "BACKEND REQUIRED") : (language === "zh" ? "准备就绪" : "READY")}</strong>
-          <small>{run ? `${liveCalls}/4 ${language === "zh" ? "次真实模型调用" : "live model calls"}` : (language === "zh" ? "尚未提交输入" : "No input submitted")}</small>
+          <strong>{run
+            ? status(run.status)
+            : runtimeMode === "static_replay" && !browserModelReady
+              ? (language === "zh" ? "需要 API KEY" : "API KEY REQUIRED")
+              : (language === "zh" ? "准备就绪" : "READY")}</strong>
+          <small>{run
+            ? `${liveCalls}/4 ${language === "zh" ? "次真实模型调用" : "live model calls"}`
+            : browserModelReady
+              ? (language === "zh" ? "浏览器直连模型" : "Browser-direct model")
+              : (language === "zh" ? "尚未提交输入" : "No input submitted")}</small>
         </div>
       </div>
 
@@ -903,9 +1024,11 @@ function ExpertRunPanel({ run, error, runtimeMode }: {
 export function ResearchComposer({
   runtimeMode,
   operatorConnected = false,
+  judgeConfig = defaultJudgeDemoConfig,
 }: {
   runtimeMode: DashboardData["runtimeMode"];
   operatorConnected?: boolean;
+  judgeConfig?: JudgeDemoConfig;
 }) {
   const { language, t } = useI18n();
   const [level, setLevel] = useState<ComposerLevel>("detailed");
@@ -939,7 +1062,7 @@ export function ResearchComposer({
   };
 
   useEffect(() => {
-    if (!run || ["completed", "rejected", "failed"].includes(run.status)) return;
+    if (!run || run.run_id.startsWith("browser_") || ["completed", "rejected", "failed"].includes(run.status)) return;
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
@@ -962,12 +1085,18 @@ export function ResearchComposer({
     setRunError(null);
     setRun(null);
     if (runtimeMode === "static_replay") {
-      setRunError(
-        language === "zh"
-          ? "真实专家运行需要连接后端 API；静态 GitHub Pages 不会在浏览器中调用模型。"
-          : "Live expert execution requires the server-side API; static replay never calls a model.",
-      );
-      setRunBusy(false);
+      try {
+        const completed = await runPublicExpertTeam({
+          input_mode: level,
+          content: prompt.trim(),
+          locale: language === "zh" ? "zh-CN" : "en",
+        }, judgeConfig, setRun);
+        setRun(completed);
+      } catch (runFailure) {
+        setRunError(runFailure instanceof Error ? runFailure.message : "Browser expert run failed.");
+      } finally {
+        setRunBusy(false);
+      }
       return;
     }
     try {
@@ -1114,7 +1243,12 @@ export function ResearchComposer({
           </div>
         </motion.div>
       </AnimatePresence>
-      <ExpertRunPanel run={run} error={runError} runtimeMode={runtimeMode} />
+      <ExpertRunPanel
+        run={run}
+        error={runError}
+        runtimeMode={runtimeMode}
+        browserModelReady={Boolean(judgeConfig.apiKey.trim())}
+      />
     </section>
   );
 }

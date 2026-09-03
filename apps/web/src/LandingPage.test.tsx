@@ -17,7 +17,7 @@ describe("EgoAgentOS landing experience", () => {
     fireEvent.click(screen.getByRole("button", { name: "中" }));
 
     expect(screen.getByRole("heading", { name: /让 AI 实验 成为可复核证据/ })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "进入科研控制台" })).toHaveAttribute("href", "#cockpit");
+    expect(screen.getByRole("link", { name: "进入科研控制台" })).toHaveAttribute("href", "#acceptance-environment");
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 

@@ -31,7 +31,13 @@ PostgreSQL-compatible SQL 端点；没有腾讯实例凭据时，系统明确报
 
 在线静态 Demo：[https://mythrise.github.io/ego_agent_infra/](https://mythrise.github.io/ego_agent_infra/)
 
-GitHub Pages 使用浏览器内确定性回放，可以步进或 autorun，并完整演示 R2 审批锁、`7/7 · HOLD → PASS`、`KEEP` 决策与移动端导航。页面与所有数据始终标记为 **SYNTHETIC / STATIC REPLAY**；该托管版本不调用后端 API、MCP、AgentTeams、Higress、Nacos 或 GPU，也不产生真实审批签名。它展示的是本仓库可复现控制语义的公开 fixture，不是在线研究运行证明。
+GitHub Pages 的评委模式允许先编辑 GPU、Controller、Team、Matrix room、模型与预算等
+假设配置，再直接从浏览器调用 DeepSeek 四专家链。模型响应标记为 `LIVE_BROWSER`；GPU、
+Controller 与 Matrix 始终标记为 `ASSUMPTION_ONLY`，不会被展示成真实执行回执。公开 Demo
+密钥通过 GitHub Actions secret `EGO_PUBLIC_MODEL_API_KEY` 注入并编译到浏览器 bundle，
+因此只能使用低额度、可随时吊销的专用密钥。
+
+GitHub Pages 同时提供两条边界清晰的链路：四位专家通过浏览器直连模型，生成经过 schema 校验和 SHA-256 绑定的真实规划输出；13 阶段控制面、GPU、Controller、Matrix 与正式数据库则保持浏览器内确定性回放或 `ASSUMPTION_ONLY`。页面可以步进或 autorun，并完整演示 R2 审批锁、`7/7 · HOLD → PASS`、`KEEP` 决策与移动端导航，但不会把资源假设展示成真实硬件、官方 AgentTeams 或生产审批签名。
 
 静态构建可在本地复现：
 
