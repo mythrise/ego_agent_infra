@@ -1,0 +1,131 @@
+{
+  "checks": {
+    "egoagentos_compose_verified": true,
+    "four_distinct_matrix_senders": true,
+    "four_worker_resources_running": true,
+    "gpu_not_attached": true,
+    "manager_running": true,
+    "matrix_event_receipts_present": true,
+    "official_source_locked": true,
+    "project_paused": true,
+    "team_active": true,
+    "workflow_frozen_pending": true
+  },
+  "generated_at": "2026-09-03T06:59:52.489729Z",
+  "matrix": {
+    "distinct_worker_senders": [
+      "@ego-architect:matrix-local.agentteams.io:18080",
+      "@ego-memory-curator:matrix-local.agentteams.io:18080",
+      "@ego-research-lead:matrix-local.agentteams.io:18080",
+      "@ego-reviewer:matrix-local.agentteams.io:18080"
+    ],
+    "event_count": 36,
+    "final_event_receipts": {
+      "@ego-architect:matrix-local.agentteams.io:18080": {
+        "body_sha256": "3d324ae1c2494abe4d8a35179a8f5299819784781651bf8a8e56a9af7f9491aa",
+        "event_id": "$Ugp71JFkIjSBK3B4UsKOTLkboT-dhKRPgDclI-oS70M",
+        "origin_server_ts": 1788359219315
+      },
+      "@ego-memory-curator:matrix-local.agentteams.io:18080": {
+        "body_sha256": "9af9f1fb56da69df841b3c7a7a3db5ea523cd33e1924c47be3007b6235ceb895",
+        "event_id": "$8PFburKNwscUynfPghk7ordiN3f0L7ifFNiFP3BQ0mo",
+        "origin_server_ts": 1788359472794
+      },
+      "@ego-research-lead:matrix-local.agentteams.io:18080": {
+        "body_sha256": "c4a777628b0243f71f6e0170f9cc0800319f020123a1577bf6cd2506af45b668",
+        "event_id": "$N_ZsZXv9MxD5_fCw6Q_UNDu8KNwbt0R2tOREFm8uQuk",
+        "origin_server_ts": 1788359197623
+      },
+      "@ego-reviewer:matrix-local.agentteams.io:18080": {
+        "body_sha256": "ab22703294ed18f193b26ffd2d746b9fce75ca010200c34fc87d1dffa088141e",
+        "event_id": "$D3otsN_gJddf5xujZ6bnrizn2cVaxTa1HRsGxCcqRWM",
+        "origin_server_ts": 1788359491423
+      }
+    },
+    "request_event_id": "$-laB7Nwa3W3PqUTiRXkoVxf7VwgCCM1JseD6AQ4Ki7w",
+    "room_id": "!NyMg3hCa3myqJ5W1UC:matrix-local.agentteams.io:18080"
+  },
+  "official_agentteams": {
+    "commit": "223ddc2b8073e4c8b93bcbb15e1d717f196c04d9",
+    "controller": {
+      "controller": "dev",
+      "kubeMode": "embedded"
+    },
+    "manager": {
+      "configured_model": "deepseek-v4-flash",
+      "name": "default",
+      "note": "configuration evidence, not per-event model provenance",
+      "phase": "Running",
+      "runtime": "qwenpaw"
+    },
+    "repository": "https://github.com/agentscope-ai/AgentTeams.git",
+    "tag": "v1.2.3",
+    "team": {
+      "leader_ready": true,
+      "name": "ego-researchops",
+      "phase": "Active",
+      "ready_worker_resources": 4,
+      "ready_workers": 3,
+      "room_id": "!NyMg3hCa3myqJ5W1UC:matrix-local.agentteams.io:18080",
+      "total_workers": 3
+    },
+    "workers": [
+      {
+        "matrix_user_id": "@ego-research-lead:matrix-local.agentteams.io:18080",
+        "name": "ego-research-lead",
+        "phase": "Running",
+        "runtime": "qwenpaw"
+      },
+      {
+        "matrix_user_id": "@ego-architect:matrix-local.agentteams.io:18080",
+        "name": "ego-architect",
+        "phase": "Running",
+        "runtime": "qwenpaw"
+      },
+      {
+        "matrix_user_id": "@ego-reviewer:matrix-local.agentteams.io:18080",
+        "name": "ego-reviewer",
+        "phase": "Running",
+        "runtime": "qwenpaw"
+      },
+      {
+        "matrix_user_id": "@ego-memory-curator:matrix-local.agentteams.io:18080",
+        "name": "ego-memory-curator",
+        "phase": "Running",
+        "runtime": "qwenpaw"
+      }
+    ]
+  },
+  "project": {
+    "id": "egoagentos-gpu-gated-v1",
+    "pause_reason": "GPU Worker intentionally not attached yet",
+    "status": "paused",
+    "workflow_node_count": 8,
+    "workflow_statuses": [
+      "pending"
+    ]
+  },
+  "schema_version": "egoagentos.agentteams-live-local-proof/v1",
+  "source_files": {
+    "live_stack_public": {
+      "packaged": false,
+      "path": ".runtime/live-stack-public.json",
+      "sha256": "e131e1cc4d026dc9826eab854a7bffb53366eac779ca370d086e589b9aba5b92"
+    },
+    "matrix_live_smoke": {
+      "packaged": false,
+      "path": ".runtime/matrix-live-smoke-result.json",
+      "reason": "raw model prose is intentionally excluded",
+      "sha256": "7bb430febed21adc45bbd01eed12a1c0dac63898d69ce7ac3d91f6fad0114bed"
+    }
+  },
+  "status": "PASS",
+  "truth_boundary": {
+    "matrix_connectivity_smoke": "LIVE_LOCAL",
+    "official_agentteams_infrastructure": "LIVE_LOCAL",
+    "official_scientific_workflow": "NOT_RUN",
+    "physical_gpu": "NOT_ATTACHED",
+    "pitr_restore": "NOT_RUN",
+    "tdsql_nexa_cloud": "NOT_CONFIGURED"
+  }
+}

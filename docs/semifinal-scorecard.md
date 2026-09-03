@@ -1,7 +1,7 @@
 # GOAI Agent Infra 复赛就绪度记分卡
 
 规则来源：[复赛规则](https://alidocs.dingtalk.com/i/nodes/AR4GpnMqJzYd2LLOhLB1x4zLVKe0xjE3)，
-于 2026-08-29 按登录态页面核对。本文是仓库内部 release gate，不是评委打分，也不替代
+于 2026-09-03 按当前规则页核对。本文是仓库内部 release gate，不是评委打分，也不替代
 组委会最新规则。
 
 ## 当前结论
@@ -55,10 +55,10 @@ Worker 资源、暂停 Project、Bridge 与真实 Matrix room，并取得四 Age
 
 | 复赛维度 | 权重 | 当前可复核优势 | 仍需补齐的评审证据 | 当前判定 |
 |---|---:|---|---|---|
-| 场景价值与可迁移性 | 20% | 面向具身 AI 实验的目标→矩阵→执行→评测→复核→决策闭环；RXP 与 adapter 为领域无关合同；真实 Fashion-MNIST FP32/AMP 工作负载已代码就绪 | 一次官方 AgentTeams+GPU 同源运行、研究员手工基线，以及第二领域的迁移映射 | `PARTIAL` |
+| 场景价值与行业复用性 | 25% | 面向具身 AI 实验的目标→矩阵→执行→评测→复核→决策闭环；RXP 与 adapter 为领域无关合同；真实 Fashion-MNIST FP32/AMP 工作负载已代码就绪 | 一次官方 AgentTeams+GPU 同源运行、研究员手工基线，以及第二领域的迁移映射 | `PARTIAL` |
 | 多 Agent 协作 | 25% | 官方 Controller/Manager、Active Team、四个 Worker 与四 Agent Matrix smoke 已 `LIVE_LOCAL`；bridge 实现 conflict/replan、timeout/reassign/resume/compensation | 同一 Project 的委派、Skill、R2、动态分支和终态验收 trace | `PARTIAL / BUSINESS GATE BLOCKED` |
-| Skill 工程化 | 20% | 6 个版本化 Skill 包；本地 discovery、digest pin、invocation trace、canary/retire/rollback 已实现并测试 | 在真实 Worker 上证明包存在、spawn 授权、成功调用、失败与版本回滚 | `PARTIAL` |
-| 工程实现与安全审计 | 30% | RXP/1、14 场景 benchmark、独立 trace oracle、content-addressed bundle、TDSQL Nexa SQL adapter、TencentDB Agent Memory v3、per-agent compact、PostgreSQL-compatible 事务/最小权限/append-only/LISTEN-NOTIFY、R2/重放/篡改门禁 | 官方 AgentTeams live fault injection、Nexa/Agent Memory 实例验收、外部 effect exactly-once 与真实恢复时间 | `PARTIAL` |
+| Skill 工程与生态复用 | 25% | 6 个版本化 Skill 包；本地 discovery、digest pin、invocation trace、canary/retire/rollback 已实现并测试 | 在真实 Worker 上证明包存在、spawn 授权、成功调用、失败与版本回滚 | `PARTIAL` |
+| 工程化、运行验证与安全可审计性 | 20% | RXP/1、14 场景 benchmark、独立 trace oracle、content-addressed bundle、TDSQL Nexa SQL adapter、TencentDB Agent Memory v3、per-agent compact、PostgreSQL-compatible 事务/最小权限/append-only/LISTEN-NOTIFY、R2/重放/篡改门禁 | 官方 AgentTeams live fault injection、Nexa/Agent Memory 实例验收、外部 effect exactly-once 与真实恢复时间 | `PARTIAL` |
 | 开源贡献 | 5% | Apache-2.0 代码、JSON Schema、Skill、adapter、测试、runbook 与可复现实验协议均公开可读 | tag/release、干净机安装记录，以及外部 issue、复用或反馈证据 | `PARTIAL` |
 
 ## AgentTeams live 证据门
@@ -123,5 +123,6 @@ live evidence；任一 `FAIL`、`ERROR` 或 `SKIP` 都使 release 失败。安�
 9. bridge 重启、PostgreSQL checkpoint 恢复，以及最终 evidence bundle 的离线 replay；
 10. 单独展示 TDSQL Nexa 与 TencentDB Agent Memory 的 provider receipt；若未配置，明确标记 `NOT CONFIGURED / NOT RUN`。
 
-在上述 live 证据产生前，演示文案必须使用“可执行 bridge + contract-verified”，不能使用
-“已接通 AgentTeams”“已完成真实多 Agent 实验”或“14 场景已通过”。
+在上述完整 workflow 证据产生前，演示文案只能把 Controller/Manager/Team/Workers/Matrix
+描述为 `LIVE_LOCAL` 基础设施联通，不能使用“已完成真实多 Agent 科研闭环”“已完成 GPU
+实验”或“14 个 live 场景已通过”。

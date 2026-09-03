@@ -49,7 +49,7 @@ VITE_STATIC_DEMO=true VITE_BASE_PATH=/ego_agent_infra/ npm --prefix apps/web run
 
 完整本地 API 模式与静态回放共用同一个 Research Cockpit：未强制设置 `VITE_STATIC_DEMO=true` 时，Web 会先连接 `VITE_API_ROOT`；只有在初始连接不可达时才自动降级为静态回放。一旦已连接本地 API，后续故障会显式报错，不会悄然切换成 fixture。
 
-### 真实专家团队模式
+### 两种真实模型调用模式
 
 研究编排器的三种输入现在可以启动一个真实的服务端模型工作流。`Research PI → Context
 Scout → Experiment Architect → Independent Reviewer` 四个角色依次接收摘要绑定的上下文；网页
@@ -57,7 +57,8 @@ Scout → Experiment Architect → Independent Reviewer` 四个角色依次接�
 独立的 SQLite + `FOCUS.md` 压缩回执，以及最终只追加事件链。审查员读取确定性编译后的精确
 digest，并在任何实验执行之前给出 `PASS/WARN/FAIL`。
 
-模型密钥只由 FastAPI 进程从环境读取，绝不会进入网页 bundle、浏览器存储、URL 或返回体：
+本地 API 模式下，模型密钥只由 FastAPI 进程从环境读取，不进入网页 bundle、浏览器存储、URL
+或返回体：
 
 ```bash
 export EGO_AGENT_MODEL_BASE_URL=https://api.deepseek.com
@@ -72,9 +73,11 @@ VITE_API_ROOT=http://127.0.0.1:8000/api/v1 npm --prefix apps/web run dev -- --po
 ```
 
 在页面顶部只把 `EGO_OPERATOR_KEY` 作为会话操作者密钥连接，然后载入示例或输入自己的研究问题，
-点击“启动真实专家团队”。公开 GitHub Pages 仍故意保持无密钥静态模式；要让公网评委直接运行
-真实专家，必须另行部署 HTTPS FastAPI 服务并在构建时把 `VITE_API_ROOT` 指向它，不能把供应商
-API key 塞进 GitHub Pages。
+点击“启动真实专家团队”。公开 GitHub Pages 是另一种明确降级的评委模式：它把一个低额度、
+可撤销的专用客户端凭据编译进 bundle，从浏览器直连模型供应商。该值对任何访问者可见，
+**不是 secret，也不是服务端安全部署**；页面因此只把专家规划响应标成 `LIVE_BROWSER`，
+Controller、Matrix、数据库、审批签名和 GPU 仍是回放或 `ASSUMPTION_ONLY`。正式部署必须改用
+上面的 HTTPS API 模式。
 
 ### 官方 AgentTeams 本地实机路径（GPU 延后）
 
@@ -101,10 +104,11 @@ Team 为 `ego-researchops`，Project 为 `egoagentos-gpu-gated-v1`。在 GPU 主
 4 个 Worker 资源。可公开的地址、状态、房间 ID、digest 与验收结果写入
 `.runtime/live-stack-public.json`，Token、Matrix 初始密码和两个互不复用的操作密钥只在私有 env 中。
 
-2026-09-02 的真实验收区分两条链：官方 Matrix Team room 收到 4/4 个不同 Agent 的实时回复，
-基础设施为 `LIVE_LOCAL PASS`；同日自定义输入专家链真实调用 `agnes-2.5-pro`，PI 与 Scout 完成并
-写入 compact receipt，但 Architect 连续两次返回非合同 JSON，因而 `FAILED_CLOSED`，没有生成
-矩阵或执行任务。完整、无密钥的证据边界见
+2026-09-03 的真实验收区分三条链：官方 Matrix Team room 收到 4/4 个不同 Agent 的实时回复，
+基础设施为 `LIVE_LOCAL PASS`；Manager 当前配置为 `deepseek-v4-flash`，但 Matrix 文本中的模型
+自报不作为供应商来源证明；同一 Project 的 8 个科研工作流节点全部保持 `PENDING`，因为 GPU
+仍为 `NOT_ATTACHED`。先前自定义输入专家链调用 `agnes-2.5-pro` 时在 Architect JSON 合同处
+`FAILED_CLOSED`，没有生成矩阵或执行任务。完整、无密钥的证据边界见
 [`docs/acceptance/live-local-2026-09-02.md`](docs/acceptance/live-local-2026-09-02.md)。
 
 本地评委复现的目标路径只需要 Docker：
@@ -127,7 +131,7 @@ docker compose up --build
 
 默认场景明确标记为 **SYNTHETIC DEMO DATA**。它真实运行控制面、本地 PostgreSQL 16 状态、审批、哈希、评测、证据门禁与审计，但不会声称已经使用 8×RTX 4090 训练，也不会伪造 TDSQL Nexa、TencentDB Agent Memory、AgentTeams、Nacos 或 Higress 在线状态。生产数据权威通过 `EGO_NEXA_DATABASE_URL` 指向 Nexa；直接启动 API 且不设置外部数据库时，使用 SQLite 开发 fallback。
 
-截至 2026-09-02，本机已经完成 Compose 镜像构建、PostgreSQL 数据迁移与权限初始化、API/Web/
+截至 2026-09-03，本机已经完成 Compose 镜像构建、PostgreSQL 数据迁移与权限初始化、API/Web/
 Bridge 启动和端到端健康检查。原生启动路径仍可用于不希望运行完整 AgentTeams 的开发场景：
 
 若不使用 Docker：
@@ -344,11 +348,11 @@ make install
 make test
 ```
 
-截至 **2026-08-29** 的当前提交快照为 **242 个测试**：API 69、RXP 26、Skills 6、
-Semifinal proof 3、Benchmark 29、Acceptance 16、AgentTeams 41、Experiments 13、MCP 23、
-Web 16。这个数字是带日期的提交证据，不是永久承诺；后续提交应以实时 `make test` 与
-CI 输出为准。真实本地 PostgreSQL 16.14 集成套件为 32/32，因需要显式数据库 URL，
-不计入上述默认 242。
+截至 **2026-09-03**，`make test` 汇总为 **530 passed, 1 skipped**：API 89、RXP 26、
+Skills 6、Semifinal proof 3、Benchmark 29、Acceptance 16、AgentTeams 264、Experiments 16、
+MCP/integration 53、Web 28。全量 Python `pytest -q` 为 **689 passed, 1 skipped**。这些数字是
+带日期的提交证据；后续提交应以实时测试与 CI 为准。独立 PostgreSQL 16 集成套件为 38/38，
+需要显式测试数据库 URL，不混入云端 Nexa 证明。
 
 分项运行：
 
@@ -398,9 +402,9 @@ submission/               ≤500 字简介、答辩稿、演示与提交清单
 
 | Integration | 本仓库状态 | 不做的虚假声明 |
 |---|---|---|
-| AgentTeams | 可执行 Controller/Matrix bridge、PostgreSQL checkpoint/event/receipt backend、7 Worker/1 Team/1 Manager 资源与官方契约锁；逐场景 fault/replay harness 尚未实现，target benchmark 即使 live opt-in 也诚实 `UNIMPLEMENTED/SKIP` | contract/fixture 测试不冒充 live；只有真实逐场景故障注入、fresh replay 与 trace 才可升级 claim |
+| AgentTeams | 官方 v1.2.3 Controller/Manager、1 Team、4 Running Worker resources 与 Matrix smoke 已 `LIVE_LOCAL`；逐场景 scientific fault/replay harness 尚未运行 | 基础设施联通不冒充完整科研闭环；只有真实逐场景故障注入、fresh replay、GPU receipt 与 Decision trace 才可升级 claim |
 | Nacos | 6 个 Skill package + 本地进程内 registry/lifecycle reference | 不声称 Skill 已上线或 rollout 状态已持久化 |
-| PostgreSQL / PolarDB-PG | PostgreSQL 为生产数据路径；真实本地 16.14 合同测试 32/32 PASS，含最小权限、历史直授权清理、append-only、LISTEN/NOTIFY、迁移校验和与 preflight | PolarDB 云部署、备份策略、PITR 与实测 RPO/RTO 明确为 `NOT RUN` |
+| PostgreSQL / TDSQL Nexa | PostgreSQL-compatible SQL 为生产数据路径；真实本地 PostgreSQL 16 合同测试 38/38 PASS，含最小权限、历史直授权清理、append-only、LISTEN/NOTIFY、迁移校验和与 preflight | TDSQL Nexa 云部署、TencentDB Agent Memory provider receipt、备份/PITR 与实测 RPO/RTO 明确为 `NOT RUN` |
 | Higress | 精确 MCP route / credential policy contract | 不声称 gateway 已部署或完成 secret-isolation 负测 |
 | Aliyun SLS Skill | 只读官方 Skill 选择与 lock | 不声称已查询真实项目日志 |
 | GPU / EgoLite | synthetic UI fixture；另有真实 Fashion-MNIST 单 GPU FP32/AMP adapter 与验收 verifier | adapter 已实现不等于已运行；官方 GPU/AgentTeams origin 仍为 `UNVERIFIED` |
@@ -409,7 +413,7 @@ submission/               ≤500 字简介、答辩稿、演示与提交清单
 
 ## GOAI Agent Infra 对齐
 
-本项目按 2026-08-09 可见赛道要求设计：≥3 Agent、AgentTeams 协同基点、Agent Identity、Skill 工程化、完整闭环，以及 shared state / validated memory / trace。评分映射见 [docs/competition-mapping.md](docs/competition-mapping.md)，提交简介与材料见 [`submission/`](submission/)。
+本项目按 2026-09-03 核对的复赛要求设计：≥3 Agent、AgentTeams 协同基点、Agent Identity、Skill 工程、完整闭环，以及 shared state / validated memory / trace。评分映射见 [docs/competition-mapping.md](docs/competition-mapping.md)，提交简介与材料见 [`submission/`](submission/)。
 
 官方页面：[Agent Infra 赛道](https://www.goaihz.com/tracks?track=infra) · [提交入口](https://www.goaihz.com/submission)
 

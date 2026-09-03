@@ -18,8 +18,8 @@ from experiments.egolite_agentteam.verify import verify_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PREFIX = "EgoAgentOS-final-20260902"
-FIXED_ZIP_TIME = (2026, 9, 2, 0, 0, 0)
+PREFIX = "EgoAgentOS-final-20260903"
+FIXED_ZIP_TIME = (2026, 9, 3, 0, 0, 0)
 SECRET_PATTERNS = (
     re.compile(rb"\bwk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(rb"\bsk-[A-Za-z0-9_-]{20,}\b"),
@@ -155,7 +155,10 @@ def build(
             "external_model_calls": "LIVE" if evidence_dir is not None else "NOT_PACKAGED",
             "tdsql_nexa": "NOT_CONFIGURED",
             "tencentdb_agent_memory": "NOT_CONFIGURED",
-            "official_agentteams_matrix_gpu": "NOT_RUN",
+            "official_agentteams_infrastructure": "LIVE_LOCAL",
+            "official_agentteams_matrix_smoke": "LIVE_LOCAL",
+            "official_agentteams_scientific_workflow": "NOT_RUN",
+            "physical_gpu": "NOT_ATTACHED",
         },
         "live_evidence": (
             "verified_and_packaged" if evidence_dir is not None else "not_packaged"

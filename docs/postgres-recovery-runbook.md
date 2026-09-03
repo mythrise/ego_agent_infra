@@ -142,7 +142,7 @@ EGO_TEST_POSTGRES_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/TEST_DB' \
 ```
 
 The suite recreates only the `public` schema of that explicit test database. The verified
-2026-08-29 result is **32/32 PASS on local PostgreSQL 16.14**. It covers:
+2026-09-03 result is **38/38 PASS on isolated local PostgreSQL 16**. It covers:
 
 - full API completion, atomic rollback, optimistic concurrency, tenant isolation,
   idempotency contention, durable event cursors, commit-ordered `LISTEN/NOTIFY`, and

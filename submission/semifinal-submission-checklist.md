@@ -21,11 +21,13 @@ file/type/size fields as authoritative.
   fail closed on missing Matrix, receipt, raw metrics, recovery, trace, or Decision evidence.
 - [x] Initial-feedback changes are marked in red on slide 2 and mapped to evidence.
 - [x] Risks, portability, closure diagram, and explicit SKIP boundaries are present.
-- [ ] Live AgentTeams target proof. Leave SKIP unless an official endpoint and same-run
-  evidence are actually captured.
+- [x] Official AgentTeams v1.2.3 local infrastructure and four-sender Matrix connectivity
+  proof frozen without credentials.
+- [ ] Full official AgentTeams scientific workflow. All eight nodes remain PENDING until
+  a GPU Worker and scoped approval are available.
 - [ ] Live GPU origin proof. Keep `CONTRACT_PASS_ORIGIN_UNVERIFIED` unless the same-run
   scheduler/GPU receipt and raw artifacts are captured and independently replayed.
-- [ ] PolarDB writer/read-only-node preflight plus managed backup/PITR restore record.
+- [ ] TDSQL Nexa / TencentDB Agent Memory provider acceptance plus managed backup/PITR.
 
 ## Final artifacts
 
@@ -35,6 +37,8 @@ file/type/size fields as authoritative.
 - [x] `demo-script-8min.md`.
 - [x] `semifinal-evidence-index.md`.
 - [x] deterministic `semifinal-local-proof.json` plus checksum.
+- [x] sanitized `agentteams-live-local-proof.json` plus checksum.
+- [x] `final-acceptance-20260903.md` truth ledger.
 - [x] `experiments/fashion_mnist_amp/` and `semifinal_acceptance/` source, schemas,
   runbooks, and negative tests.
 - [ ] optional ≤8 minute public/unlisted demo video and captions.
@@ -54,8 +58,7 @@ make package
 - [ ] Confirm no `.env`, credentials, local database, private data, or production key is
   inside the ZIP.
 - [ ] Confirm PPTX/PDF/proof/package hashes match their sidecars/index.
-- [ ] If a PostgreSQL URL is available, rerun `make test-postgres` and preserve the
-  version plus 32/32 result separately; do not relabel it PolarDB evidence.
+- [x] Isolated PostgreSQL suite rerun: 38/38 PASS; not relabeled as Nexa evidence.
 - [ ] If live AgentTeams/GPU or PolarDB/PITR was not run, keep every external origin
   field `UNVERIFIED`/`NOT RUN` in the portal, deck, video, and spoken demo.
 - [ ] Open GitHub repository and static Demo URL in a signed-out/incognito browser.

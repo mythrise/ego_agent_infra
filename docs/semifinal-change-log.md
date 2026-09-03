@@ -70,10 +70,10 @@ fault/replay harness、GPU receipt 和 Nexa/PITR 演练尚缺，所以实验 ori
 
 | 权重项 | 复赛迭代带来的增量 | 当前最重要的下一条证据 |
 |---|---|---|
-| 场景价值与可迁移性 20% | 把单任务 demo 提升为矩阵级实验承诺和可迁移 adapter contract | 真实/公开实验 + 手工 baseline + 第二领域 mapping |
+| 场景价值与行业复用性 25% | 把单任务 demo 提升为矩阵级实验承诺和可迁移 adapter contract | 真实/公开实验 + 手工 baseline + 第二领域 mapping |
 | 多 Agent 协作 25% | 从资源模板升级为可执行、可恢复、动态路由 bridge | 官方 live 3+ Worker correlated trace |
-| Skill 工程化 20% | 从静态包升级为 digest-pinned runtime 与 lifecycle | Worker spawn/tool result + rollback live trace |
-| 工程实现与安全审计 30% | 增加 RXP、独立 oracle、fault corpus、PostgreSQL 与 evidence bundle | live fault injection + exactly-once external effect proof |
+| Skill 工程与生态复用 25% | 从静态包升级为 digest-pinned runtime 与 lifecycle | Worker spawn/tool result + rollback live trace |
+| 工程化、运行验证与安全可审计性 20% | 增加 RXP、独立 oracle、fault corpus、PostgreSQL 与 evidence bundle | live fault injection + exactly-once external effect proof |
 | 开源贡献 5% | 增加协议、schema、adapter、benchmark 和 runbook | tagged release 与外部复用/反馈 |
 
 ## 2026-08-29 验证快照

@@ -13,7 +13,7 @@ AgentTeams `LIVE_LOCAL` path is documented below and deliberately stops before G
 | Acceptance bundle | eight-scenario content-addressed Matrix/receipt/metric/gate/recovery/Trace/Decision checks, covered by 16 tests | live origin promotion or the full 14-scenario release gate |
 | RXP API | schema catalog, synthetic fixture, structural ledger verification | RXP persistence in the task store or issuer trust |
 | Skill API | six packages discovered, three deterministic handlers, digest-bound traces | durable rollout state or Nacos publication |
-| PostgreSQL | real PostgreSQL 16 store/role/ledger contract, 32/32 integration tests | PolarDB cloud deployment or PITR |
+| PostgreSQL | real PostgreSQL 16 store/role/ledger contract, 38/38 integration tests | TDSQL Nexa cloud deployment or PITR |
 | AgentTeams | static replay proves only the bridge contract; the separate local-live acceptance proves official Controller/Manager, four Worker resources, Matrix and Bridge connectivity | a physical GPU run or public hosted Controller |
 
 ## 1. Start the local stack
@@ -227,7 +227,7 @@ EGO_TEST_POSTGRES_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/TEST_DB' \
 ```
 
 The suite recreates the `public` schema of that named test database. The verified
-2026-08-29 result was 32/32 PASS on PostgreSQL 16.14. PolarDB and PITR were NOT RUN.
+2026-09-03 result was 38/38 PASS on isolated PostgreSQL 16. TDSQL Nexa and PITR were NOT RUN.
 Those 32 tests cover control-plane and AgentTeams-bridge persistence, roles/RLS,
 candidate-only memory curation, database-enforced append-only ledgers, durable cursors,
 restart/CAS/idempotency, migration checksums, preflight contracts, and `LISTEN/NOTIFY`.

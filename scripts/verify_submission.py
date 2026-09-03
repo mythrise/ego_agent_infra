@@ -18,6 +18,10 @@ from build_submission import included_files
 ROOT = Path(__file__).resolve().parents[1]
 SEMIFINAL_PROOF_PATH = ROOT / "submission" / "evidence" / "semifinal-local-proof.json"
 SEMIFINAL_PROOF_CHECKSUM = SEMIFINAL_PROOF_PATH.with_suffix(".sha256")
+LIVE_LOCAL_PROOF_PATH = (
+    ROOT / "submission" / "evidence" / "agentteams-live-local-proof.json"
+)
+LIVE_LOCAL_PROOF_CHECKSUM = LIVE_LOCAL_PROOF_PATH.with_suffix(".sha256")
 REQUIRED_AGENT_FIELDS = (
     "id:",
     "name:",
@@ -92,6 +96,7 @@ REQUIRED_DELIVERABLES = (
     "protocols/rxp/schemas/rxp-receipt-v1.schema.json",
     "requirements-api.lock",
     "scripts/build_semifinal_proof.py",
+    "scripts/freeze_live_local_proof.py",
     "semifinal_acceptance/README.md",
     "semifinal_acceptance/bundle.py",
     "semifinal_acceptance/cli.py",
@@ -105,6 +110,8 @@ REQUIRED_DELIVERABLES = (
     "submission/demo-script-8min.md",
     "submission/evidence/semifinal-local-proof.json",
     "submission/evidence/semifinal-local-proof.sha256",
+    "submission/evidence/agentteams-live-local-proof.json",
+    "submission/evidence/agentteams-live-local-proof.sha256",
     "submission/project-summary-zh.txt",
     "submission/screenshots/semifinal-rxp-cockpit.png",
     "submission/semifinal-evidence-index.md",
@@ -317,6 +324,55 @@ def validate_semifinal_proof(failures: List[str]) -> None:
         )
 
 
+def validate_live_local_proof(failures: List[str]) -> None:
+    if not LIVE_LOCAL_PROOF_PATH.is_file() or not LIVE_LOCAL_PROOF_CHECKSUM.is_file():
+        return
+    payload = LIVE_LOCAL_PROOF_PATH.read_bytes()
+    expected_checksum = "%s  %s\n" % (
+        hashlib.sha256(payload).hexdigest(),
+        LIVE_LOCAL_PROOF_PATH.name,
+    )
+    check(
+        LIVE_LOCAL_PROOF_CHECKSUM.read_text(encoding="ascii") == expected_checksum,
+        "AgentTeams live-local proof SHA-256 is stale or invalid",
+        failures,
+    )
+    try:
+        proof = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        failures.append("AgentTeams live-local proof is not valid UTF-8 JSON")
+        return
+    check(
+        proof.get("schema_version")
+        == "egoagentos.agentteams-live-local-proof/v1",
+        "AgentTeams live-local proof schema_version mismatch",
+        failures,
+    )
+    check(proof.get("status") == "PASS", "AgentTeams live-local proof is not PASS", failures)
+    truth = proof.get("truth_boundary", {})
+    check(
+        truth.get("official_agentteams_infrastructure") == "LIVE_LOCAL",
+        "official AgentTeams infrastructure is not LIVE_LOCAL",
+        failures,
+    )
+    check(
+        truth.get("official_scientific_workflow") == "NOT_RUN",
+        "scientific workflow must remain NOT_RUN",
+        failures,
+    )
+    check(
+        truth.get("physical_gpu") == "NOT_ATTACHED",
+        "physical GPU must remain NOT_ATTACHED",
+        failures,
+    )
+    checks = proof.get("checks", {})
+    check(
+        len(checks) == 10 and all(value is True for value in checks.values()),
+        "AgentTeams live-local invariant set is incomplete or failed",
+        failures,
+    )
+
+
 def scan_secrets(failures: List[str]) -> None:
     """Scan exactly the files that can enter the deterministic submission ZIP."""
 
@@ -347,11 +403,12 @@ def main() -> int:
     validate_required_deliverables(failures)
     validate_semifinal_artifacts(failures)
     validate_semifinal_proof(failures)
+    validate_live_local_proof(failures)
     scan_secrets(failures)
 
     result: Dict[str, object] = {
         "status": "PASS" if not failures else "FAIL",
-        "checks": 10,
+        "checks": 11,
         "failures": failures,
     }
     if args.json:

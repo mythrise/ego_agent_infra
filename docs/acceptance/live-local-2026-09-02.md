@@ -8,8 +8,8 @@ backend.
 
 - Official source: `agentscope-ai/AgentTeams`, tag `v1.2.3`, commit
   `223ddc2b8073e4c8b93bcbb15e1d717f196c04d9`.
-- Controller and Manager phase: running. Manager runtime: `qwenpaw`; configured model:
-  `agnes-2.5-pro`.
+- Controller and Manager phase: running. Manager runtime: `qwenpaw`; current configured
+  model: `deepseek-v4-flash`. This is configuration evidence, not per-event provenance.
 - Team `ego-researchops`: `Active`, `leaderReady=true`, subordinate count `3/3`.
 - Worker resources: `ego-research-lead`, `ego-architect`, `ego-reviewer`, and
   `ego-memory-curator`; all four reported `Running` with Matrix identities.
@@ -41,8 +41,17 @@ contained 36 post-request Agent events from four distinct senders:
 | Memory Curator | `$8PFburKNwscUynfPghk7ordiN3f0L7ifFNiFP3BQ0mo` | `READY`, `GPU=NOT_ATTACHED` |
 
 Result: `LIVE_LOCAL PASS`, 4/4 distinct Agent identities. Agent prose about its own model
-identity is not accepted as proof; the configured model is taken from the Controller/Manager
-resource status and live provider receipts.
+identity is not accepted as proof. `deepseek-v4-flash` is proven only as the current
+Controller/Manager configuration; this smoke does not contain a provider-signed per-event
+model receipt.
+
+## 2026-09-03 re-verification
+
+The local stack verifier passed again with PostgreSQL, API, Bridge, Web, Controller,
+Manager, Active Team and four Running Worker resources. A sanitized proof was frozen at
+`submission/evidence/agentteams-live-local-proof.json`. Project
+`egoagentos-gpu-gated-v1` remains paused; all eight workflow nodes are still `PENDING` and
+GPU remains `NOT_ATTACHED`. No scientific lifecycle or GPU result is inferred.
 
 ## Custom-input model-plane receipt
 

@@ -98,7 +98,7 @@ containing same-run target traces.
 
 ## 6:35–7:30 — Production-shaped state, honest boundary
 
-Show the PostgreSQL proof: **32/32 tests passed on local PostgreSQL 16.14** for control-plane
+Show the PostgreSQL proof: **38/38 tests passed on isolated local PostgreSQL 16** for control-plane
 and AgentTeams-bridge persistence, optimistic concurrency, roles/RLS, append-only ledgers,
 durable cursors, migration checksums, restart/CAS/idempotency, and `LISTEN/NOTIFY`. Show that
 the Memory Curator may insert only `memory_candidates`; a separate `memory-validator`

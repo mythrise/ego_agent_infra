@@ -5,10 +5,10 @@
 
 | 复赛维度 | 权重 | Benchmark 证据 | 边界 |
 |---|---:|---|---|
-| 场景价值与可迁移性 | 20% | 14 个版本化故障场景；同一 corpus 可运行三个 profile；JSON/Markdown 双输出 | 固定 synthetic corpus 不能证明真实科研任务的泛化能力 |
+| 场景价值与行业复用性 | 25% | 14 个版本化故障场景；同一 corpus 可运行三个 profile；JSON/Markdown 双输出 | 固定 synthetic corpus 不能证明真实科研任务的泛化能力 |
 | 多 Agent 协作 | 25% | `worker_timeout_reassign`、plan conflict、reviewer independence、dynamic routing 指标；AgentTeams target adapter | **只有真实 AgentTeams adapter 的执行结果可作为此项证据；当前缺失即 SKIP** |
-| Skill 工程化 | 20% | `skill_version_rollback` 场景、版本匹配 adapter contract、可复现 runner/CI | 当前 core 没有 skill registry，故 rollback 为 SKIP，不能申报已完成 |
-| 工程实现与安全审计 | 30% | token replay/expiry/scope、approval bypass=0、exactly-once、crash recovery/MTTR、audit/evidence completeness、tamper/forged-reviewer | 本地 synthetic control-plane 结果不等于生产环境安全认证 |
+| Skill 工程与生态复用 | 25% | `skill_version_rollback` 场景、版本匹配 adapter contract、可复现 runner/CI | 当前 benchmark target 未取得官方 Worker `TOOL_INVOKED` 回执，缺失即 SKIP |
+| 工程化、运行验证与安全可审计性 | 20% | token replay/expiry/scope、approval bypass=0、exactly-once、crash recovery/MTTR、audit/evidence completeness、tamper/forged-reviewer | 本地 synthetic control-plane 结果不等于生产环境安全认证 |
 | 开源贡献 | 5% | 版本化 corpus、JSON Schema、profile adapter contract、golden tests、canonical raw result | 是否形成外部贡献需由公开仓库、文档与后续社区采用证明 |
 
 ## 硬门槛与否决项

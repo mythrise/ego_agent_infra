@@ -53,7 +53,7 @@ Curator can append `memory_candidates` but cannot insert validated memory; an in
 `memory-validator` performs promotion after the Evidence Gate. Database triggers reject
 update/delete/truncate on evidence and memory ledgers. `LISTEN/NOTIFY` wakes consumers after
 commit, while durable cursors preserve replay. Cite the local PostgreSQL 16.14 result,
-32/32, and immediately separate it from unrun PolarDB backup/PITR claims.
+38/38, and immediately separate it from unrun TDSQL Nexa/Agent Memory/PITR claims.
 
 ## 6:25 — Recovery and Decision are one replayable object
 
