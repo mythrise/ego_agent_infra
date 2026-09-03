@@ -47,13 +47,14 @@ def test_runtime_directory_is_gitignored() -> None:
     assert ".runtime/" in ignored
 
 
-def test_local_deployment_uses_agnes_pro_model() -> None:
+def test_local_deployment_uses_deepseek_v4_flash_model() -> None:
     script = (ROOT / "scripts/deploy_local_live_stack.py").read_text(encoding="utf-8")
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert 'MODEL_NAME = "agnes-2.5-pro"' in script
-    assert "EGO_AGENT_MODEL:-agnes-2.5-pro" in compose
-    assert "EGO_AGENT_MODEL=agnes-2.5-pro" in env_example
+    assert '"https://api.deepseek.com"' in script
+    assert '"deepseek-v4-flash"' in script
+    assert "EGO_AGENT_MODEL:-deepseek-v4-flash" in compose
+    assert "EGO_AGENT_MODEL=deepseek-v4-flash" in env_example
     assert "AGENTTEAMS_CONTROLLER_PORT=18090" in env_example
     assert "http://agentteams-controller:8090" in env_example
 

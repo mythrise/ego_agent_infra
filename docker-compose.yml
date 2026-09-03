@@ -126,7 +126,7 @@ services:
       EGO_HIGRESS_URL: ${EGO_HIGRESS_URL:-}
       EGO_AGENT_MODEL_BASE_URL: ${EGO_AGENT_MODEL_BASE_URL:-}
       EGO_AGENT_MODEL_API_KEY: ${EGO_AGENT_MODEL_API_KEY:-}
-      EGO_AGENT_MODEL: ${EGO_AGENT_MODEL:-agnes-2.5-pro}
+      EGO_AGENT_MODEL: ${EGO_AGENT_MODEL:-deepseek-v4-flash}
       EGO_ARTIFACT_ROOT: /data/artifacts
       NO_PROXY: 127.0.0.1,localhost,postgres,agentteams-controller
       no_proxy: 127.0.0.1,localhost,postgres,agentteams-controller

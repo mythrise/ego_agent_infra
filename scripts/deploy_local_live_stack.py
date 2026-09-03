@@ -50,8 +50,8 @@ MATRIX_URL = "http://127.0.0.1:18080"
 MATRIX_DOCKER_URL = "http://agentteams-controller:6167"
 EGO_API_URL = "http://127.0.0.1:8000"
 BRIDGE_URL = "http://127.0.0.1:8020"
-MODEL_BASE_URL = "https://apihub.agnes-ai.com/v1"
-MODEL_NAME = "agnes-2.5-pro"
+MODEL_BASE_URL = os.getenv("EGO_AGENT_MODEL_BASE_URL", "https://api.deepseek.com").strip()
+MODEL_NAME = os.getenv("EGO_AGENT_MODEL", "deepseek-v4-flash").strip()
 TEAM_NAME = "ego-researchops"
 HUMAN_NAME = "ego-judge"
 PROJECT_ID = "egoagentos-gpu-gated-v1"
@@ -132,7 +132,7 @@ def _ensure_private_env() -> Dict[str, str]:
     values = _read_env(PRIVATE_ENV)
     model_key = values.get("AGENTTEAMS_LLM_API_KEY") or os.getenv("AGENTTEAMS_LLM_API_KEY", "")
     if not model_key:
-        model_key = getpass.getpass("Agnes/OpenAI-compatible API key (hidden): ").strip()
+        model_key = getpass.getpass("DeepSeek/OpenAI-compatible API key (hidden): ").strip()
     _validate_env_value("AGENTTEAMS_LLM_API_KEY", model_key)
 
     generated = {

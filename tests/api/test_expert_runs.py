@@ -5,7 +5,7 @@ from typing import Any, Dict, Mapping
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
-from apps.api.expert_runs import ExpertRunService
+from apps.api.expert_runs import ROLE_CONTRACTS, ExpertRunService, _system_prompt
 from apps.api.research_os.service import ResearchOSService
 from integrations.agentteams.model_gateway import ModelCall, ModelGatewayError
 from tests.api.operator_auth_helpers import (
@@ -113,6 +113,23 @@ def _client(tmp_path: Path) -> TestClient:
         expert_run_root=tmp_path / "artifacts",
     )
     return TestClient(application)
+
+
+def test_role_prompts_require_an_exact_json_shape_without_extra_fields() -> None:
+    digest = "a" * 64
+    reviewed_digest = "b" * 64
+    for role, contract in ROLE_CONTRACTS.items():
+        prompt = _system_prompt(
+            role,
+            input_digest=digest,
+            locale="en",
+            reviewed_digest=reviewed_digest if role == "reviewer" else None,
+        )
+
+        assert "Use exactly these fields and no others" in prompt
+        assert "never adding, renaming, or nesting fields" in prompt
+        for field in contract["required"]:
+            assert '"%s":' % field in prompt
 
 
 def test_live_expert_run_calls_all_roles_and_freezes_auditable_result(tmp_path: Path) -> None:

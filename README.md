@@ -54,8 +54,8 @@ digest，并在任何实验执行之前给出 `PASS/WARN/FAIL`。
 模型密钥只由 FastAPI 进程从环境读取，绝不会进入网页 bundle、浏览器存储、URL 或返回体：
 
 ```bash
-export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-pro
+export EGO_AGENT_MODEL_BASE_URL=https://api.deepseek.com
+export EGO_AGENT_MODEL=deepseek-v4-flash
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 export EGO_OPERATOR_KEY="$(openssl rand -hex 32)"

@@ -83,8 +83,8 @@ contain private research material.
 Configure the model plane only on the API process:
 
 ```bash
-export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-pro
+export EGO_AGENT_MODEL_BASE_URL=https://api.deepseek.com
+export EGO_AGENT_MODEL=deepseek-v4-flash
 export EGO_AGENT_MODEL_REASONING_EFFORT=low
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY

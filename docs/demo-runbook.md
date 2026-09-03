@@ -73,8 +73,8 @@ model-plane environment to the API terminal before starting Uvicorn. Enter the s
 printing it:
 
 ```bash
-export EGO_AGENT_MODEL_BASE_URL=https://apihub.agnes-ai.com/v1
-export EGO_AGENT_MODEL=agnes-2.5-pro
+export EGO_AGENT_MODEL_BASE_URL=https://api.deepseek.com
+export EGO_AGENT_MODEL=deepseek-v4-flash
 read -s EGO_AGENT_MODEL_API_KEY
 export EGO_AGENT_MODEL_API_KEY
 ```
@@ -91,7 +91,7 @@ retrieval, and physical GPU as `NOT_RUN` unless separate receipts have been inge
 python3 scripts/deploy_local_live_stack.py all
 ```
 
-This pins official AgentTeams `v1.2.3`, configures `agnes-2.5-pro`, creates Team
+This pins official AgentTeams `v1.2.3`, configures `deepseek-v4-flash`, creates Team
 `ego-researchops`, four Worker resources and L2 Human `ego-judge`, joins the Human to the
 Team room, and creates paused Project `egoagentos-gpu-gated-v1`. It then starts the
 PostgreSQL-backed EgoAgentOS API and AgentTeams Bridge. The generated public receipt is
