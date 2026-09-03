@@ -42,7 +42,7 @@ file/type/size fields as authoritative.
 - [x] `experiments/fashion_mnist_amp/` and `semifinal_acceptance/` source, schemas,
   runbooks, and negative tests.
 - [ ] optional ≤8 minute public/unlisted demo video and captions.
-- [ ] final deterministic ZIP and `.sha256` generated after the last commit.
+- [x] final deterministic ZIP and `.sha256` regenerated after the final source commit.
 
 ## Before upload
 
@@ -53,15 +53,16 @@ make verify
 make package
 ```
 
-- [ ] Reopen the ZIP and confirm PPTX, PDF, code, docs, proof, benchmark artifacts, and
+- [x] Reopen the ZIP and confirm PPTX, PDF, code, docs, proof, benchmark artifacts, and
   lock files are included.
-- [ ] Confirm no `.env`, credentials, local database, private data, or production key is
+- [x] Confirm no `.env`, credentials, local database, private data, or production key is
   inside the ZIP.
-- [ ] Confirm PPTX/PDF/proof/package hashes match their sidecars/index.
+- [x] Confirm PPTX/PDF/proof/package hashes match their sidecars/index.
 - [x] Isolated PostgreSQL suite rerun: 38/38 PASS; not relabeled as Nexa evidence.
-- [ ] If live AgentTeams/GPU or PolarDB/PITR was not run, keep every external origin
-  field `UNVERIFIED`/`NOT RUN` in the portal, deck, video, and spoken demo.
-- [ ] Open GitHub repository and static Demo URL in a signed-out/incognito browser.
+- [x] Keep scientific workflow/GPU/Nexa/PITR fields `NOT RUN`/`NOT ATTACHED`/
+  `NOT CONFIGURED` in the portal, deck, video, and spoken demo.
+- [x] Open the public GitHub Pages Demo without repository credentials and capture the
+  current 1600×1000 render.
 - [ ] Confirm GitHub Pages was built from the final commit; otherwise describe it as an
   earlier static fixture, not this revision.
 - [ ] Reopen the DingTalk semifinal rule page and the submission portal immediately
